@@ -34,7 +34,8 @@
 - [x] 后端适配：capabilities OS 能力画像（增量字段）+ discovery_pipeline Zephyr 能力边界标注（ssh/package/eBPF = unsupported）
 - [x] device_inventory 增强固件扩展元数据（board/soc/arch/build_id/telemetry→metadata）
 - [x] Mock 测试 5 项 + 回归 26 项全过（发现→Zephyr 身份→建档→版本化组件→CVE 三层→双实例不合并→幂等→能力画像）
-- [ ] **阻塞（根因已定位）**：CONFIG_NETWORKING=y 使内核体积超 ~400KB，qemu_x86_64 locore 引导机制在此大小下崩溃（多种加载方式与 SRAM 配置均确认）。hello_world（~200KB）正常启动。诊断版（无网络）在 Zephyr 树内构建成功启动。这是 Zephyr v4.4.2 qemu_x86_64 构建系统限制，非 QEMU 版本问题。需 west build 或不同 board target 解决
+- [x] **West Workspace 补充轮（同日）**：手动创建 .west 工作区（绕过 git 依赖）→ hello_world 以 west build + 正确 QEMU 参数启动 ✅；根因更正：CONFIG_NETWORKING=y 隐式启用 e1000 驱动导致 x86_64 内核崩溃（非体积阈值）；ARM 修复路径：下载 arm-zephyr-eabi 工具链（102MB）+ CMSIS 模块 → qemu_cortex_a9 构建成功（传感器含网络栈）✅
+- [ ] **最终阻塞**：QEMU 网络连接——xilinx-aarch64 QEMU 的 arm-generic-fdt-7series 机器从 DTB 创建 GEM 网卡但不接受命令行 netdev 挂载（无 PCI 总线，cadence_gem 非可插拔设备）。需 SLIP 桥接脚本或标准 qemu-system-arm 二进制
 
 ## 下一步（等待指令，不自动开始）
 
