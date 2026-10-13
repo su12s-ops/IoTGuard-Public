@@ -19,12 +19,17 @@
 - [x] CVE 分级诚实呈现：dropbear 横幅无版本 token → 组件无版本证据 → 按规则延迟匹配（非伪造零命中）
 - [x] 复扫幂等、未授权网段 400、零修复/Harness 副作用
 - [x] 回归：后端 81 项 + SmartCam 真实闭环 16/16，无新增回归
-- [ ] **受阻**：SSH 资产采集（主机线）——Ubuntu 采集节点登录凭据失效（publickey denied），按策略禁止从 Windows 执行设备采集/复制密钥；需人工恢复 Windows→Ubuntu SSH 授权后继续
+- [x] **阻塞已解除（同日）**：根因为 id_ed25519_vms 非默认身份名且 agent 停用（历史 BatchMode 从未真正提供该钥匙）；显式 `-i` 认证即成功，Ubuntu 零改动
+- [x] 主机线补全：SSH 隧道 → 既有 collection_only 节点 → 复用采集任务 2 次真实采集（host identity verified / 密钥认证 succeeded / 182 包 / collector exit 0）
+- [x] 幂等：同 request_id 复用同任务不重放 SSH；新 request_id 二采不重复建档（assets=1/connections=1）
+- [x] 身份链闭合：采集 MAC 与 VMware .vmx 网卡地址逐字一致；主机指纹与受信记录一致
+- [x] 新旧对比：181/182 一致 + 1 处真实包变化（kmod-nls-iso8859 → kmod-nls-iso8859-1）
+- [x] CVE 分级消费：本轮快照入引擎（幂等 0 伪造结论；全部落在"无充分证据"层——未登记公告/情报）
 
 ## 下一步（等待指令，不自动开始）
 
-- 解除 Ubuntu SSH 阻塞后补全主机线：SSH 只读采集（软件包/Board/内核）→ match_openwrt 精确匹配 → 新旧清单差异对比
 - Zephyr 观测接入（未开始）
+- 可选增强：为主机线登记真实 OpenWrt 官方公告（openwrt.org 核对后）以激活精确版本匹配层
 
 ## 已知事项
 

@@ -28,6 +28,17 @@
 | SmartCam 真实闭环回归（live_discovery_check.py） | 16/16 PASS |
 | CVE 分级 | 无公告→诚实零命中；无版本组件→延迟匹配（deferred） |
 
+## 第六阶段主机线收尾（2026-10-13 晚，证据 reports/openwrt-hostline-* 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| Windows→Ubuntu SSH（显式 -i 专用密钥） | SSH_AUTH_SUCCESS（agent/config 零改动） |
+| 真实 SSH 只读采集 ×2（复用采集任务管线） | 全部 completed：identity verified / auth succeeded / 182 包 / exit 0 |
+| 同 request_id 复用 / 二采幂等 | 不重放 SSH；无重复建档（1 资产/1 连接/182 包） |
+| 新旧清单 diff（vs 10-12 基线） | 181 一致 + 1 真实变化（kmod-nls-iso8859→-1） |
+| 本轮快照 CVE 分级消费（隔离库） | 幂等；0 伪造结论；182 包全落"无充分证据"层 |
+| 回归（discovery×2 + stage4_collection + iot_upgrade + api_smoke） | 76 passed |
+
 ## CI（.github/workflows/ci.yml）
 
 - backend-job：Python 3.12 + 常规回归口径
