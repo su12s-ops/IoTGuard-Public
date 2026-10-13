@@ -2,14 +2,13 @@
 
 > 每完成一个任务更新本文件。最后更新：2026-10-13
 
-## 进行中
+## 最近完成
 
-**Git 完整托管与自动同步机制建设**（本轮）
+**Git 完整托管与自动同步机制建设**（2026-10-13）
 - [x] 整改提交 6f4724b 推送 Private
-- [x] ai_collaboration/ 协作文件
-- [x] GitHub 模板（Issue/PR）与 CI 工作流
-- [x] scripts/sync_public.py 自动同步脚本
-- [x] 创建 Public 仓库（独立历史，源自脱敏基线）并完成首次同步
+- [x] ai_collaboration/ 协作文件、GitHub 模板（Issue/PR）、CI 工作流
+- [x] scripts/sync_public.py 自动同步脚本（流式导出+敏感扫描+增量推送，幂等）
+- [x] Public 仓库建立（PUBLIC、独立历史）并完成首次同步（223 文件，来源哈希可追踪）
 
 ## 下一步（等待指令，不自动开始）
 

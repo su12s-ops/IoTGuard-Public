@@ -2,6 +2,12 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-13 — 托管机制落地（Private 0a679e9 / Public d14f354）
+
+- 双仓体系投入运行：Private（完整历史）与 Public（独立干净历史，PUBLIC 可见）
+- sync_public.py 首次同步 223 文件；commit message 携带 Source-Commit 溯源；幂等复跑验证通过
+- gh 令牌补齐 workflow scope（CI 文件推送所需）
+
 ## 2026-10-13 — Commit 6f4724b（Private）+ Public 首次发布
 
 ### 安全
