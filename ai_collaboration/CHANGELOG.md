@@ -2,6 +2,13 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-13 — 第七阶段：Zephyr RTOS 终端接入（固件+后端+测试就绪，QEMU 阻塞）
+
+- 固件：Zephyr-Sensor-01（真实 Zephyr v4.4.2 应用，TCP+DHCP+传感+/api/system 身份）构建成功
+- 后端：OS 能力画像 + Zephyr unsupported 标注 + 固件扩展元数据（增量适配）
+- 测试：5 项 Mock + 26 项回归全过
+- 阻塞：QEMU v10.0.2 locore 启动链不兼容（需系统 QEMU 或 GCC，待 sudo）
+
 ## 2026-10-13 — 第六阶段收尾：主机线端到端闭环
 
 - SSH 阻塞根因定位（非默认身份名 + agent 停用）并解除；Ubuntu 侧零改动

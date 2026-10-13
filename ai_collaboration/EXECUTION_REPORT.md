@@ -2,6 +2,16 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-13
 
+## 2026-10-13（第七阶段）：Zephyr RTOS 终端接入（固件就绪，QEMU 运行阻塞）
+
+- **环境**：Zephyr v4.4.2（官方最新稳定版）+ sdk-ng v1.0.1 模块化布局（免 root 部署于 ~/zephyr-stage7/）
+- **固件**：Zephyr-Sensor-01（4 个源文件）——真实 Zephyr 应用：TCP 服务 + DHCP + 模拟传感（标记 simulated）+ /api/system JSON 身份（board/soc/firmware_version/MAC/build_id/OS 版本全部来自编译配置与运行时状态）
+- **构建成功**：qemu_x86_64 目标，x86_64-zephyr-elf 交叉编译（SDK v1.0.1 GNU 工具链），5.7MB ELF + 28KB 32 位 locore 引导
+- **后端适配**（增量，零重构）：capabilities 端点新增 os_capability_profiles；discovery_pipeline 为 Zephyr 设备标注 unsupported 能力（SSH/包管理/eBPF）；device_inventory 保留固件扩展元数据
+- **Mock 测试**（5 项全过）：真实 Zephyr 身份 JSON 结构模拟 → HTTP 探测 → 身份识别（confidence=0.9）→ IotDevice 建档 → 版本化组件（固件+httpd）→ CVE 三层分级（厂商公告→确认 / NVD→候选 / 无证据→延迟）→ 双实例同固件不合并 → 重复扫描幂等 → 能力画像端点
+- **阻塞**：SDK 捆绑 QEMU v10.0.2 启动 locore 后无串口输出（SeaBIOS→iPXE→Boot from ROM→挂起），多种内核加载方式（multiboot/device-loader/initrd）与 CPU/机器型号组合均无输出。Ubuntu 无 sudo → 无法安装系统 QEMU 或 GCC（native_sim 也不可用）
+- **回归**：Zephyr 专项 5 + 发现闭环 9+5 + API smoke = 26 项全过；SmartCam/OpenWrt 不受影响
+
 ## 2026-10-13（晚）：第六阶段主机线补全——SSH 凭据阻塞解除，端到端闭环
 
 - 阻塞根因（非凭据失效）：专用密钥文件名不是 OpenSSH 默认身份名且 agent 停用，历史 BatchMode 探测从未真正提供该钥匙；显式 `-i` 指定后认证成功。全程未改 Ubuntu/密钥/防火墙，known_hosts 既有记录未动

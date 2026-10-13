@@ -112,7 +112,17 @@ def capabilities():
     return {"supported_adapters": ["openwrt_ssh"], "supported_auth_types": ["password", "ssh_key"], "discovery_cidrs": [str(n) for n in allowed_networks()],
             "control_configured": bool(os.getenv("LINUXGUARD_CONTROL_TOKEN")), "max_discovery_addresses": 128,
             "repair_execution_enabled": not collection_only_mode() and os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1",
-            "collection_only": collection_only_mode(), "discovery_enabled": not collection_only_mode(), "collector_node": collector_node()}
+            "collection_only": collection_only_mode(), "discovery_enabled": not collection_only_mode(), "collector_node": collector_node(),
+            # OS 能力画像（增量）：异构 OS 的能力边界如实声明，供前端与联调判断
+            "os_capability_profiles": {
+                "linux/openwrt": {"discovery": "supported", "protocol_fingerprint": "supported",
+                                  "ssh_inventory": "supported", "cve_exact_versions": "supported"},
+                "zephyr": {"discovery": "supported", "protocol_fingerprint": "supported",
+                           "device_identity_endpoint": "supported",
+                           "ssh_inventory": "unsupported", "package_inventory": "unsupported",
+                           "ebpf_runtime": "unsupported",
+                           "cve_exact_versions": "supported(via_vendor_advisory)",
+                           "note": "设备线走 IotDevice/IotDeviceAdvisory；主机线采集不适用"}}}
 
 
 @router.get("/connections")

@@ -70,6 +70,22 @@ def _versioned_components(device: models.IotDevice) -> int:
     return sum(1 for component in device.components if (component.version or "").strip())
 
 
+# RTOS 能力边界（如实标记，不伪造支持）：Zephyr 等嵌入式 OS 无 SSH 服务端、
+# 无发行版包管理器、无 eBPF 运行时——主机线采集与运行时探针对其不适用。
+ZEPHYR_UNSUPPORTED_CAPABILITIES = {
+    "ssh_inventory": "unsupported: Zephyr RTOS 固件不提供 SSH 服务端",
+    "package_inventory": "unsupported: 无发行版包管理器（apk/opkg/dpkg）",
+    "ebpf_runtime": "unsupported: 无 eBPF 运行时与 Falco/Tetragon 生态",
+}
+
+
+def _capability_marks(device: models.IotDevice) -> dict[str, str] | None:
+    """对 Zephyr 设备返回能力边界标注；其他设备返回 None（不标注）。"""
+    if (device.os or "").startswith("Zephyr"):
+        return dict(ZEPHYR_UNSUPPORTED_CAPABILITIES)
+    return None
+
+
 def _correlate_dhcp(db: Session, device: models.IotDevice, host: str) -> int:
     """按 MAC（优先）或 IP 把网关 DHCP 观察与已建档设备关联；不改写租约语义。"""
     try:
@@ -155,6 +171,9 @@ def enroll_observation(db: Session, observation: models.DeviceObservation,
                   "identity_confidence": device.identity_confidence,
                   "components_with_version": versioned, "cve": cve_summary,
                   "services": report.get("identified", {})}
+    capability_marks = _capability_marks(device)
+    if capability_marks is not None:
+        enrollment["capabilities"] = capability_marks
     _mark(db, observation, status, note, device=device, evidence_patch={"enrollment": enrollment})
 
     try:

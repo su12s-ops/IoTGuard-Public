@@ -380,6 +380,11 @@ def build_identity(host: str, service_results: dict[int, dict]) -> dict:
             identity["metadata"]["mac_address"] = str(system_info["mac_address"])
         if system_info.get("serial_number"):
             identity["metadata"]["serial_number"] = str(system_info["serial_number"])
+        # 固件扩展元数据（第七阶段：board/build_id/遥测等来自设备自报或编译配置），
+        # 仅原样保存为证据，不参与身份判重。
+        for extra in ("board", "soc", "arch", "build_id", "device_id", "status", "uptime_s", "telemetry"):
+            if extra in system_info:
+                identity["metadata"][extra] = system_info[extra]
         # 设备自报的服务产品信息比横幅推断更权威，覆盖到识别结果。
         reported = system_info.get("services")
         if isinstance(reported, list):

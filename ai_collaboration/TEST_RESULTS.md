@@ -39,6 +39,16 @@
 | 本轮快照 CVE 分级消费（隔离库） | 幂等；0 伪造结论；182 包全落"无充分证据"层 |
 | 回归（discovery×2 + stage4_collection + iot_upgrade + api_smoke） | 76 passed |
 
+## 第七阶段 Zephyr 接入（2026-10-13）
+
+| 项 | 结果 |
+| --- | --- |
+| 固件构建（Zephyr v4.4.2 / qemu_x86_64 / SDK v1.0.1 GNU） | 构建成功（5.7MB ELF + 28KB locore） |
+| Zephyr Mock 测试（发现/身份/建档/CVE 三层/不合并/幂等/画像） | 5 passed |
+| 回归（zephyr + discovery×2 + api_smoke） | 26 passed |
+| QEMU 运行 | **阻塞**：SDK QEMU v10.0.2 与 locore 不兼容（无串口输出） |
+| 真实端到端发现 | 待 QEMU 解决后执行 |
+
 ## CI（.github/workflows/ci.yml）
 
 - backend-job：Python 3.12 + 常规回归口径

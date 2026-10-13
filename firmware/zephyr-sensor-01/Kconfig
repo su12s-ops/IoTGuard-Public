@@ -1,0 +1,38 @@
+# Zephyr-Sensor-01 应用配置（身份与固件元数据全部来自编译配置）
+mainmenu "Zephyr-Sensor-01 (IoTGuard stage-7 virtual sensor node)"
+
+config APP_HTTP_PORT
+	int "HTTP service port"
+	default 80
+	range 1 65535
+
+config APP_SENSOR_INTERVAL_S
+	int "Simulated telemetry update interval (seconds)"
+	default 5
+	range 1 3600
+
+config APP_DEVICE_NAME
+	string "Device display name"
+	default "Zephyr-Sensor-01"
+
+config APP_VENDOR
+	string "Vendor string"
+	default "IoTGuard-Lab"
+
+config APP_MODEL
+	string "Model string"
+	default "Zephyr-Sensor-01"
+
+config APP_FW_VERSION
+	string "Firmware version"
+	default "0.1.0-stage7"
+
+config APP_DEVICE_UID
+	string "Stable device UID (instance identity)"
+	default "ZEPHYR-SENSOR-0001"
+
+config APP_ARCH_TARGET
+	string "Architecture target string"
+	default "x86_64"
+
+source "Kconfig.zephyr"
