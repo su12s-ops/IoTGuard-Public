@@ -9,7 +9,7 @@
 - **构建成功**：qemu_x86_64 目标，x86_64-zephyr-elf 交叉编译（SDK v1.0.1 GNU 工具链），5.7MB ELF + 28KB 32 位 locore 引导
 - **后端适配**（增量，零重构）：capabilities 端点新增 os_capability_profiles；discovery_pipeline 为 Zephyr 设备标注 unsupported 能力（SSH/包管理/eBPF）；device_inventory 保留固件扩展元数据
 - **Mock 测试**（5 项全过）：真实 Zephyr 身份 JSON 结构模拟 → HTTP 探测 → 身份识别（confidence=0.9）→ IotDevice 建档 → 版本化组件（固件+httpd）→ CVE 三层分级（厂商公告→确认 / NVD→候选 / 无证据→延迟）→ 双实例同固件不合并 → 重复扫描幂等 → 能力画像端点
-- **阻塞**：SDK 捆绑 QEMU v10.0.2 启动 locore 后无串口输出（SeaBIOS→iPXE→Boot from ROM→挂起），多种内核加载方式（multiboot/device-loader/initrd）与 CPU/机器型号组合均无输出。Ubuntu 无 sudo → 无法安装系统 QEMU 或 GCC（native_sim 也不可用）
+- **根因诊断（补充轮）**：CONFIG_NETWORKING=y 使内核从 ~200KB 增至 ~490KB → qemu_x86_64 locore 引导崩溃。逐步排除法确认：hello_world（~200KB）✅ / 诊断版（无网络）✅ / 仅加 CONFIG_NETWORKING=y ❌。非 QEMU 版本问题，是 Zephyr 树外裸 cmake 构建不生成完整 locore 元数据所致。Zephyr 树内符号链接构建可启动诊断版（已验证），完整版仍受限于 locore 机制
 - **回归**：Zephyr 专项 5 + 发现闭环 9+5 + API smoke = 26 项全过；SmartCam/OpenWrt 不受影响
 
 ## 2026-10-13（晚）：第六阶段主机线补全——SSH 凭据阻塞解除，端到端闭环
