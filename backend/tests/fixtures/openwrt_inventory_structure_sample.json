@@ -1,0 +1,59 @@
+{
+  "schema_version": "1.0",
+  "asset_id": "OPENWRT-SAMPLE-01",
+  "asset_type": "virtual_iot_router",
+  "collection_method": "ssh",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "device": {
+    "hostname": "SampleOpenWrt",
+    "model": "Generic Virtual x86 Platform",
+    "board_name": "generic-x86-64",
+    "system": "Virtual x86_64 CPU",
+    "kernel": "6.6.58",
+    "rootfs_type": "ext4",
+    "firmware": {
+      "distribution": "OpenWrt",
+      "version": "23.05.4",
+      "revision": "r00000-0000000000",
+      "target": "x86/64",
+      "description": "OpenWrt 23.05.4 r00000-0000000000",
+      "builddate": "0"
+    }
+  },
+  "software_inventory": {
+    "source": "apk list --installed",
+    "raw_count": 182,
+    "package_count": 182,
+    "parse_error_count": 0,
+    "packages": [
+      {
+        "name": "apk-mbedtls",
+        "version": "3.0.5-r3",
+        "architecture": "x86_64",
+        "source": "feeds/base/system/apk",
+        "license": "GPL-2.0-only",
+        "status": "installed",
+        "raw": "apk-mbedtls-3.0.5-r3 x86_64 {feeds/base/system/apk} (GPL-2.0-only) [installed]"
+      },
+      {
+        "name": "attendedsysupgrade-common",
+        "version": "10",
+        "architecture": "noarch",
+        "source": "feeds/packages/feeds/packages/utils/attendedsysupgrade-common",
+        "license": "GPL-2.0",
+        "status": "installed",
+        "raw": "attendedsysupgrade-common-10 noarch {feeds/packages/feeds/packages/utils/attendedsysupgrade-common} (GPL-2.0) [installed]"
+      },
+      {
+        "name": "base-files",
+        "version": "1711~f5dae5ece4",
+        "architecture": "x86_64",
+        "source": "feeds/base/base-files",
+        "license": "GPL-2.0",
+        "status": "installed",
+        "raw": "base-files-1711~f5dae5ece4 x86_64 {feeds/base/base-files} (GPL-2.0) [installed]"
+      }
+    ]
+  },
+  "sample_only": true
+}

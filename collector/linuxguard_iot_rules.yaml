@@ -1,0 +1,95 @@
+# LinuxGuard IoT 设备 Falco 规则（阶段二：进程 / 网络 / 文件三类真实监控）
+# 适用：已安装 Falco 的 Linux 主机/容器（现代 eBPF 探针）。
+# 安装: cp linuxguard_iot_rules.yaml /etc/falco/falco_rules.local.d/
+# 这些规则与 collector/ebpf_trace_capture.sh（bpftrace 路线）语义一致，
+# 两者输出都会被后端 normalize_event → SecurityEvidence 统一归一化。
+
+# ── 进程监控 ──────────────────────────────────────────────────────────────────
+
+- list: linuxguard_iot_service_binaries
+  items: [mosquitto, mosquitto_pub, nginx, httpd, lighttpd, uhttpd, dropbear, sshd, telnetd]
+
+- list: linuxguard_shell_binaries
+  items: [bash, sh, dash, ash, zsh, ksh]
+
+- list: linuxguard_downloader_binaries
+  items: [wget, curl, ftp, tftp, nc, ncat, socat, busybox]
+
+- rule: LinuxGuard IoT Process Execution
+  desc: 记录设备上每一次进程启动（PID/PPID/用户/命令/父进程），构建进程树证据。
+  condition: evt.type in (execve, execveat) and evt.dir=< and proc.pid > 0
+  output: "LG-IoT process exec: user=%user.name proc=%proc.name exe=%proc.exepath args=%proc.cmdline pid=%proc.pid ppid=%proc.ppid pcomm=%proc.pname evt=%evt.type"
+  priority: INFORMATIONAL
+  tags: [linuxguard, iot, process]
+
+- rule: LinuxGuard IoT Service Spawned Shell
+  desc: IoT 服务进程（如 mosquitto）启动 shell —— 固件升级/后门链的典型前奏。
+  condition: >
+    spawned_process and proc.pname in (linuxguard_iot_service_binaries)
+    and proc.name in (linuxguard_shell_binaries)
+  output: "LG-IoT service spawned shell: service=%proc.pname shell=%proc.name args=%proc.cmdline pid=%proc.pid ppid=%proc.ppid user=%user.name"
+  priority: WARNING
+  tags: [linuxguard, iot, process, chain]
+
+- rule: LinuxGuard IoT Shell Run Downloader
+  desc: shell 进程执行下载器（mosquitto → sh → wget 模式的末端）。
+  condition: >
+    spawned_process and proc.pname in (linuxguard_shell_binaries)
+    and proc.name in (linuxguard_downloader_binaries)
+  output: "LG-IoT shell run downloader: parent=%proc.pname proc=%proc.name args=%proc.cmdline pid=%proc.pid ppid=%proc.ppid user=%user.name"
+  priority: WARNING
+  tags: [linuxguard, iot, process, chain]
+
+# ── 网络监控 ──────────────────────────────────────────────────────────────────
+
+- rule: LinuxGuard IoT Outbound Connection
+  desc: 记录进程发起的对外 TCP 连接（进程、目的 IP、端口、时间）。
+  condition: >
+    evt.type=connect and evt.dir=< and fd.typechar=4
+    and not fd.rip in (127.0.0.1, ::1)
+  output: "LG-IoT outbound connect: proc=%proc.name pid=%proc.pid user=%user.name dest=%fd.rip:%fd.rport exe=%proc.exepath args=%proc.cmdline"
+  priority: NOTICE
+  tags: [linuxguard, iot, network]
+
+- rule: LinuxGuard IoT Local Service Connect
+  desc: 记录对本机服务的连接（MQTT 1883、RTSP 554、SSH 22 等）。
+  condition: >
+    evt.type=connect and evt.dir=< and fd.typechar=4
+    and fd.rip in (127.0.0.1, ::1)
+  output: "LG-IoT local connect: proc=%proc.name pid=%proc.pid user=%user.name dest=%fd.rip:%fd.rport args=%proc.cmdline"
+  priority: INFORMATIONAL
+  tags: [linuxguard, iot, network]
+
+# ── 文件监控（重点受控路径） ─────────────────────────────────────────────────
+
+- rule: LinuxGuard IoT Watched File Read
+  desc: 读取受控路径（/etc/mosquitto、/etc/iotguard、/etc/passwd、/etc/shadow、/opt/firmware）。
+  condition: >
+    (open_read or open_directory) and
+    (fd.name startswith /etc/mosquitto or
+     fd.name startswith /etc/iotguard or
+     fd.name startswith /opt/firmware or
+     fd.name=/etc/passwd or fd.name=/etc/shadow)
+  output: "LG-IoT watched file read: proc=%proc.name pid=%proc.pid user=%user.name file=%fd.name ppid=%proc.ppid"
+  priority: NOTICE
+  tags: [linuxguard, iot, file]
+
+- rule: LinuxGuard IoT Watched File Write
+  desc: 修改受控路径 —— 配置/固件篡改证据。
+  condition: >
+    open_write and
+    (fd.name startswith /etc/mosquitto or
+     fd.name startswith /etc/iotguard or
+     fd.name startswith /opt/firmware or
+     fd.name=/etc/passwd or fd.name=/etc/shadow)
+  output: "LG-IoT watched file write: proc=%proc.name pid=%proc.pid user=%user.name file=%fd.name ppid=%proc.ppid args=%proc.cmdline"
+  priority: ERROR
+  tags: [linuxguard, iot, file, tamper]
+
+- rule: LinuxGuard IoT Shadow Access
+  desc: 读取 /etc/shadow（凭据窃取信号）。
+  condition: >
+    (open_read or open_write) and fd.name=/etc/shadow and not proc.name in (passwd, chage, usermod, chpasswd, pwck)
+  output: "LG-IoT shadow access: proc=%proc.name pid=%proc.pid user=%user.name file=%fd.name args=%proc.cmdline"
+  priority: CRITICAL
+  tags: [linuxguard, iot, file, credential]

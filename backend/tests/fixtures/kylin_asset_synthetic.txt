@@ -1,0 +1,12 @@
+===== META =====
+hostname: kylin-vm-01
+architecture: x86_64
+description: SYNTHETIC PARSER FIXTURE; not a captured device inventory
+===== OS_RELEASE =====
+NAME="Kylin Linux Desktop"
+VERSION_ID="V10"
+ID=Kylin
+===== DPKG_PACKAGES =====
+ii openssl 1.0.2-fixture1 amd64
+===== OPEN_PORTS =====
+ssh|22|tcp|127.0.0.1|sshd

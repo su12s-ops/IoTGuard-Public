@@ -1,0 +1,28 @@
+{
+  "name": "linuxguard-frontend",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 0.0.0.0 --port 5173",
+    "build": "vite build",
+    "preview": "vite preview --host 0.0.0.0 --port 4173",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@element-plus/icons-vue": "^2.3.1",
+    "@vitejs/plugin-vue": "^6.0.7",
+    "axios": "^1.18.1",
+    "echarts": "^5.6.0",
+    "element-plus": "^2.9.10",
+    "vite": "^8.1.0",
+    "vue": "^3.5.16",
+    "vue-router": "^4.5.1"
+  },
+  "overrides": {
+    "form-data": "4.0.6"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.60.0"
+  }
+}

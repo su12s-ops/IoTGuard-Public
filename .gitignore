@@ -1,0 +1,42 @@
+# Operator supplied real asset inventory: keep local, never stage or commit.
+/asset_inventory.json
+
+# ── 真实凭据与本地环境（绝不提交）────────────────────────────────
+backend/.env
+backend/.env.*
+!backend/.env.example
+frontend/.env
+frontend/.env.*
+!frontend/.env.example
+
+# ── 运行数据 ──────────────────────────────────────────────────────
+backend/data/
+reports/
+
+# ── 密钥与虚拟机文件（防御性规则，正常开发不产生） ────────────────
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+*.vmdk
+*.vmx
+*.vmem
+*.iso
+*.img
+
+# ── 工具与测试缓存 ────────────────────────────────────────────────
+__pycache__/
+*.pyc
+.pytest_cache/
+.mimosa/
+frontend/test-results/
+frontend/dist/
+frontend/node_modules/
+node_modules/
+backend/package-lock.json
+
+# ── 其他运行产物 ──────────────────────────────────────────────────
+collector/sample_asset_outputs/
+*.log

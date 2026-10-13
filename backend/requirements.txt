@@ -1,0 +1,13 @@
+fastapi>=0.115
+uvicorn>=0.34
+sqlalchemy>=2.0
+pydantic>=2.9
+paramiko>=3.4
+python-multipart>=0.0.20
+pytest>=8.3
+docker>=7.0
+pyautogen>=0.7
+autogen-ext[openai]>=0.7
+openai>=1.0
+tiktoken>=0.8
+python-dotenv>=1.0

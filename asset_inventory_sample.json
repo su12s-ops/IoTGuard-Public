@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "asset_id": "OPENWRT-SAMPLE-01",
+  "asset_type": "virtual_iot_router",
+  "collection_method": "ssh",
+  "generated_at": "2026-01-01T00:00:00+00:00",
+  "device": {
+    "hostname": "SampleOpenWrt",
+    "model": "Generic Virtual x86 Platform",
+    "board_name": "generic-x86-64",
+    "system": "Virtual x86_64 CPU",
+    "kernel": "6.6.58",
+    "rootfs_type": "ext4",
+    "firmware": {
+      "distribution": "OpenWrt",
+      "version": "23.05.4",
+      "revision": "r00000-0000000000",
+      "target": "x86/64",
+      "description": "OpenWrt 23.05.4 r00000-0000000000",
+      "builddate": "0"
+    }
+  },
+  "software_inventory": {
+    "source": "apk list --installed",
+    "raw_count": 3,
+    "package_count": 3,
+    "parse_error_count": 0,
+    "packages": [
+      {
+        "name": "sample-package-alpha",
+        "version": "1.0.0-1",
+        "architecture": "x86_64",
+        "source": "feeds/base/system/sample",
+        "license": "GPL-2.0-only",
+        "status": "installed",
+        "raw": "sample-package-alpha-1.0.0-1 x86_64 {feeds/base/system/sample} (GPL-2.0-only) [installed]"
+      },
+      {
+        "name": "sample-package-beta",
+        "version": "2.3.1",
+        "architecture": "noarch",
+        "source": "feeds/packages/sample",
+        "license": "MIT",
+        "status": "installed",
+        "raw": "sample-package-beta-2.3.1 noarch {feeds/packages/sample} (MIT) [installed]"
+      },
+      {
+        "name": "sample-package-gamma",
+        "version": "0.9~rc1-2",
+        "architecture": "x86_64",
+        "source": "feeds/base/system/sample",
+        "license": "Apache-2.0",
+        "status": "installed",
+        "raw": "sample-package-gamma-0.9~rc1-2 x86_64 {feeds/base/system/sample} (Apache-2.0) [installed]"
+      }
+    ]
+  }
+}
