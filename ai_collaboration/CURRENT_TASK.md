@@ -10,10 +10,21 @@
 - [x] scripts/sync_public.py 自动同步脚本（流式导出+敏感扫描+增量推送，幂等）
 - [x] Public 仓库建立（PUBLIC、独立历史）并完成首次同步（223 文件，来源哈希可追踪）
 
+## 最近完成
+
+**第六阶段：OpenWrt 异构终端真实接入**（2026-10-13，证据 reports/openwrt-live-*，本地留存）
+- [x] 环境：复用运行中的 OpenWrt 25.12.5 VM（VMnet2 实验段），TCP 22/80/443/53 全通
+- [x] 主机指纹：SSH 握手取证与历史受信记录完全一致（ed25519）
+- [x] 自动发现：真实 API 双 /25 扫描 → 观察证据 → 协议指纹（dropbear/http/https）→ IotDevice 建档（16/16 验收点）
+- [x] CVE 分级诚实呈现：dropbear 横幅无版本 token → 组件无版本证据 → 按规则延迟匹配（非伪造零命中）
+- [x] 复扫幂等、未授权网段 400、零修复/Harness 副作用
+- [x] 回归：后端 81 项 + SmartCam 真实闭环 16/16，无新增回归
+- [ ] **受阻**：SSH 资产采集（主机线）——Ubuntu 采集节点登录凭据失效（publickey denied），按策略禁止从 Windows 执行设备采集/复制密钥；需人工恢复 Windows→Ubuntu SSH 授权后继续
+
 ## 下一步（等待指令，不自动开始）
 
-- OpenWrt 异构终端接入实施（方案见 2026-10-13 接入准备报告：复用 VMnet2 上的 OpenWrt VM；Ubuntu 双实例拓扑；人工前置：VM 确认/SSH 凭据/密钥路径）
-- 人工前置项：Windows→Ubuntu SSH 凭据恢复；OpenWrt 主机指纹核验
+- 解除 Ubuntu SSH 阻塞后补全主机线：SSH 只读采集（软件包/Board/内核）→ match_openwrt 精确匹配 → 新旧清单差异对比
+- Zephyr 观测接入（未开始）
 
 ## 已知事项
 

@@ -19,6 +19,15 @@
 | 真实发现闭环联调（live_discovery_check.py，SmartCam 模拟器 + 真实 API + 一次性库） | 16/16 PASS（两轮） |
 | 合成样本导入器验证（parse_asset_document） | 通过 |
 
+## 第六阶段真实联调（2026-10-13，reports/openwrt-live-* 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| OpenWrt 真实发现闭环（stage6_openwrt_live.py，16 验收点） | ALL PASS（含指纹比对/幂等/未授权拒绝/零写副作用） |
+| 回归：discovery×2 + iot_upgrade + scan_targets + api_smoke + stage12 | 81 passed |
+| SmartCam 真实闭环回归（live_discovery_check.py） | 16/16 PASS |
+| CVE 分级 | 无公告→诚实零命中；无版本组件→延迟匹配（deferred） |
+
 ## CI（.github/workflows/ci.yml）
 
 - backend-job：Python 3.12 + 常规回归口径
