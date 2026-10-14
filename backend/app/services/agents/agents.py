@@ -226,6 +226,15 @@ RUNTIME_BEHAVIOR_SPEC = AgentSpec(
                         "additionalProperties": False},
             handler=T.tool_query_process_tree,
         ),
+        AgentTool(
+            name="query_runtime_data_quality",
+            description="查询运行时数据质量：采集覆盖/心跳、真实丢失计数（unavailable≠0）、证据新鲜度、数据缺口",
+            parameters={"type": "object",
+                        "properties": {"device_id": {"type": "string"}},
+                        "required": ["device_id"],
+                        "additionalProperties": False},
+            handler=T.tool_query_runtime_data_quality,
+        ),
     ],
 )
 

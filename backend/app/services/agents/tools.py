@@ -239,6 +239,106 @@ def tool_query_file_evidence(db: Session, device_id: str, limit: int = 50,
     return {"count": len(rows), "watch_paths": FILE_WATCH_PATHS, "events": rows}
 
 
+def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, Any]:
+    """P2-3：查询设备的运行时数据质量——采集覆盖、真实丢失、证据新鲜度、数据缺口。
+
+    语义边界（与 reliability_snapshot 一致）：
+    - dropped_events：采集器如实上报时为数值（0=真实零丢失）；未上报 →
+      "unavailable"，绝不虚构为零；
+    - 无心跳传感器 ≠ 覆盖良好；freshness 按证据时间分桶，无证据如实说明；
+    - data_gaps 明确列出缺口供智能体在 data_gaps 字段中如实声明。
+    """
+    from datetime import datetime, timezone
+
+    from app.services.runtime_telemetry import coverage, event_time
+
+    keys = _evidence_keys(db, device_id)
+    if not keys:
+        return {"device_id": device_id, "found": False, "data_gaps": ["未找到匹配设备或资产标识"]}
+    # 标识未匹配任何设备/资产/证据时如实返回 found=False（不凭空生成质量报告）
+    known = (
+        db.query(models.IotDevice).filter(
+            (models.IotDevice.device_id == device_id) | (models.IotDevice.ip == device_id)).first()
+        is not None
+        or db.query(models.LinuxAsset).filter(
+            (models.LinuxAsset.hostname == device_id) | (models.LinuxAsset.ip_address == device_id)).first()
+        is not None
+        or db.query(models.SecurityEvidence).filter(models.SecurityEvidence.device_id.in_(keys)).first()
+        is not None
+    )
+    if not known:
+        return {"device_id": device_id, "found": False,
+                "data_gaps": ["该标识未匹配任何设备、资产或运行时证据"]}
+
+    asset = db.query(models.LinuxAsset).filter(
+        (models.LinuxAsset.hostname == device_id) | (models.LinuxAsset.ip_address == device_id)
+    ).first()
+    gaps: list[str] = []
+    sensor_rows = []
+    if asset is None:
+        gaps.append("该标识未登记为 Linux 资产，无法查询采集器心跳覆盖")
+        coverage_view = {"status": "unknown", "sensors": []}
+    else:
+        coverage_view = coverage(db, asset.id)
+        if not coverage_view["sensors"]:
+            gaps.append("该资产没有任何采集器心跳记录（覆盖未知，不代表安全）")
+    for sensor in coverage_view.get("sensors", []):
+        sensor_rows.append({
+            "sensor_id": sensor["sensor_id"], "source": sensor["source"], "status": sensor["status"],
+            "age_seconds": sensor["age_seconds"], "dropped_events": sensor["dropped_events"],
+            "self_reported_metrics": sensor["capabilities"].get("metrics", "unknown"),
+        })
+        if sensor["dropped_events"] == "unavailable" or sensor["dropped_events"] is None:
+            gaps.append(f"传感器 {sensor['sensor_id']} 未上报丢失计数（unavailable，非零丢失）")
+        elif sensor["dropped_events"]:
+            gaps.append(f"传感器 {sensor['sensor_id']} 报告丢失 {sensor['dropped_events']} 条事件")
+        if sensor["status"] == "stale":
+            gaps.append(f"传感器 {sensor['sensor_id']} 心跳已过期（{sensor['age_seconds']}s 未更新）")
+
+    now = datetime.now(timezone.utc)
+    freshness = {}
+    stale_hours = {"process": 24, "network": 24, "file": 168}
+    for evidence_type in ("process", "network", "file"):
+        query = db.query(models.SecurityEvidence).filter(
+            models.SecurityEvidence.evidence_type == evidence_type,
+            models.SecurityEvidence.device_id.in_(keys),
+        ).order_by(models.SecurityEvidence.id.desc()).limit(500)
+        rows = query.all()
+        latest = max((event_time(row.timestamp) for row in rows), default=None)
+        latest = latest.astimezone(timezone.utc) if latest and latest.tzinfo is None else latest
+        age_hours = round((now - latest).total_seconds() / 3600, 2) if latest else None
+        entry = {"count_recent": len(rows), "latest_timestamp": latest.isoformat() if latest else None,
+                 "age_hours": age_hours}
+        if latest is None:
+            entry["freshness"] = "no_evidence"
+            gaps.append(f"无 {evidence_type} 类证据（该类型覆盖为零）")
+        else:
+            entry["freshness"] = "fresh" if age_hours <= stale_hours[evidence_type] else "stale"
+            if entry["freshness"] == "stale":
+                gaps.append(f"{evidence_type} 类证据已过期（最近 {age_hours}h 前）")
+        freshness[evidence_type] = entry
+
+    sessionless = 0
+    if asset is not None:
+        sessionless = db.query(models.SecurityEvidence).filter(
+            models.SecurityEvidence.asset_id == asset.id,
+            models.SecurityEvidence.process_exec_id == "",
+        ).count()
+        if sessionless:
+            gaps.append(f"{sessionless} 条证据缺进程会话身份（P1-3 升级前的存量数据，无法参与行为链聚合）")
+
+    return {
+        "device_id": device_id, "found": True,
+        "keys_queried": keys,
+        "coverage": {"status": coverage_view.get("status", "unknown"), "sensors": sensor_rows},
+        "dropped_events": {row["sensor_id"]: ("unavailable" if row["dropped_events"] is None
+                                              else row["dropped_events"]) for row in sensor_rows},
+        "freshness": freshness,
+        "data_gaps": gaps,
+        "note": "缺口如实列出；覆盖缺失或证据过期时，未观察到行为不得解释为未发生。",
+    }
+
+
 def tool_query_process_tree(db: Session, device_id: str) -> dict[str, Any]:
     """查询设备进程树与「服务→shell→下载器」链（按设备多标识键合并）。"""
     merged: dict[str, Any] = {}
