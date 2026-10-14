@@ -248,7 +248,9 @@ def test_sweep_ports_reports_only_open_ports(lab):
     assert ports == sorted(_live_ports(lab))
 
 
-def test_execute_scan_identifies_services_and_matches_cve(session_factory, lab):
+def test_execute_scan_identifies_services_and_matches_cve(session_factory, lab, monkeypatch):
+    # 与同类 execute_scan 测试一致：本地 127.0.0.1 lab 需在扫描网段白名单内
+    monkeypatch.setenv("LINUXGUARD_DISCOVERY_CIDRS", "127.0.0.0/8")
     db = session_factory()
     try:
         _seed_mqtt_cve(db)
@@ -296,7 +298,9 @@ def test_execute_scan_identifies_services_and_matches_cve(session_factory, lab):
         db.close()
 
 
-def test_execute_scan_is_idempotent(session_factory, lab):
+def test_execute_scan_is_idempotent(session_factory, lab, monkeypatch):
+    # 与同类 execute_scan 测试一致：本地 127.0.0.1 lab 需在扫描网段白名单内
+    monkeypatch.setenv("LINUXGUARD_DISCOVERY_CIDRS", "127.0.0.0/8")
     db = session_factory()
     try:
         _seed_mqtt_cve(db)

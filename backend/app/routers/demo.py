@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import shlex
 import threading
 from datetime import datetime, timezone
@@ -17,7 +18,7 @@ from sqlalchemy.orm import Session
 from app import models, schemas
 from app.database import SessionLocal, get_db
 from app.services.asset_parser import parse_asset_text, save_parsed_asset
-from app.services.device_access import require_control
+from app.services.device_access import HostKeyMismatch, PinnedHostKey, require_control
 from app.services.ebpf_event_collector import append_events, clear_events, parse_event_lines, summarize_runtime_events
 from app.services.kylin_security_collector import sync_kylin_asset_intelligence
 from app.services.matching_engine import run_matching
@@ -197,26 +198,60 @@ def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _sudo_refresh(target: SimpleNamespace) -> None:
+    """sudo 时间戳刷新：口令只经 SSH stdin 通道送达（sudo -S）。
+
+    口令绝不进入远端命令行（`ps`/shell 历史不可见）；后续命令一律
+    `sudo -n`（非交互，使用刚刷新的凭据缓存）。
+    """
+    if not target.password:
+        return
+    client = _ssh_connect(target)
+    try:
+        stdin, stdout, _stderr = client.exec_command("sudo -S -p '' -v", timeout=20)
+        stdin.write(target.password + "\n")
+        stdin.flush()
+        code = stdout.channel.recv_exit_status()
+    finally:
+        client.close()
+    if code != 0:
+        raise RuntimeError(f"{target.label} sudo 认证失败（exit={code}）")
+
+
 def _sudo_prefix(target: SimpleNamespace) -> str:
-    if target.password:
-        return f"echo {shlex.quote(target.password)} | sudo -S"
+    # 调用前必须先 _sudo_refresh(target)；-n 保证口令缺失时失败而非挂起
     return "sudo -n"
+
+
+def _require_pinned_host_key() -> str:
+    fingerprint = os.getenv("VM_HOSTKEY_SHA256", "").strip()
+    if not re.fullmatch(r"SHA256:[A-Za-z0-9+/]{43}", fingerprint):
+        raise RuntimeError(
+            "演示 SSH 需要预先配置可信主机指纹 VM_HOSTKEY_SHA256"
+            "（格式 SHA256:Base64，可通过 ssh-keyscan 获取后经可信渠道核对）；"
+            "拒绝在未校验主机身份时建立 SSH 连接")
+    return fingerprint
 
 
 def _ssh_connect(target: SimpleNamespace) -> paramiko.SSHClient:
     if not target.host or not target.username:
         raise RuntimeError(f"SSH target {target.label} is missing host or username")
     client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-    client.connect(
-        target.host,
-        port=int(target.ssh_port or 22),
-        username=target.username,
-        password=target.password or None,
-        timeout=15,
-        allow_agent=False,
-        look_for_keys=False,
-    )
+    # 与 device_access 同一主机身份策略：指纹钉扎，不匹配即拒绝（防 MITM）
+    client.set_missing_host_key_policy(PinnedHostKey(_require_pinned_host_key()))
+    try:
+        client.connect(
+            target.host,
+            port=int(target.ssh_port or 22),
+            username=target.username,
+            password=target.password or None,
+            timeout=15,
+            allow_agent=False,
+            look_for_keys=False,
+        )
+    except HostKeyMismatch as exc:
+        client.close()
+        raise RuntimeError(f"{target.label} SSH 主机指纹不匹配，连接已阻止") from exc
     return client
 
 
@@ -225,7 +260,8 @@ def _ssh_put(local: Path, remote: str, target: SimpleNamespace) -> None:
     sftp = client.open_sftp()
     try:
         sftp.put(str(local), remote)
-        sftp.chmod(remote, 0o755)
+        # 0700：脚本由属主（上传用户或 root）执行；组/其余用户不可读改
+        sftp.chmod(remote, 0o700)
     finally:
         sftp.close()
         client.close()

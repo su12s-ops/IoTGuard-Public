@@ -1,3 +1,4 @@
+import ipaddress
 import os
 import sys
 import tempfile
@@ -44,8 +45,24 @@ from app.main import app  # noqa: E402
 
 
 def pytest_sessionstart(session):
-    """Regression runs may use only their temporary SQLite files and no network."""
+    """Regression runs may use only their temporary SQLite files and no external network.
+
+    环回（127.0.0.0/8、::1、localhost）放行：回归中的环回端点只可能是
+    进程内/本机测试桩（MQTT broker 桩、HTTP 桩、模拟器——钩子自己规定的
+    "use a test double" 模式）。数字 IP 的 getaddrinfo 不经过 DNS，同样
+    放行；主机名解析与一切非环回连接仍然阻断——"无真实网络"的保护
+    语义保持不变。（此前钩子连 create_connection 对 127.0.0.1 的内部
+    getaddrinfo 都拦截，导致 19 个按设计使用本地桩的测试全部失败。）
+    """
     roots = (Path(_isolated_runtime.name).resolve(), session.config._tmp_path_factory.getbasetemp().resolve())
+
+    def _is_loopback(address) -> bool:
+        try:
+            host = address[0] if isinstance(address, tuple) else address
+            parsed = ipaddress.ip_address(str(host))
+        except ValueError:
+            return str(address[0] if isinstance(address, tuple) else address).lower() in {"localhost"}
+        return parsed.is_loopback
 
     def audit(event, arguments):
         if event == "sqlite3.connect" and str(arguments[0]) != ":memory:":
@@ -53,16 +70,13 @@ def pytest_sessionstart(session):
             if not any(path.is_relative_to(root) for root in roots):
                 raise AssertionError("Regression blocked access to a non-test database")
         elif event == "socket.connect":
-            caller = sys._getframe(1)
-            fallback = getattr(socket, "_fallback_socketpair", None)
-            internal = (fallback is not None and caller.f_code is fallback.__code__ and
-                        arguments[0] is caller.f_locals.get("csock") and
-                        arguments[1] == caller.f_locals["lsock"].getsockname()[:2] and
-                        arguments[1][0] in {"127.0.0.1", "::1"})
-            if not internal:
-                raise AssertionError("Regression blocked a real network connection; use a test double")
+            if _is_loopback(arguments[1]):  # (socket, address)
+                return
+            raise AssertionError("Regression blocked a non-loopback network connection; use a local test double")
         elif event == "socket.getaddrinfo":
-            raise socket.gaierror("Regression DNS disabled")
+            if _is_loopback(arguments[0]):
+                return
+            raise socket.gaierror("Regression DNS disabled (hostnames blocked; numeric loopback allowed)")
 
     sys.addaudithook(audit)
 
