@@ -15,6 +15,8 @@ from app import models
 from app.database import get_db
 from app.services.device_access import allowed_host, require_control
 from app.services.device_inventory import upsert_device
+from app.services import trace_service as tracing
+from app.services.discovery_pipeline import _capability_marks
 from app.services.device_vulnerability import (
     device_matches, register_advisory, run_device_matching,
 )
@@ -118,7 +120,11 @@ def device_detail(device_id: str, db: Session = Depends(get_db)):
 
 @router.post("/{device_id}/refresh", dependencies=[Depends(require_control)])
 def refresh_device(device_id: str, db: Session = Depends(get_db)):
-    """按设备记录的 IP 重新探测识别；关闭的端口会如实标记为 closed。"""
+    """按设备记录的 IP 重新探测识别；关闭的端口会如实标记为 closed。
+
+    第八阶段：刷新即一次只读设备管线任务，生成统一 Trace（探测→服务识别→
+    能力边界标注→组件/身份刷新），事件与证据引用全程可回放。
+    """
     device = db.query(models.IotDevice).filter_by(device_id=device_id).one_or_none()
     if not device:
         raise HTTPException(404, "设备不存在")
@@ -126,15 +132,35 @@ def refresh_device(device_id: str, db: Session = Depends(get_db)):
         host = allowed_host(device.ip)
     except ValueError as exc:
         raise HTTPException(400, f"设备地址已不在允许网段内：{exc}") from exc
+    trace = tracing.start_trace(db, task_type="device_refresh", target_type="device",
+                                target_ref=device_id, run_ref_type="device_task",
+                                run_ref_id=device_id, metadata={"host": host})
+    marks = _capability_marks(device)
+    if marks:
+        tracing.emit(db, trace.trace_id, "capability_marks", actor="pipeline",
+                     status="unsupported",
+                     payload={"target": device_id, "capabilities": marks})
     try:
         device, report = upsert_device(db, host, [service.port for service in device.services] or None)
     except ValueError as exc:
         device.status = "offline"
         device.last_seen_at = models.utcnow()
         db.commit()
+        tracing.finish_trace(db, trace.trace_id, "completed",
+                             summary={"status": "offline", "detail": str(exc)})
         return {"device_id": device_id, "status": "offline", "detail": str(exc)}
+    tracing.emit(db, trace.trace_id, "device_refreshed", actor="pipeline", status="succeeded",
+                 payload={"probed_ports": report.get("probed_ports", []),
+                          "identified": report.get("identified", {}),
+                          "identity_source": report.get("identity_source", ""),
+                          "identity_confidence": report.get("identity_confidence", 0)})
     data = serialize_device(device, include_detail=True, db=db)
     data["discovery_report"] = report
+    data["trace_id"] = trace.trace_id
+    tracing.finish_trace(db, trace.trace_id, "completed",
+                         summary={"status": device.status,
+                                  "services": len(device.services),
+                                  "components": len(device.components)})
     return data
 
 
@@ -195,9 +221,20 @@ def add_device_advisory(device_id: str, payload: AdvisoryInput, db: Session = De
 def match_device(device_id: str, db: Session = Depends(get_db)):
     """对设备执行组件 × CVE 匹配（厂商公告精确版本优先，NVD 通用路线降级）。"""
     device = _get_device(db, device_id)
+    trace = tracing.start_trace(db, task_type="device_cve_match", target_type="device",
+                                target_ref=device_id, run_ref_type="device_task",
+                                run_ref_id=device_id)
     result = run_device_matching(db, device)
-    return {"device_id": device_id, **result,
-            "matches": device_matches(db, device)}
+    matches = device_matches(db, device)
+    tracing.emit(db, trace.trace_id, "cve_match", actor="pipeline", status="succeeded",
+                 payload={"matched": result.get("matched", 0),
+                          "tiers": {m["cve_id"]: m["match_status"] for m in matches[:20]}},
+                 evidence_refs=[m["cve_id"] for m in matches])
+    tracing.finish_trace(db, trace.trace_id, "completed",
+                         summary={"matched": result.get("matched", 0),
+                                  "affected": sum(1 for m in matches if m["affected"])})
+    return {"device_id": device_id, **result, "trace_id": trace.trace_id,
+            "matches": matches}
 
 
 @router.get("/{device_id}/vulnerabilities")

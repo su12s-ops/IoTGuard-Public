@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db
 from app.services import agent_harness as harness
+from app.services import trace_service as tracing
 from app.services.device_access import require_control
 
 router = APIRouter(prefix="/harness", tags=["Agent task harness"])
@@ -30,7 +31,7 @@ class Approval(BaseModel):
 
 
 def serialize(row, db=None):
-    value = {key: getattr(row, key) for key in ("id", "asset_id", "risk_id", "connection_id", "status", "current_step", "plan_hash", "approved_by", "approval_reason", "error", "attempts", "created_at", "updated_at", "completed_at")}
+    value = {key: getattr(row, key) for key in ("id", "asset_id", "risk_id", "connection_id", "status", "current_step", "plan_hash", "approved_by", "approval_reason", "error", "attempts", "trace_id", "created_at", "updated_at", "completed_at")}
     value.update(plan=json.loads(row.plan_json), result=json.loads(row.result_json), snapshot=json.loads(row.snapshot_json))
     if db is not None:
         value["tool_calls"] = [{"id": c.id, "tool": c.tool, "status": c.status, "side_effect": c.side_effect,
@@ -68,10 +69,33 @@ def artifacts():
 
 @router.post("/runs", dependencies=[Depends(require_control)])
 def create(payload: CreateRun, db: Session = Depends(get_db)):
+    """创建 Harness 任务并生成统一 Trace（第八阶段）。
+
+    计划生成/审批/工具调用/回滚事件经 agent_harness 服务写入同一 trace_id；
+    不改变任何既有安全行为（审批绑定、互斥锁、预算、写开关）。
+    """
+    task_type = {"collect": "harness_collect", "investigate": "harness_investigate",
+                 "repair": "harness_repair"}[payload.goal]
+    trace = tracing.start_trace(db, task_type=task_type, target_type="asset",
+                                target_ref=f"asset-{payload.asset_id}", run_ref_type="harness",
+                                run_ref_id="pending",
+                                metadata={"goal": payload.goal, "risk_id": payload.risk_id,
+                                          "model_review": payload.model_review})
     try:
-        return serialize(harness.create_run(db, **payload.model_dump()), db)
+        run = harness.create_run(db, **payload.model_dump(), trace_id=trace.trace_id)
     except (ValueError, OSError) as exc:
+        tracing.finish_trace(db, trace.trace_id, "failed", error=str(exc),
+                             summary={"harness_status": "create_failed"})
         raise HTTPException(400, str(exc)) from exc
+    trace.run_ref_id, trace.harness_run_id = run.id, run.id
+    db.commit()
+    if run.status == "blocked":
+        # 计划在生成阶段即被安全策略拦截（缺连接/未授权/产物不一致等）：
+        # 任务无法推进，Trace 以 blocked 收口，原因见 harness_policy_blocked 事件。
+        tracing.finish_trace(db, trace.trace_id, "blocked",
+                             summary={"harness_status": "blocked",
+                                      "reasons": json.loads(run.plan_json).get("blocked_reasons", [])})
+    return serialize(run, db)
 
 
 @router.post("/runs/{run_id}/approve", dependencies=[Depends(require_control)])

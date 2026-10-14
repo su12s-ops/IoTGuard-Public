@@ -82,7 +82,15 @@ class DeepSeekChatClient:
             except json.JSONDecodeError:
                 arguments = {}
             tool_calls.append({"id": call.id, "name": call.function.name, "arguments": arguments})
-        return {"content": choice.message.content, "tool_calls": tool_calls}
+        # 真实用量仅在响应携带 usage 时透出（第八阶段追踪消费；缺失时不编造）
+        usage = None
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            usage = {"prompt_tokens": getattr(raw_usage, "prompt_tokens", None),
+                     "completion_tokens": getattr(raw_usage, "completion_tokens", None),
+                     "total_tokens": getattr(raw_usage, "total_tokens", None)}
+        return {"content": choice.message.content, "tool_calls": tool_calls,
+                "model": self._model, "usage": usage}
 
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
@@ -116,6 +124,10 @@ class AgentResult:
     attempts: int = 0
     latency_ms: int = 0
     error: str = ""
+    # LLM 调用统计（第八阶段追踪）：仅真实客户端提供时填充，测试假客户端为空
+    llm_calls: int = 0
+    llm_model: str = ""
+    llm_usage: dict[str, Any] | None = None   # 真实 token 用量；无依据时保持 None
 
 
 class ToolLoopAgent:
@@ -146,13 +158,19 @@ class ToolLoopAgent:
         started = time.monotonic()
         deadline = started + deadline_s
         last_error = ""
+        stats = {"calls": 0, "model": "", "usage": None}   # 真实客户端才填充
         for attempt in range(1 + self.spec.llm_retries):
             if time.monotonic() > deadline:
                 return AgentResult(self.spec.name, "timeout", None, attempts=attempt,
                                    latency_ms=int((time.monotonic() - started) * 1000),
-                                   error=f"超过总时限 {deadline_s}s")
+                                   error=f"超过总时限 {deadline_s}s",
+                                   llm_calls=stats["calls"], llm_model=stats["model"],
+                                   llm_usage=stats["usage"])
             try:
-                result = self._run_once(db, context, deadline)
+                result = self._run_once(db, context, deadline, stats)
+                result.llm_calls = stats["calls"]
+                result.llm_model = stats["model"]
+                result.llm_usage = stats["usage"]
                 if result.status == "succeeded":
                     result.attempts = attempt + 1
                     result.latency_ms = int((time.monotonic() - started) * 1000)
@@ -163,9 +181,12 @@ class ToolLoopAgent:
             except Exception as exc:  # LLM 网络错误、解析失败等，交由重试策略
                 last_error = f"{type(exc).__name__}: {exc}"
         return AgentResult(self.spec.name, "failed", None, attempts=1 + self.spec.llm_retries,
-                           latency_ms=int((time.monotonic() - started) * 1000), error=last_error)
+                           latency_ms=int((time.monotonic() - started) * 1000), error=last_error,
+                           llm_calls=stats["calls"], llm_model=stats["model"],
+                           llm_usage=stats["usage"])
 
-    def _run_once(self, db: Session, context: str, deadline: float) -> AgentResult:
+    def _run_once(self, db: Session, context: str, deadline: float,
+                  stats: dict[str, Any]) -> AgentResult:
         tool_calls_log: list[dict[str, Any]] = []
         allowed = {tool.name: tool for tool in self.spec.tools}
         messages: list[dict[str, Any]] = [
@@ -176,6 +197,16 @@ class ToolLoopAgent:
             if time.monotonic() > deadline:
                 raise TimeoutError("工具循环超时")
             response = self.client.complete(messages, tools=self._tool_schemas() or None)
+            # 汇总真实 LLM 统计（假客户端无 usage/model 字段 → 保持空，不编造）
+            stats["calls"] = stats.get("calls", 0) + 1
+            if response.get("model"):
+                stats["model"] = response["model"]
+            if response.get("usage"):
+                merged = dict(stats.get("usage") or {})
+                for key, value in response["usage"].items():
+                    if value is not None:
+                        merged[key] = (merged.get(key) or 0) + value
+                stats["usage"] = merged
             calls = response.get("tool_calls") or []
             if not calls:
                 parsed = parse_structured_output(response.get("content") or "")

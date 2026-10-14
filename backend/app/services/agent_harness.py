@@ -25,6 +25,7 @@ from sqlalchemy.exc import IntegrityError
 
 from app import models
 from app.services import device_access, iot_devices
+from app.services import trace_service as tracing
 from app.services.matching_engine import run_matching
 from app.services.remediation_engine import _authorized
 from app.services.runtime_telemetry import coverage, compare_windows
@@ -124,7 +125,8 @@ def _risk_and_match(db, run, require_active=True):
     return risk, match
 
 
-def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", model_review=False):
+def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", model_review=False,
+               trace_id=""):
     if device_access.collection_only_mode() and goal != "collect":
         raise ValueError("联调采集模式只允许纯采集任务，不允许调查、复核或修复")
     if goal == "collect":
@@ -193,22 +195,38 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
     else:
         run.status = "pending"
     run.plan_json, run.plan_hash = encode(plan), digest(plan)
+    run.trace_id = trace_id or ""
     db.add(run)
     db.commit()
+    if run.trace_id:
+        payload = {"goal": goal, "plan_hash": run.plan_hash, "status": run.status,
+                   "steps": plan["steps"], "blocked_reasons": plan.get("blocked_reasons", [])}
+        tracing.emit(db, run.trace_id, "harness_plan", actor="harness",
+                     status=run.status, payload=payload,
+                     evidence_refs=plan.get("agent_evidence_ids", []))
+        if run.status == "blocked":
+            tracing.emit(db, run.trace_id, "harness_policy_blocked", actor="harness",
+                         status="blocked", payload={"reasons": plan.get("blocked_reasons", [])})
     return run
 
 
 def approve(db, run, plan_hash, actor, reason):
     if digest(json.loads(run.plan_json)) != plan_hash:
+        tracing.emit(db, run.trace_id, "harness_policy_blocked", actor="harness",
+                     status="blocked", payload={"check": "plan_hash_mismatch", "submitted": plan_hash})
         raise ValueError("计划完整性校验失败")
     changed = db.execute(update(models.HarnessRun).where(models.HarnessRun.id == run.id,
         models.HarnessRun.status == "awaiting_approval", models.HarnessRun.plan_hash == plan_hash).values(
         approval_hash=plan_hash, approved_by=actor, approval_reason=reason, status="approved"))
     if changed.rowcount != 1:
         db.rollback()
+        tracing.emit(db, run.trace_id, "harness_policy_blocked", actor="harness",
+                     status="blocked", payload={"check": "approve_precondition", "status_was": run.status})
         raise ValueError("计划已变化或当前任务不处于待审批状态")
     db.commit()
     db.refresh(run)
+    tracing.emit(db, run.trace_id, "harness_approved", actor="harness", status="approved",
+                 payload={"plan_hash": plan_hash, "approved_by": actor, "reason": reason[:200]})
 
 
 def cancel(db, run):
@@ -220,17 +238,24 @@ def cancel(db, run):
         raise ValueError("运行中或结果待复查的任务不能直接取消")
     db.commit()
     db.refresh(run)
+    tracing.finish_trace(db, run.trace_id, "completed",
+                         summary={"harness_status": "cancelled", "cancelled": True})
 
 
 def tool(db, run, name, function, arguments=None, side_effect=False, phase="main"):
     calls = db.query(models.HarnessToolCall).filter_by(run_id=run.id).all()
     phase_count = sum(json.loads(c.arguments_json).get("_phase", "main") == phase for c in calls)
     if phase_count >= (6 if phase == "rollback" else 16):
+        tracing.emit(db, run.trace_id, "harness_policy_blocked", actor="harness", status="blocked",
+                     payload={"check": "tool_budget", "phase": phase, "budget": 6 if phase == "rollback" else 16})
         raise ValueError("任务工具调用预算已用尽；请新建任务继续调查")
     call = models.HarnessToolCall(run_id=run.id, tool=name, side_effect=side_effect, arguments_json=encode({**(arguments or {}), "_phase": phase}))
     run.current_step = name
     db.add(call)
     db.commit()
+    tracing.emit(db, run.trace_id, "harness_tool_started", actor="harness", status="running",
+                 payload={"tool": name, "phase": phase, "side_effect": bool(side_effect),
+                          "call_id": call.id}, commit=False)
     started = time.monotonic()
     try:
         result = function()
@@ -238,11 +263,27 @@ def tool(db, run, name, function, arguments=None, side_effect=False, phase="main
         return result
     except Exception as exc:
         call.status, call.error = "failed", str(exc)[:1200]
+        tracing.emit(db, run.trace_id, "harness_tool_failed", actor="harness", status="failed",
+                     payload={"tool": name, "phase": phase, "call_id": call.id,
+                              "error": str(exc)[:500]},
+                     duration_ms=round((time.monotonic() - started) * 1000), commit=False)
         raise
     finally:
         call.duration_ms = round((time.monotonic() - started) * 1000)
         call.completed_at = models.utcnow()
         db.commit()
+        if call.status == "completed":
+            tracing.emit(db, run.trace_id, "harness_tool_finished", actor="harness",
+                         status="succeeded",
+                         payload={"tool": name, "phase": phase, "call_id": call.id,
+                                  "side_effect": bool(side_effect),
+                                  "summary": _tool_result_brief(result) if call.status == "completed" else ""},
+                         duration_ms=call.duration_ms)
+
+
+def _tool_result_brief(result, limit=400):
+    text = encode(result)
+    return text[:limit] + ("…" if len(text) > limit else "")
 
 
 def _collect(db, connection):
@@ -395,6 +436,12 @@ def execute(db, run, verify_only=False):
     run.attempts += 1
     run.error = ""
     db.commit()
+    if run.trace_id:
+        tracing.emit(db, run.trace_id, "harness_execute_started", actor="harness", status="running",
+                     payload={"attempt": run.attempts, "goal": plan.get("goal"),
+                              "verify_only": bool(verify_only),
+                              "approved": run.approval_hash == run.plan_hash,
+                              "asset_lock": run.asset_id})
     write_started = False
     try:
         connection = db.get(models.DeviceConnection, run.connection_id) if run.connection_id else None
@@ -469,6 +516,17 @@ def execute(db, run, verify_only=False):
         run.completed_at = models.utcnow()
         db.query(models.HarnessAssetLock).filter_by(asset_id=run.asset_id, run_id=run.id).delete()
         db.commit()
+        if run.trace_id:
+            tracing.emit(db, run.trace_id, "harness_finished", actor="harness",
+                         status=run.status,
+                         payload={"harness_status": run.status, "error": (run.error or "")[:500],
+                                  "verify_only": bool(verify_only)})
+            trace_status = ("completed" if run.status in {"completed", "verified", "needs_evidence"}
+                            else "failed")
+            tracing.finish_trace(db, run.trace_id, trace_status, error=run.error,
+                                 summary={"harness_status": run.status,
+                                          "asset_id": run.asset_id,
+                                          "verify_only": bool(verify_only)})
     return run
 
 
@@ -481,6 +539,11 @@ def recover_interrupted(db):
         db.query(models.HarnessAssetLock).filter_by(run_id=row.id).delete()
         for call in db.query(models.HarnessToolCall).filter_by(run_id=row.id, status="running"):
             call.status, call.error = "interrupted", "运行进程中断或租约超时"
+        if row.trace_id:
+            tracing.emit(db, row.trace_id, "harness_finished", actor="harness",
+                         status="interrupted",
+                         payload={"harness_status": "interrupted",
+                                  "note": "执行租约超时；未重放任何写操作"})
     db.commit()
     return len(rows)
 
@@ -534,4 +597,12 @@ def rollback(db, run, plan_hash, actor, reason):
     finally:
         db.query(models.HarnessAssetLock).filter_by(asset_id=run.asset_id, run_id=run.id).delete()
         db.commit()
+        if run.trace_id:
+            tracing.emit(db, run.trace_id, "harness_rollback", actor="harness", status=run.status,
+                         payload={"harness_status": run.status, "error": (run.error or "")[:500],
+                                  "rollback_artifact_id": plan.get("rollback_artifact_id", "")})
+            tracing.finish_trace(db, run.trace_id,
+                                 "completed" if run.status == "rolled_back" else "failed",
+                                 error=run.error,
+                                 summary={"harness_status": run.status, "rollback": True})
     return run

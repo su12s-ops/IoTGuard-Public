@@ -53,10 +53,23 @@
 - [x] 验收 20/20 ALL PASS（backend/scripts/stage7_zephyr_live.py）+ 回归 26/26 复跑通过
 - [x] 勘误：上一轮"qemu_cortex_a9 构建成功"无产物支撑（build-arm 为 Kconfig 阶段失败的半成品），本轮为首次真实完成
 
+## 最近完成
+
+**第八阶段：统一任务 Trace 与可观测性系统**（2026-10-14，证据 reports/stage8-trace-20261014-094539/ 本地留存）
+- [x] 统一 Trace 数据结构：trace_run（trace_id/任务类型/资产标识/运行标识/Harness 关联/起止/状态/汇总）+ trace_event（seq 顺序/actor/is_llm_step/payload/证据引用/耗时）；旧表（AgentAuditRecord/AgentOrchestrationRun/HarnessRun）不动，仅增量 trace_id 列（SQLite ALTER 兼容），旧记录不回填不伪造
+- [x] 四智能体追踪：start_analysis 生成唯一 trace_id；agent_started/finished/failed + 阶段/交接事件；LLM 调用真实统计（DeepSeekChatClient 透出真实 usage；无依据 unavailable）；程序步骤 is_llm_step=false 不伪装；失败/超时/证据校验错误如实入 Trace
+- [x] Harness 关联：create_run 可选 trace_id（空=旧路径零影响）；计划生成/审批通过与拒绝（policy_blocked）/工具调用（开始/结束/失败）/预算拦截/执行收口/回滚/超时恢复全部事件化；安全行为（计划哈希审批绑定/资产锁/预算/写开关/不重放写操作）零变更
+- [x] 设备管线 Trace：discovery_enrollment / device_refresh / device_cve_match 三类任务；Zephyr 能力 unsupported（ssh/package/eBPF）如实 capability_marks 入 Trace
+- [x] Trace API（/api/traces*，7 端点）：列表分页+过滤/详情/时间线/智能体事件/Harness 关联（not_requested/not_applicable 诚实语义）/证据解析（unresolved 如实）/汇总统计；payload 写入端脱敏（敏感键分词匹配）+16KB 限长；索引齐备
+- [x] AgentOps 前端四区域：任务总览（真实统计）/智能体时间线（28 事件含 LLM 标记与真实模型耗时）/Harness 安全监控（关联状态+工具调用+策略拦截）/证据关联（SE-/CVE 解析+资产跳转）；loading/empty/error 状态；无静态演示数据
+- [x] 真实只读安全评估演示：真实发现入档 Zephyr 设备 → 真实 DeepSeek 四智能体分析（4/4 真实 token 用量）→ Trace 全链路验收 ALL PASS；浏览器实测前端展示（截图本地留存）
+- [x] 测试：专项 test_trace_system 15/15；全量回归 356 passed（19 失败均为既有已知冲突文件，改动前基线 33 失败——无新增回归）；前端构建通过
+- [x] 诚实性修复：成功路径 LLM 统计回填补齐（真实 model/tokens 不再显示 unavailable）
+
 ## 下一步（等待指令，不自动开始）
 
-- 第八阶段待用户指令（未开始）
-- 可选增强：为主机线登记真实 OpenWrt 官方公告；Zephyr 厂商公告层接真实上游 advisory 数据源
+- 第九阶段待用户指令（未开始）
+- 可选：Mimosa 完整扫描仍不可用（project_model/python_ast_unavailable），全局安全审计未执行（如实记录）
 
 ## 已知事项
 

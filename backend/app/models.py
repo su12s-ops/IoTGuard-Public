@@ -468,6 +468,8 @@ class HarnessRun(Base):
     result_json = Column(Text, default="{}")
     error = Column(Text, default="")
     attempts = Column(Integer, default=0)
+    # 第八阶段：统一追踪关联（空串=无追踪；由创建入口写入，不影响既有安全行为）
+    trace_id = Column(String(48), default="", index=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     completed_at = Column(DateTime, nullable=True)
@@ -743,9 +745,81 @@ class AgentOrchestrationRun(Base):
     remediation_json = Column(Text, default="{}")
     verify_json = Column(Text, default="{}")
     error = Column(Text, default="")
+    # 第八阶段：统一追踪关联（新记录写入；旧记录保持空串=无追踪，不回填不伪造）
+    trace_id = Column(String(48), default="", index=True)
     created_at = Column(DateTime, default=utcnow)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
     completed_at = Column(DateTime, nullable=True)
+
+
+# ── 统一任务追踪（第八阶段：四智能体 + Harness + 设备管线共用 Trace） ─────────
+
+
+class TraceRun(Base):
+    """一次独立安全任务的统一追踪根记录。
+
+    trace_id 全局唯一；同一任务的智能体步骤、工具调用、Harness 事件、
+    证据引用全部通过 trace_event 追加记录并保持发生顺序。
+    旧审计表（AgentAuditRecord / AgentOrchestrationRun / HarnessRun）不迁移、
+    不回填 trace_id——旧数据保持原样可读，新任务才产生 Trace。
+    """
+
+    __tablename__ = "trace_run"
+    __table_args__ = (
+        Index("ix_trace_run_created", "created_at"),
+        Index("ix_trace_run_type_status", "task_type", "status"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    trace_id = Column(String(48), unique=True, index=True, nullable=False)
+    task_type = Column(String(48), default="", index=True)
+    # four_agent_analysis / device_refresh / device_cve_match / discovery_enrollment /
+    # harness_investigate / harness_repair / harness_collect
+    target_type = Column(String(32), default="")   # device / linux_host / cidr / asset
+    target_ref = Column(String(128), default="", index=True)
+    run_ref_type = Column(String(48), default="")  # agent_orchestration / harness / device_task
+    run_ref_id = Column(String(64), default="")    # 关联既有运行记录主键（run_id / harness id）
+    harness_run_id = Column(String(32), default="", index=True)  # Harness 关联（可空）
+    status = Column(String(32), default="running")  # running/completed/failed/blocked
+    summary_json = Column(Text, default="{}")
+    error = Column(Text, default="")
+    started_at = Column(DateTime, default=utcnow)
+    finished_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
+class TraceEvent(Base):
+    """追踪事件（只追加）：保持发生顺序，记录证据引用与结构化摘要。
+
+    seq 为 trace 内单调递增序号（分配时 SELECT MAX+1，SQLite 写串行化足够）；
+    id 为全局自增，两者都可用于排序校验。payload 经服务端脱敏并限长。
+    """
+
+    __tablename__ = "trace_event"
+    __table_args__ = (
+        Index("ix_trace_event_trace_seq", "trace_id", "seq"),
+        Index("ix_trace_event_type", "event_type"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    trace_id = Column(String(48), index=True, nullable=False)
+    seq = Column(Integer, default=0)
+    event_type = Column(String(48), default="")
+    # task_started/task_finished/agent_started/agent_finished/agent_failed/
+    # stage_started/stage_finished/handoff/llm_result/tool_called/tool_failed/
+    # harness_plan/harness_approved/harness_policy_blocked/harness_tool_started/
+    # harness_tool_finished/harness_tool_failed/harness_finished/harness_rollback/
+    # capability_marks/cve_match/policy_blocked/...
+    actor = Column(String(64), default="")         # 智能体名 / orchestrator / harness / pipeline
+    status = Column(String(32), default="")        # succeeded/failed/timeout/blocked/unsupported...
+    is_llm_step = Column(Boolean, default=False)   # 大模型步骤如实标注（程序步骤不得伪装）
+    payload_json = Column(Text, default="{}")
+    evidence_refs_json = Column(Text, default="[]")  # evidence_id / CVE 等证据引用
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    duration_ms = Column(Integer, default=0)
+    created_at = Column(DateTime, default=utcnow)
 
 
 # ── 互联网授权目标主动扫描（阶段六：双重授权 → 端口扫描 → 指纹 → CVE 匹配） ──

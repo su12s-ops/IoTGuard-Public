@@ -46,3 +46,10 @@ export const fetchAgentRun = runId => api.get("/agents/runs/" + runId).then(r =>
 export const startMqttWorkflow = payload => api.post("/remediation/workflow/mqtt-anonymous", payload, control()).then(r => r.data);
 export const fetchWorkflowRuns = () => api.get("/remediation/workflow/runs").then(r => r.data);
 export const fetchWorkflowRun = runId => api.get("/remediation/workflow/runs/" + runId).then(r => r.data);
+
+// 统一任务追踪（第八阶段：四智能体 + Harness + 设备管线共用 Trace）。
+export const fetchTraces = params => api.get("/traces", { params }).then(r => r.data);
+export const fetchTraceSummary = () => api.get("/traces/summary").then(r => r.data);
+export const fetchTraceDetail = traceId => api.get("/traces/" + traceId).then(r => r.data);
+export const fetchTraceHarness = traceId => api.get("/traces/" + traceId + "/harness").then(r => r.data);
+export const fetchTraceEvidence = traceId => api.get("/traces/" + traceId + "/evidence").then(r => r.data);

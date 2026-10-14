@@ -14,7 +14,7 @@ from sqlalchemy import text
 
 from app.config import API_TITLE, API_VERSION, DATABASE_URL, DEEPSEEK_MODEL
 from app.database import SessionLocal, init_db
-from app.routers import analysis, assets, dashboard, demo, matching, remediation, reports, risk, runtime, vulnerabilities, workflow
+from app.routers import analysis, assets, dashboard, demo, matching, remediation, reports, risk, runtime, vulnerabilities, workflow, traces
 from app.routers import iot, harness, devices, agents, remediation_workflow, scans
 
 
@@ -247,3 +247,4 @@ app.include_router(devices.router, prefix="/api")
 app.include_router(agents.router, prefix="/api")
 app.include_router(remediation_workflow.router, prefix="/api")
 app.include_router(scans.router, prefix="/api")
+app.include_router(traces.router, prefix="/api")

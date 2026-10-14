@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import SessionLocal
+from app.services import trace_service as tracing
 from app.services.agents import agents as A
 from app.services.agents.base import AgentResult, ChatClient, ToolLoopAgent
 
@@ -49,7 +50,11 @@ def _now_iso() -> str:
 
 
 class RunState:
-    """阶段状态机：绑定编排线程会话，每次变更即提交，供 API 轮询。"""
+    """阶段状态机：绑定编排线程会话，每次变更即提交，供 API 轮询。
+
+    begin/finish 同时是统一追踪的事件挂钩点（第八阶段）：trace_id 为空时
+    tracing.emit 静默跳过，直接调用 run_orchestration 的既有测试零影响。
+    """
 
     def __init__(self, db: Session, row: models.AgentOrchestrationRun):
         self.db = db
@@ -57,14 +62,30 @@ class RunState:
         self.stages: dict[str, Any] = json.loads(row.stages_json or "{}")
 
     def begin(self, stage: str) -> None:
+        previous = next((name for name in reversed(list(self.stages))
+                         if self.stages[name].get("status") in {"succeeded", "failed"}), "")
         self.stages[stage] = {"status": "running", "started_at": _now_iso()}
         self._flush()
+        if previous:
+            tracing.emit(self.db, self.row.trace_id, "handoff", actor="orchestrator",
+                         status="succeeded",
+                         payload={"from": previous, "to": stage},
+                         started_at=self.row.updated_at)
+        tracing.emit(self.db, self.row.trace_id, "stage_started", actor="orchestrator",
+                     status="running", payload={"stage": stage},
+                     started_at=self.row.updated_at)
 
     def finish(self, stage: str, status: str, **fields: Any) -> None:
         entry = self.stages.get(stage, {})
+        started = entry.get("started_at")
         entry.update({"status": status, "finished_at": _now_iso(), **fields})
         self.stages[stage] = entry
         self._flush()
+        payload = {"stage": stage}
+        if status == "failed":
+            payload["error"] = str(fields.get("error", ""))[:800]
+        tracing.emit(self.db, self.row.trace_id, "stage_finished", actor="orchestrator",
+                     status=status, payload=payload)
 
     def output(self, stage: str) -> dict[str, Any]:
         return self.stages.get(stage, {}).get("output") or {}
@@ -230,6 +251,21 @@ def _context_for(spec: A.AgentSpec, host: str, device: dict[str, Any] | None = N
     return base
 
 
+def _output_summary(output: dict[str, Any] | None, limit: int = 12) -> dict[str, Any]:
+    """结构化输出摘要（键级裁剪，完整输出仍在 stages_json；不含敏感原文）。"""
+    if not isinstance(output, dict):
+        return {}
+    summary: dict[str, Any] = {}
+    for key, value in list(output.items())[:limit]:
+        if isinstance(value, list):
+            summary[key] = {"count": len(value), "sample": value[:3]}
+        elif isinstance(value, dict):
+            summary[key] = {"keys": list(value)[:8]}
+        else:
+            summary[key] = value
+    return summary
+
+
 def run_orchestration(db: Session, run: models.AgentOrchestrationRun,
                       client_factory: ClientFactory = default_client_factory,
                       stage_budget_s: float = 150.0) -> models.AgentOrchestrationRun:
@@ -241,6 +277,10 @@ def run_orchestration(db: Session, run: models.AgentOrchestrationRun,
 
     def run_agent(spec, context: str) -> AgentResult:
         agent = ToolLoopAgent(spec, client_factory())
+        tracing.emit(db, run.trace_id, "agent_started", actor=spec.name, status="running",
+                     is_llm_step=True, payload={"agent": spec.name, "role": spec.role},
+                     started_at=models.utcnow())
+        agent_started = time.monotonic()
         result = agent.run(db, context=context, deadline_s=stage_budget_s)
         agents_log[spec.name] = {
             "status": result.status, "attempts": result.attempts,
@@ -250,7 +290,30 @@ def run_orchestration(db: Session, run: models.AgentOrchestrationRun,
         }
         run.agents_json = json.dumps(agents_log, ensure_ascii=False, default=str)
         db.commit()
+        # 智能体事件：结构化输出摘要 + 工具调用 + LLM 真实统计（无依据时 unavailable）
+        refs: list[str] = list(result.output.get("evidence_ids") or []) if result.output else []
+        if result.output:
+            refs += [f.get("cve_id", "") for f in result.output.get("findings", [])
+                     if isinstance(f, dict) and f.get("cve_id")]
+        tracing.emit(db, run.trace_id,
+                     "agent_finished" if result.status == "succeeded" else "agent_failed",
+                     actor=spec.name, status=result.status, is_llm_step=True,
+                     payload={
+                         "agent": spec.name,
+                         "attempts": result.attempts,
+                         "latency_ms": result.latency_ms,
+                         "error": (result.error or "")[:800],
+                         "tool_calls": [{"name": c["name"], "ok": c.get("ok", False)}
+                                        for c in result.tool_calls],
+                         "llm": {"calls": result.llm_calls,
+                                 "model": result.llm_model or "unavailable",
+                                 "llm_tokens": result.llm_usage or "unavailable"},
+                         "output_summary": _output_summary(result.output),
+                     },
+                     evidence_refs=refs,
+                     duration_ms=result.latency_ms)
         return result
+
 
     # DEVICE
     state.begin("DEVICE")
@@ -329,21 +392,54 @@ def _complete(db: Session, run: models.AgentOrchestrationRun, status: str, error
     run.error = error
     run.completed_at = models.utcnow()
     db.commit()
+    stages = json.loads(run.stages_json or "{}")
+    risk = json.loads(run.risk_json or "{}")
+    tracing.finish_trace(db, run.trace_id, status, error=error, summary={
+        "stages": {name: entry.get("status") for name, entry in stages.items()},
+        "risk_score": risk.get("risk_score"), "priority": risk.get("priority"),
+        "runtime_level": risk.get("runtime_level"),
+        "agents": sorted(json.loads(run.agents_json or "{}").keys()),
+    })
     return run
+
+
+def _target_capability_marks(db: Session, target_type: str, target_ref: str) -> dict[str, Any] | None:
+    """目标设备能力边界（如实标注）：Zephyr 等嵌入式 OS 的 unsupported 项。"""
+    if target_type != "device":
+        return None
+    device = db.query(models.IotDevice).filter_by(device_id=target_ref).one_or_none()
+    if device is None:
+        return None
+    from app.services.discovery_pipeline import _capability_marks
+    return _capability_marks(device)
 
 
 def start_analysis(target_ref: str, target_type: str = "device",
                    client_factory: ClientFactory = default_client_factory) -> models.AgentOrchestrationRun:
-    """创建运行记录并在后台线程执行编排（API 入口）。"""
+    """创建运行记录并在后台线程执行编排（API 入口）。
+
+    第八阶段：每次分析生成统一 trace_id（唯一），编排内全部智能体步骤、
+    阶段与交接事件共享该 trace_id；目标能力边界（如 Zephyr unsupported）如实记录。
+    """
     db = SessionLocal()
     try:
+        marks = _target_capability_marks(db, target_type, target_ref)
+        trace = tracing.start_trace(
+            db, task_type="four_agent_analysis", target_type=target_type, target_ref=target_ref,
+            run_ref_type="agent_orchestration", run_ref_id="pending",
+            metadata={"capability_marks": marks} if marks else {})
         run = models.AgentOrchestrationRun(
             run_id=new_run_id(), target_type=target_type, target_ref=target_ref,
-            status="running",
+            status="running", trace_id=trace.trace_id,
             stages_json=json.dumps({stage: {"status": "pending"} for stage in STAGES}),
         )
         db.add(run)
         db.commit()
+        trace.run_ref_id = run.run_id
+        db.commit()
+        if marks:
+            tracing.emit(db, trace.trace_id, "capability_marks", actor="pipeline",
+                         status="unsupported", payload={"target": target_ref, "capabilities": marks})
 
         def worker() -> None:
             worker_db = SessionLocal()
@@ -356,6 +452,8 @@ def start_analysis(target_ref: str, target_type: str = "device",
                     row.error = f"orchestrator: {type(exc).__name__}: {exc}"
                     row.completed_at = models.utcnow()
                     worker_db.commit()
+                    tracing.finish_trace(worker_db, row.trace_id, "failed",
+                                         error=row.error, summary={"stage": "orchestrator_crash"})
                 except Exception:
                     pass
             finally:

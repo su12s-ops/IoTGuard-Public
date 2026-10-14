@@ -2,6 +2,17 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-14 — 第八阶段：统一任务 Trace 与可观测性系统
+
+- 统一追踪：新增 trace_run / trace_event（seq 顺序、is_llm_step 如实标注、证据引用、payload 服务端脱敏+限长）；旧表增量 trace_id 列（SQLite ALTER），旧记录不回填
+- 四智能体：编排全程事件化（agent/stage/handoff/task 生命周期 + LLM 真实统计）；DeepSeekChatClient 透出真实 usage（无依据 unavailable 不编造）
+- Harness：计划/审批（通过与拒绝）/工具调用/预算拦截/回滚/超时恢复事件关联 trace_id，安全行为零变更；只读分析显示 not_requested 不伪造修复状态
+- 设备管线：discovery_enrollment / device_refresh / device_cve_match 三类任务 Trace；Zephyr 能力 unsupported 如实入 Trace
+- Trace API：/api/traces* 7 端点（分页/详情/时间线/智能体/Harness/证据/统计），索引与脱敏齐备
+- AgentOps 前端：统一追踪标签四区域（总览/时间线/Harness 监控/证据关联），真实数据 + loading/empty/error 状态
+- 真实演示：真实 DeepSeek 只读分析 ALL PASS（4/4 真实 token 用量），浏览器实测四区域展示
+- 测试：专项 15/15；全量回归无新增失败（19 失败为既有已知冲突文件，基线对照 33）；前端构建通过
+
 ## 2026-10-14 — 第七阶段完成：Zephyr 真实端到端联调（QEMU 阻塞解除）
 
 - 阻塞解除：Ubuntu 24.04 VM 安装 qemu-system-arm 8.2.2 / gcc / build-essential（用户执行）；SSH 重连验证（Ubuntu 用户 + VMnet8 管理地址，显式 id_ed25519_vms；具体标识见本地证据）

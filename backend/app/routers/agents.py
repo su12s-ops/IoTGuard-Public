@@ -53,7 +53,8 @@ def analyze(payload: AnalyzeInput, db: Session = Depends(get_db)):
         run = orchestrator.start_analysis(target_ref, target_type)
     except RuntimeError as exc:
         raise HTTPException(503, str(exc)) from exc
-    return {"run_id": run.run_id, "status": run.status, "target": target_ref,
+    return {"run_id": run.run_id, "trace_id": getattr(run, "trace_id", ""),
+            "status": run.status, "target": target_ref,
             "stages": orchestrator.STAGES}
 
 

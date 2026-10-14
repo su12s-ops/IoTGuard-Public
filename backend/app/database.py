@@ -133,6 +133,11 @@ DEVICE_OBSERVATION_COLUMN_MIGRATIONS = {
     "promoted_device_id": "VARCHAR(64) DEFAULT ''",
 }
 
+# 第八阶段：统一追踪关联列（旧库增量；新库由 create_all 直接建出）
+TRACE_COLUMN_MIGRATIONS = {
+    "trace_id": "VARCHAR(48) DEFAULT ''",
+}
+
 # analysis_report 表的新增列（旧库可能只有 answer/transcript_json）
 ANALYSIS_REPORT_COLUMN_MIGRATIONS = {
     "verdict_json": "TEXT DEFAULT ''",
@@ -243,6 +248,8 @@ def _migrate_sqlite_schema():
             ("remediation_task", REMEDIATION_TASK_COLUMN_MIGRATIONS),
             ("analysis_report", ANALYSIS_REPORT_COLUMN_MIGRATIONS),
             ("device_observation", DEVICE_OBSERVATION_COLUMN_MIGRATIONS),
+            ("agent_orchestration_run", TRACE_COLUMN_MIGRATIONS),
+            ("harness_run", TRACE_COLUMN_MIGRATIONS),
         ]:
             if not _sqlite_table_exists(conn, table_name):
                 continue

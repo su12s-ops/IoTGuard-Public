@@ -80,6 +80,135 @@
         </section>
       </el-tab-pane>
 
+      <el-tab-pane label="统一追踪 (Trace)" name="traces">
+        <!-- A. 任务总览：真实记录聚合（无记录时如实空态） -->
+        <section class="operation-section">
+          <div class="section-head">
+            <div>
+              <h2>任务总览</h2>
+              <p class="operation-help">数据来自 trace_run / trace_event 真实记录（第八阶段起生效；此前旧审计记录不回填、不在此伪造展示）。</p>
+            </div>
+            <el-button size="small" :loading="traceLoading" @click="loadTraceOverview">刷新统计</el-button>
+          </div>
+          <el-row :gutter="12" v-loading="traceLoading">
+            <el-col :span="4"><el-statistic title="任务总数" :value="traceSummary.total_traces ?? 0" /></el-col>
+            <el-col :span="4"><el-statistic title="成功" :value="traceSummary.by_status?.completed ?? 0" /></el-col>
+            <el-col :span="4"><el-statistic title="失败" :value="traceSummary.by_status?.failed ?? 0" /></el-col>
+            <el-col :span="4"><el-statistic title="运行中" :value="traceSummary.by_status?.running ?? 0" /></el-col>
+            <el-col :span="4"><el-statistic title="策略拦截" :value="traceSummary.policy_blocked_traces ?? 0" /></el-col>
+            <el-col :span="4">
+              <el-statistic title="平均耗时(ms)" :value="typeof traceSummary.avg_duration_ms === 'number' ? traceSummary.avg_duration_ms : '—'" />
+            </el-col>
+          </el-row>
+        </section>
+
+        <!-- 任务列表：分页 + 过滤，选择一条 Trace 展示 B/C/D -->
+        <section class="operation-section">
+          <div class="section-head">
+            <div><h2>追踪列表</h2></div>
+            <el-select v-model="traceFilter.task_type" clearable placeholder="任务类型" size="small" style="width: 200px" @change="loadTraces">
+              <el-option v-for="t in traceFilter.types" :key="t" :value="t" :label="t" />
+            </el-select>
+          </div>
+          <el-alert v-if="!traceLoading && traces.length === 0" title="暂无追踪记录：发起一次四智能体分析、设备刷新/匹配或 Harness 任务后，将在此出现真实 Trace。" type="info" :closable="false" />
+          <DataTable v-else :rows="traces" :height="260">
+            <el-table-column prop="trace_id" label="Trace" min-width="200" />
+            <el-table-column prop="task_type" label="任务类型" min-width="170" />
+            <el-table-column prop="target_ref" label="目标" min-width="140" />
+            <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="statusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
+            <el-table-column prop="event_count" label="事件数" width="80" />
+            <el-table-column prop="created_at" label="开始时间" min-width="170"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
+            <el-table-column label="操作" width="100"><template #default="{ row }"><el-button size="small" @click="viewTrace(row.trace_id)">详情</el-button></template></el-table-column>
+          </DataTable>
+          <el-pagination v-if="traceTotal > traceFilter.page_size" layout="prev, pager, next" :total="traceTotal"
+            :page-size="traceFilter.page_size" :current-page="traceFilter.page" style="margin-top: 8px" @current-change="page => { traceFilter.page = page; loadTraces(); }" />
+        </section>
+
+        <template v-if="traceDetail">
+          <!-- B. 智能体运行时间线 -->
+          <section class="operation-section">
+            <div class="section-head">
+              <div>
+                <h2>运行时间线 <el-tag size="small">{{ traceDetail.trace_id }}</el-tag></h2>
+                <p class="operation-help">{{ traceDetail.task_type }} · 目标 {{ traceDetail.target_ref }} · 状态 {{ traceDetail.status }}{{ traceDetail.error ? ' · ' + traceDetail.error : '' }}</p>
+              </div>
+              <el-button size="small" :loading="traceLoading" @click="viewTrace(traceDetail.trace_id)">刷新</el-button>
+            </div>
+            <el-timeline v-if="traceDetail.events.length" style="margin-top: 6px">
+              <el-timeline-item v-for="event in traceDetail.events" :key="event.id"
+                :timestamp="`#${event.seq} ${formatTime(event.created_at)}`"
+                :type="timelineType(event)" :hollow="event.status === 'running'">
+                <strong>{{ event.actor || event.event_type }}</strong>
+                <el-tag size="small" style="margin-left: 6px" :type="statusTag(event.status)">{{ event.event_type }}{{ event.status ? ' · ' + event.status : '' }}</el-tag>
+                <el-tag v-if="event.is_llm_step" size="small" type="warning" style="margin-left: 6px">LLM</el-tag>
+                <span v-if="event.duration_ms" class="cell-sub"> · {{ event.duration_ms }}ms</span>
+                <div v-if="event.evidence_refs.length" class="cell-sub">证据引用：{{ event.evidence_refs.join('、') }}</div>
+                <div v-if="agentSummary(event)" class="cell-sub">{{ agentSummary(event) }}</div>
+                <el-collapse v-if="eventDetailLines(event).length" style="margin-top: 4px">
+                  <el-collapse-item title="结构化摘要">
+                    <pre class="trace-payload">{{ eventDetailLines(event).join("\n") }}</pre>
+                  </el-collapse-item>
+                </el-collapse>
+              </el-timeline-item>
+            </el-timeline>
+            <el-empty v-else description="该追踪暂无事件" />
+          </section>
+
+          <el-row :gutter="12">
+            <!-- C. Harness 安全监控 -->
+            <el-col :span="12">
+              <section class="operation-section">
+                <div class="section-head"><div><h2>Harness 安全监控</h2></div></div>
+                <el-descriptions :column="1" border size="small">
+                  <el-descriptions-item label="关联状态">
+                    <el-tag size="small" :type="traceHarness.association === 'linked' ? 'success' : 'info'">{{ harnessAssociationLabel(traceHarness.association) }}</el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item v-if="traceHarness.harness" label="任务状态">{{ traceHarness.harness.status }}</el-descriptions-item>
+                  <el-descriptions-item v-if="traceHarness.harness" label="审批">{{ traceHarness.harness.approval_hash === traceHarness.harness.plan_hash ? '已批准（哈希绑定）' : '未批准' }}</el-descriptions-item>
+                  <el-descriptions-item v-if="traceHarness.harness" label="尝试次数">{{ traceHarness.harness.attempts }}</el-descriptions-item>
+                </el-descriptions>
+                <DataTable v-if="traceHarness.harness" :rows="traceHarness.harness.tool_calls" :height="240" style="margin-top: 8px">
+                  <el-table-column prop="tool" label="工具" min-width="150" />
+                  <el-table-column label="阶段" width="90"><template #default="{ row }">{{ row.phase }}</template></el-table-column>
+                  <el-table-column label="写操作" width="80"><template #default="{ row }">{{ row.side_effect ? '是' : '否' }}</template></el-table-column>
+                  <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="statusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
+                  <el-table-column prop="duration_ms" label="耗时(ms)" width="90" />
+                </DataTable>
+                <div v-if="harnessPolicyEvents.length" style="margin-top: 8px">
+                  <h3 class="drawer-section-title">策略拦截事件</h3>
+                  <el-alert v-for="(blocked, i) in harnessPolicyEvents" :key="i" type="warning" :closable="false"
+                    :title="`${blocked.payload.check || 'policy'}：${(blocked.payload.reasons || []).join('；') || blocked.payload.error || ''}`" />
+                </div>
+              </section>
+            </el-col>
+            <!-- D. 证据关联视图 -->
+            <el-col :span="12">
+              <section class="operation-section">
+                <div class="section-head">
+                  <div><h2>证据关联</h2></div>
+                  <el-button size="small" @click="jumpToTarget">跳转资产</el-button>
+                </div>
+                <DataTable :rows="traceEvidence.evidence || []" :height="200">
+                  <el-table-column prop="evidence_id" label="SecurityEvidence" min-width="150" />
+                  <el-table-column label="解析" width="90"><template #default="{ row }">{{ row.resolved ? '已解析' : 'unresolved' }}</template></el-table-column>
+                  <el-table-column prop="evidence_type" label="类型" width="90" />
+                  <el-table-column prop="severity" label="级别" width="90" />
+                  <el-table-column prop="device_id" label="设备" min-width="120" />
+                </DataTable>
+                <DataTable :rows="traceEvidence.cves || []" :height="180" style="margin-top: 8px">
+                  <el-table-column prop="cve_id" label="CVE" min-width="160" />
+                  <el-table-column label="解析" width="90"><template #default="{ row }">{{ row.resolved ? '已解析' : 'unresolved' }}</template></el-table-column>
+                  <el-table-column prop="cvss_score" label="CVSS" width="80" />
+                  <el-table-column prop="cvss_severity" label="级别" width="100" />
+                </DataTable>
+                <div class="cell-sub" style="margin-top: 6px">{{ traceEvidence.note }}</div>
+              </section>
+            </el-col>
+          </el-row>
+        </template>
+        <el-empty v-else-if="!traceLoading" description="从上方列表选择一条追踪查看时间线 / Harness / 证据关联" />
+      </el-tab-pane>
+
       <el-tab-pane label="修复工作流" name="workflow">
         <section class="operation-section">
           <div class="section-head">
@@ -147,8 +276,12 @@ import DeviceControlToken from "../components/DeviceControlToken.vue";
 import {
   controlSession, errorMessage, fetchDevices,
   startAgentAnalysis, fetchAgentRuns, fetchAgentRun,
-  startMqttWorkflow, fetchWorkflowRuns, fetchWorkflowRun
+  startMqttWorkflow, fetchWorkflowRuns, fetchWorkflowRun,
+  fetchTraces, fetchTraceSummary, fetchTraceDetail, fetchTraceHarness, fetchTraceEvidence
 } from "../api/deviceOperations";
+import { useRouter } from "vue-router";
+
+const router = useRouter();
 
 const tab = ref("agents");
 const loading = ref(false);
@@ -192,6 +325,7 @@ async function startAnalysis() {
     const result = await startAgentAnalysis(payload);
     ElMessage.success("编排已启动：" + result.run_id);
     await viewAgentRun(result.run_id);
+    if (result.trace_id) { tab.value = "traces"; await viewTrace(result.trace_id); }
   } catch (e) { error.value = errorMessage(e); } finally { starting.value = false; }
 }
 
@@ -206,7 +340,7 @@ function startPolling() {
     polling.value = true;
     try {
       agentRun.value = await fetchAgentRun(agentRun.value.run_id);
-      if (agentRun.value.status !== "running") { stopPolling(); await load(); }
+      if (agentRun.value.status !== "running") { stopPolling(); await load(); await loadTraceOverview(); }
     } catch { stopPolling(); }
     polling.value = false;
   }, 3000);
@@ -230,10 +364,83 @@ async function startWorkflow() {
 async function viewWorkflow(runId) { workflow.value = await fetchWorkflowRun(runId); }
 async function refreshWorkflow() { if (workflow.value) workflow.value = await fetchWorkflowRun(workflow.value.run_id); }
 
-onMounted(load);
+// ── 统一追踪（第八阶段）：全部数据来自后端真实记录 ──
+const traceLoading = ref(false);
+const traceSummary = ref({});
+const traces = ref([]);
+const traceTotal = ref(0);
+const traceDetail = ref(null);
+const traceHarness = ref({});
+const traceEvidence = ref({});
+const traceFilter = reactive({ task_type: "", types: [], page: 1, page_size: 10 });
+
+async function loadTraceOverview() {
+  traceLoading.value = true;
+  try {
+    const [summary, listing] = await Promise.all([fetchTraceSummary(), fetchTraces({
+      page: traceFilter.page, page_size: traceFilter.page_size, ...(traceFilter.task_type ? { task_type: traceFilter.task_type } : {})
+    })]);
+    traceSummary.value = summary;
+    traces.value = listing.items;
+    traceTotal.value = listing.total;
+    traceFilter.types = listing.task_types || [];
+  } catch (e) { error.value = errorMessage(e); } finally { traceLoading.value = false; }
+}
+async function loadTraces() { await loadTraceOverview(); }
+
+async function viewTrace(traceId) {
+  traceLoading.value = true;
+  try {
+    const [detail, harness, evidence] = await Promise.all([
+      fetchTraceDetail(traceId), fetchTraceHarness(traceId), fetchTraceEvidence(traceId)]);
+    traceDetail.value = detail;
+    traceHarness.value = harness;
+    traceEvidence.value = evidence;
+  } catch (e) { error.value = errorMessage(e); } finally { traceLoading.value = false; }
+}
+
+const harnessPolicyEvents = computed(() =>
+  (traceHarness.value.events || []).filter(e => e.event_type === "harness_policy_blocked"));
+const timelineType = event => ({
+  succeeded: "success", completed: "success", approved: "success",
+  failed: "danger", blocked: "warning", unsupported: "warning", interrupted: "warning",
+  running: "primary"
+}[event.status] || (event.event_type === "task_finished" ? "success" : "info"));
+const agentSummary = event => {
+  if (!event.event_type.startsWith("agent_")) return "";
+  const p = event.payload || {};
+  const llm = p.llm ? `LLM ${p.llm.calls} 次（${p.llm.model}${p.llm.llm_tokens && p.llm.llm_tokens !== "unavailable" ? "" : "，用量 unavailable"}）` : "";
+  return [p.attempts ? `尝试 ${p.attempts} 次` : "", llm, p.error ? `错误：${p.error}` : ""].filter(Boolean).join(" · ");
+};
+const eventDetailLines = event => {
+  const p = event.payload || {};
+  if (event.event_type.startsWith("agent_") && p.output_summary) {
+    return Object.entries(p.output_summary).map(([k, v]) => `${k}: ${typeof v === "object" ? JSON.stringify(v) : v}`);
+  }
+  if (event.event_type === "capability_marks" && p.capabilities) {
+    return Object.entries(p.capabilities).map(([k, v]) => `${k}: ${v}`);
+  }
+  return [];
+};
+const harnessAssociationLabel = value => ({
+  linked: "已关联 Harness",
+  not_requested: "未请求修复（只读分析，如实呈现，非修复成功）",
+  not_applicable: "不适用（本任务类型无 Harness 环节）"
+}[value] || value);
+function jumpToTarget() {
+  const detail = traceDetail.value;
+  if (!detail) return;
+  if (detail.target_type === "device") router.push("/devices");
+  else if (detail.target_type === "linux_host" || detail.target_type === "asset") router.push("/assets");
+  else if (detail.target_type === "cidr") router.push("/scan");
+}
+
+onMounted(() => { load(); loadTraceOverview(); });
 onUnmounted(stopPolling);
 </script>
 
 <style scoped>
 .drawer-section-title { margin: 18px 0 10px; font-size: 14px; font-weight: 600; }
+.trace-payload { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 220px; overflow: auto; }
+.cell-sub { color: var(--el-text-color-secondary); font-size: 12px; }
 </style>

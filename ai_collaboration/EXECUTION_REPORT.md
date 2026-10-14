@@ -2,6 +2,18 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
 
+## 2026-10-14（第八阶段）：统一任务 Trace 与可观测性系统（专项 15/15 + 真实 LLM 演示 ALL PASS）
+
+- **统一 Trace**：trace_run（唯一 trace_id、任务类型、资产标识、运行标识、Harness 关联、起止与状态）+ trace_event（trace 内 seq 单调保持顺序、actor、is_llm_step、脱敏 payload、证据引用、耗时）；既有审计表零改动，仅 SQLite ALTER 增量 trace_id 列，旧记录保持原样可读（不回填不伪造）
+- **四智能体追踪**：start_analysis 建唯一 trace_id；agent_started/finished/failed、stage/handoff、task_finished 全事件化；LLM 统计仅记录响应真实携带的 usage（本次真实演示 4/4 智能体带真实 deepseek-v4-flash token 用量；剧本/无密钥场景如实 unavailable）；程序步骤 is_llm_step=false；失败/超时/证据校验错误如实入 Trace
+- **Harness 关联**：create_run 可选 trace_id（默认空=既有调用零影响）；计划生成、审批通过与拒绝（harness_policy_blocked）、工具调用开始/结束/失败、预算拦截、执行收口、回滚、租约超时恢复全部事件化；计划哈希审批绑定/资产互斥锁/工具预算/设备写开关/不重放写操作等安全行为零变更
+- **设备管线**：发现入档/设备刷新/CVE 匹配三类任务生成 Trace；Zephyr 设备能力边界（ssh/package/eBPF unsupported）capability_marks 事件如实记录
+- **Trace API**（/api/traces*）：列表分页过滤、详情、时间线、智能体事件、Harness 关联（linked/not_requested/not_applicable 诚实语义）、证据解析（unresolved 如实）、汇总统计；查询走索引；payload 写入端脱敏（敏感键分词匹配、api_key/apiKey 覆盖、16KB 限长）
+- **AgentOps 前端**：新增“统一追踪 (Trace)”标签四区域——任务总览（真实统计卡片）、智能体运行时间线（28 事件：能力标注→四智能体 LLM 步骤→阶段交接→收口）、Harness 安全监控（关联状态/审批/工具调用表/策略拦截）、证据关联（SE-/CVE 解析+资产跳转）；支持 loading/empty/error；分析完成后自动跳转对应 Trace
+- **真实只读演示**（stage8_trace_demo.py，ALL PASS）：真实发现入档 QEMU Zephyr 设备 → 真实 DeepSeek 四智能体只读分析（真实 token 用量）→ 事件顺序/能力标注/LLM 诚实性/Harness not_requested/统计聚合全部验收通过；另以浏览器实测前端展示（vite preview 构建产物 + 真实后端，截图本地留存）
+- **测试**：test_trace_system 15/15；全量回归 356 passed、19 failed 全部为既有已知冲突文件（基线对照 33 failed，无新增回归）；前端构建通过；agent_refactor 15/15、agent_harness_upgrade 30/30 复跑确认
+- **诚实性修正**：修复成功路径 LLM 统计未回填问题（此前真实调用显示 unavailable）；token_usage 键更名 llm_tokens 避免与凭据脱敏语义冲突
+
 ## 2026-10-14（第七阶段完成）：Zephyr RTOS 真实端到端联调（QEMU 阻塞解除，20/20 ALL PASS）
 
 - **阻塞解除**：用户在 Ubuntu 24.04 VM 安装 qemu-system-arm 8.2.2 / gcc 13.3 / build-essential；SSH 重连验证（显式 id_ed25519_vms 密钥，Ubuntu 用户；VMnet8 管理地址与 VMnet2 实验地址见本地证据）

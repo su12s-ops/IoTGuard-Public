@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
+from app.services import trace_service as tracing
 from app.routers.assets import serialize_asset
 from app.services.device_access import allowed_host, allowed_networks, require_control, connection_signature, collector_node, collection_only_mode
 from app.services.iot_devices import collect_openwrt, discover
@@ -251,10 +252,21 @@ def execute_collection(run_id: str, db: Session = Depends(get_db)):
 def run_discovery(payload: DiscoveryInput, db: Session = Depends(get_db)):
     if payload.enroll:
         from app.services.discovery_pipeline import discover_and_enroll
+        # 第八阶段：入档式发现 = 一次 IoT 设备管线任务，生成统一 Trace
+        trace = tracing.start_trace(db, task_type="discovery_enrollment",
+                                    target_type="cidr", target_ref=payload.cidr,
+                                    run_ref_type="device_task", run_ref_id=payload.cidr,
+                                    metadata={"ports": payload.ports})
         try:
-            return discover_and_enroll(db, payload.cidr, payload.ports)
+            result = discover_and_enroll(db, payload.cidr, payload.ports)
         except ValueError as exc:
+            tracing.finish_trace(db, trace.trace_id, "failed", error=str(exc),
+                                 summary={"rejected": True})
             raise HTTPException(400, str(exc)) from exc
+        tracing.emit(db, trace.trace_id, "discovery_completed", actor="pipeline",
+                     status="succeeded", payload=result)
+        tracing.finish_trace(db, trace.trace_id, "completed", summary=result)
+        return result
     try:
         return discover(db, payload.cidr, payload.ports)
     except ValueError as exc:
