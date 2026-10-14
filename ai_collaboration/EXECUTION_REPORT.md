@@ -2,6 +2,13 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
 
+## 2026-10-14（eBPF 2.0 P1 准备轮）：探针增强真实内核验证 + Falco 部署包（专项 11/11 + 回归 385/19 与基线零差异）
+
+- **P1 前置审计**：动手前全量回归重测锁定基线 374/19（失败集合与 P0 逐项一致）；P0 专项 18/18 复验通过；WSL 探针环境可用（6.6.87.2/bpftrace 0.20.2/root/BTF），VM 无 sudo 窗口维持阻塞记录，Mimosa 命令不在 PATH（不可用复现）
+- **P1-1 探针增强（完成并真实内核验证）**：execve argv（4×48B，NULL 守卫防 envp 泄漏——真实复现该风险并修复）、三类事件 start_time、合成会话键 lg-{boot8}-{pid}-{start_time}、后处理独立模块（新旧格式兼容）、normalize_event argv 有界透传；WSL 实测同一 curl 进程 exec→openat→connect 共享会话键；legacy 模式对照逐字段一致；DB 零迁移、转发器/P0 语义零改动
+- **P1-2 Falco 部署准备（未执行部署）**：collector/deploy/falco/ 四件套（README 八项 runbook、deploy_falco.sh --check 非特权体检已在 WSL 实测、常驻管线 falco→转发器、systemd 单元）；--apply/--install-service/--rollback 需 root+确认+备份，本轮一律未执行
+- **验证**：P1 专项 11/11、P0 专项 18/18、相关套件 111/111、全量 385/19（Compare-Object 失败集合零差异，零新增回归）；3 个 shell 脚本 bash -n 通过
+- **边界**：未动内核/Falco 服务/LSM enforce/设备写；报告 IOT_EBPF2_P1_PREP_REPORT.md；证据 reports/ebpf-p1-20261014/ 本地留存
 ## 2026-10-14（eBPF 2.0 P0）：运行时证据可靠性升级完成（专项 18/18 + 真实 E2E 零重复 + 回归与基线一致）
 
 - **D1 修复（双层根因）**：旧指纹基含当前 asset_id 且传输键（asset_id/sensor_id）经归一化嵌进 raw（含嵌套链）——三层身份分离后，anchor+boot_id+去传输键 raw 构成原始事件身份；真实复现 40→80 → 修复后同批 4 次上传（断网 spool→恢复→重放×2）对账 **40 行/40 证据/0 重复**

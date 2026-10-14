@@ -2,6 +2,20 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-14
 
+## eBPF 2.0 P1 准备轮（2026-10-14，证据 reports/ebpf-p1-20261014/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 动手前基线重测（全量） | 374 passed / 19 failed（与 P0 报告完全一致，失败集合逐项相同） |
+| P1 专项 test_ebpf_p1_probe.py（新格式解析/envp 泄漏防护/旧格式兼容/会话键/入库/身份/timeline 聚合） | **11/11 passed** |
+| P0 专项 test_ebpf_p0.py（回归复验） | 18/18 passed |
+| 相关套件联跑（ebpf/runtime/trace/zephyr/agent/harness） | 111/111 passed |
+| 全量回归（P1 后） | **385 passed / 19 failed**（+11=P1 新专项；失败集合 Compare-Object 零差异 → 零新增回归） |
+| Shell 语法（ebpf_trace_capture.sh / deploy_falco.sh / run_standing_capture.sh，bash -n） | 3/3 通过 |
+| deploy_falco.sh --check（WSL 实测，非特权只读） | 正确输出（falco 缺失如实报告 rc=1） |
+| WSL 真实采集（增强探针） | 7 条内核事件：argv 真实、start_time 真实、同进程 exec→openat→connect 共享会话键、boot_id 真实、健康文件 probe_profile=enhanced |
+| WSL 真实采集（legacy 对照） | 3 条事件 start_time=''/exec_id=''，与 P0 行为逐字段一致 |
+| Mimosa 全局扫描 | 不可用（命令不在 PATH，复现记录）；未执行、不声称完成 |
 ## 口径说明
 
 - **常规回归（CI 口径）**：`python -m pytest -q --ignore=tests/test_iot_device_upgrade.py --ignore=tests/test_scan_runs.py --ignore=tests/test_scan_targets.py --ignore=tests/test_mqtt_remediation_workflow.py`（交付回归同口径；被排除的 4 个文件需要真实本机监听器 + 独立 profile，见 CURRENT_TASK 已知事项）

@@ -1,0 +1,22 @@
+[Unit]
+Description=LinuxGuard Falco standing runtime capture (observe-only)
+Documentation=file:///opt/linuxguard/collector/deploy/falco/README.md
+# 与发行版自带的 falco 常驻服务互斥：启动前停用，失败时恢复策略见 README 回滚节
+Conflicts=falco-modern-bpf.service falco.service falco-custom.service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# 需 root：加载 eBPF 探针。环境变量由 /etc/linuxguard/falco.env 提供（不落源码）
+EnvironmentFile=-/etc/linuxguard/falco.env
+ExecStartPre=/bin/sh -c '! systemctl is-active --quiet falco-modern-bpf.service || systemctl stop falco-modern-bpf.service'
+ExecStart=/opt/linuxguard/collector/deploy/falco/run_standing_capture.sh /var/lib/linuxguard/falco
+Restart=on-failure
+RestartSec=10
+# 停止语义：SIGTERM → 转发器退出前尽力发 stopped 心跳与 spool 对账
+TimeoutStopSec=30
+KillMode=mixed
+
+[Install]
+WantedBy=multi-user.target

@@ -220,6 +220,14 @@ def normalize_event(payload: dict[str, Any]) -> dict[str, Any]:
         "raw": payload,
     }
     event.update(identity_fields(payload))
+    # P1（eBPF 2.0）：argv 有界透传。bpftrace 增强探针顶层携带 argv 列表；
+    # Tetragon 的 process.arguments 同样收编。仅作展示/关联补充，无 argv 的
+    # 旧事件不受影响（向后兼容，不虚构字段）。
+    argv_value = payload.get("argv")
+    if not isinstance(argv_value, list):
+        argv_value = process.get("arguments") if isinstance(process.get("arguments"), list) else None
+    if argv_value is not None:
+        event["argv"] = [str(item)[:256] for item in argv_value[:32]]
     if isinstance(payload.get("asset_id"), int) and not isinstance(payload["asset_id"], bool):
         event["asset_id"] = payload["asset_id"]
     # Runtime probes already carry an intentional classification.  Reclassifying
