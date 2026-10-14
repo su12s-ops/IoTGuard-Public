@@ -1,6 +1,6 @@
 # 当前任务
 
-> 每完成一个任务更新本文件。最后更新：2026-10-13
+> 每完成一个任务更新本文件。最后更新：2026-10-14
 
 ## 最近完成
 
@@ -34,13 +34,29 @@
 - [x] 后端适配：capabilities OS 能力画像（增量字段）+ discovery_pipeline Zephyr 能力边界标注（ssh/package/eBPF = unsupported）
 - [x] device_inventory 增强固件扩展元数据（board/soc/arch/build_id/telemetry→metadata）
 - [x] Mock 测试 5 项 + 回归 26 项全过（发现→Zephyr 身份→建档→版本化组件→CVE 三层→双实例不合并→幂等→能力画像）
-- [x] **West Workspace 补充轮（同日）**：手动创建 .west 工作区（绕过 git 依赖）→ hello_world 以 west build + 正确 QEMU 参数启动 ✅；根因更正：CONFIG_NETWORKING=y 隐式启用 e1000 驱动导致 x86_64 内核崩溃（非体积阈值）；ARM 修复路径：下载 arm-zephyr-eabi 工具链（102MB）+ CMSIS 模块 → qemu_cortex_a9 构建成功（传感器含网络栈）✅
-- [ ] **最终阻塞**：QEMU 网络连接——xilinx-aarch64 QEMU 的 arm-generic-fdt-7series 机器从 DTB 创建 GEM 网卡但不接受命令行 netdev 挂载（无 PCI 总线，cadence_gem 非可插拔设备）。需 SLIP 桥接脚本或标准 qemu-system-arm 二进制
+- [x] **West Workspace 补充轮（同日）**：手动创建 .west 工作区（绕过 git 依赖）→ hello_world 以 west build + 正确 QEMU 参数启动 ✅；根因更正：CONFIG_NETWORKING=y 隐式启用 e1000 驱动导致 x86_64 内核崩溃（非体积阈值）
+- [ ] ~~最终阻塞：QEMU 网络连接（xilinx-aarch64 FDT 机器不接受命令行 netdev 挂载）~~ → **已于 2026-10-14 解除**（系统 qemu-system-arm + xilinx-zynq-a9 + `-nic model=cadence_gem`，见下方完成记录）；勘误：该轮"qemu_cortex_a9 构建成功"无产物支撑（半成品），2026-10-14 重建才真正完成
+
+## 最近完成
+
+**第七阶段完成：Zephyr RTOS 真实端到端联调**（2026-10-14，证据 reports/zephyr-live-20261014-085507/，本地留存）
+- [x] 阻塞解除：Ubuntu 24.04 VM 安装 qemu-system-arm 8.2.2 / gcc / build-essential（用户执行）；SSH 重连（显式 id_ed25519_vms）
+- [x] qemu_cortex_a9 固件真实构建：arm-zephyr-eabi + 完整网络栈（eth_xlnx_gem + DHCPv4 + TCP Sockets）；修正 CMSIS 模块布局（对齐 west 清单路径）+ .west 工作区 + stage7-cmsis-wiring 接线模块（源码包部署环境缺口，非上游组件）
+- [x] Zephyr 树补丁 patches/0001：soc.c 在 GEM 启用时映射 SLCR（上游缺口：驱动初始化写 GEM 时钟分频寄存器 0xf8000140，未映射 → 裸启翻译错误）
+- [x] 固件真实缺陷修复：/api/system JSON "port" 键重复（真实探测暴露，mock 不可见）；arch 改为编译期如实上报（arm）
+- [x] QEMU 启动：系统 qemu-system-arm xilinx-zynq-a9 + `-nic user,model=cadence_gem`（SoC 内建网卡挂载）+ SLIRP hostfwd 8080→:80；串口证据：Booting Zephyr OS 4.4.2 → dhcp ok → http on :80
+- [x] 真实网络：Windows 后端 → VMnet2 → Ubuntu 宿主（VMnet2 地址:8080）→ QEMU 固件（跨主机真实 TCP/HTTP，遥测值实时变化）
+- [x] 自动发现→建档：/25 真实扫描（≤128 地址）→ identity_source=device_identity_endpoint、置信 0.9、os=Zephyr RTOS 4.4.2、固件元数据（board/arch/build_id/telemetry simulated）、版本化组件×2、能力三项 unsupported 如实标注
+- [x] CVE 分级：清洁库诚实零命中（无证据≠无漏洞）+ TEST-FIXTURE 三层（厂商精确 affected/0.95、NVD 候选 potentially_affected、无关不出现；夹具仅存一次性临时库）
+- [x] 幂等：复扫 enrolled_new=0、设备唯一、组件无重复（复扫自动重跑设备匹配）
+- [x] 边界：未授权网段 400、harness/remediation 零副作用、NAT 拓扑与宿主服务混入如实记录于证据（具体地址见本地证据）
+- [x] 验收 20/20 ALL PASS（backend/scripts/stage7_zephyr_live.py）+ 回归 26/26 复跑通过
+- [x] 勘误：上一轮"qemu_cortex_a9 构建成功"无产物支撑（build-arm 为 Kconfig 阶段失败的半成品），本轮为首次真实完成
 
 ## 下一步（等待指令，不自动开始）
 
-- 解除 QEMU 阻塞（需 sudo apt install qemu-system-x86 或 gcc）后：启动固件 → IoTGuard Ubuntu 标准模式发现 → 真实端到端验收
-- 可选增强：为主机线登记真实 OpenWrt 官方公告
+- 第八阶段待用户指令（未开始）
+- 可选增强：为主机线登记真实 OpenWrt 官方公告；Zephyr 厂商公告层接真实上游 advisory 数据源
 
 ## 已知事项
 

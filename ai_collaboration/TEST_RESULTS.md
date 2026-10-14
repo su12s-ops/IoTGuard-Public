@@ -1,6 +1,6 @@
 # 测试结果
 
-> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-13
+> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-14
 
 ## 口径说明
 
@@ -48,6 +48,17 @@
 | 回归（zephyr + discovery×2 + api_smoke） | 26 passed |
 | QEMU 运行 | **阻塞**：SDK QEMU v10.0.2 与 locore 不兼容（无串口输出） |
 | 真实端到端发现 | 待 QEMU 解决后执行 |
+
+## 第七阶段真实端到端联调（2026-10-14，证据 reports/zephyr-live-20261014-085507/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 固件构建（qemu_cortex_a9 / arm-zephyr-eabi / 含 eth_xlnx_gem 网络栈） | 构建成功（2.33MB ELF，RAM 964KB） |
+| QEMU 启动（系统 qemu-system-arm 8.2.2 / xilinx-zynq-a9 / cadence_gem） | 启动成功：Booting → dhcp ok → http on :80 |
+| 真实网络（Windows → VMnet2 → Ubuntu SLIRP → 固件） | 跨主机 TCP/HTTP 可达，/api/system 实时可取 |
+| 真实联调验收 stage7_zephyr_live.py | **20/20 ALL PASS**（预检/白名单画像/发现/身份建档 0.9/固件元数据/版本化组件/协议指纹/能力 unsupported/清洁库 CVE 诚实零/TEST-FIXTURE 三层/复扫幂等/未授权 400/零修复副作用/组件无重复） |
+| 回归复跑（zephyr + discovery + identity_edge + api_smoke） | 26 passed |
+| CVE 口径 | 清洁库零命中=无证据（非无漏洞）；三层分级用显式 TEST-FIXTURE（仅一次性临时库，与 live_discovery_check 同口径） |
 
 ## CI（.github/workflows/ci.yml）
 

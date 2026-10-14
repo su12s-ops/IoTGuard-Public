@@ -2,6 +2,17 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-14 — 第七阶段完成：Zephyr 真实端到端联调（QEMU 阻塞解除）
+
+- 阻塞解除：Ubuntu 24.04 VM 安装 qemu-system-arm 8.2.2 / gcc / build-essential（用户执行）；SSH 重连验证（Ubuntu 用户 + VMnet8 管理地址，显式 id_ed25519_vms；具体标识见本地证据）
+- 板级切换落地：qemu_cortex_a9 构建成功（arm-zephyr-eabi，含完整网络栈 eth_xlnx_gem+DHCP+TCP）
+- 三处真实修复：①CMSIS 模块路径与 west 清单对齐 + .west 工作区 + stage7-cmsis-wiring 接线模块（源码包部署环境缺口）；②Zephyr 树补丁 patches/0001（soc 未映射 SLCR → GEM 初始化翻译错误，8 行）；③固件 /api/system JSON 拼接缺陷（"port"键重复 → 非法 JSON，真实探测发现，mock 不可暴露）
+- QEMU 运行打通：xilinx-zynq-a9 + `-nic user,model=cadence_gem`（SoC 内建网卡标准挂载）+ SLIRP hostfwd 8080→:80；DHCP ok、http on :80
+- 真实网络链路：Windows 后端 → VMnet2 → Ubuntu 宿主（VMnet2 地址:8080）→ QEMU 固件（跨主机真实 TCP/HTTP）
+- 真实联调验收：stage7_zephyr_live.py 20/20 ALL PASS（发现→身份接口建档 0.9→固件元数据→版本化组件→能力 unsupported→CVE 清洁库诚实零+TEST-FIXTURE 三层→复扫幂等→未授权 400→零修复副作用）；证据 reports/zephyr-live-20261014-085507/
+- 回归：26/26 复跑通过（zephyr+discovery+identity_edge+api_smoke）
+- 诚实记录：Ubuntu 宿主 VMnet2 地址为 SLIRP 入口（NAT 拓扑边界写入证据）；上轮"ARM 构建成功"无产物支撑（build-arm 为失败半成品），本轮重建才真正完成
+
 ## 2026-10-13 — 第七阶段：Zephyr RTOS 终端接入（固件+后端+测试就绪，QEMU 阻塞）
 
 - 固件：Zephyr-Sensor-01（真实 Zephyr v4.4.2 应用，TCP+DHCP+传感+/api/system 身份）构建成功

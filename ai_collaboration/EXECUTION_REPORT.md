@@ -1,6 +1,24 @@
 # 最近一次开发结果
 
-> 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-13
+> 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
+
+## 2026-10-14（第七阶段完成）：Zephyr RTOS 真实端到端联调（QEMU 阻塞解除，20/20 ALL PASS）
+
+- **阻塞解除**：用户在 Ubuntu 24.04 VM 安装 qemu-system-arm 8.2.2 / gcc 13.3 / build-essential；SSH 重连验证（显式 id_ed25519_vms 密钥，Ubuntu 用户；VMnet8 管理地址与 VMnet2 实验地址见本地证据）
+- **板级构建真正完成**：qemu_cortex_a9（arm-zephyr-eabi）+ 完整网络栈（eth_xlnx_gem + DHCPv4 + TCP Sockets，RAM 964KB）。勘误：上轮"ARM 构建成功"无产物支撑（Kconfig 阶段失败半成品）；本轮排查出三处环境/上游缺口并修复：
+  1. CMSIS 模块布局与 west 清单对齐（modules/hal/cmsis{,_6} 放真实仓库、树内 modules/cmsis{,_6} 兼容层复位）+ .west 工作区重建 + 固件侧 stage7-cmsis-wiring 接线模块（源码包非 git 部署导致 west 模块发现不可用的环境补偿，非上游组件）
+  2. Zephyr 树补丁 patches/0001：soc.c 在 GEM 启用时映射 SLCR（eth_xlnx_gem 初始化写 GEM 时钟分频寄存器 0xf8000140，上游未映射 → 裸启 1 级翻译错误；8 行补丁，VM 应用并随库存档）
+  3. 固件 /api/system JSON 拼接缺陷（"port" 键重复 → 非法 JSON）：真实探测暴露（mock 测试无法发现），修复后端可正常走 identity_endpoint 路径
+- **QEMU 运行打通**：系统 qemu-system-arm + machine xilinx-zynq-a9 + `-nic user,model=cadence_gem`（SoC 内建网卡标准挂载；此前 xilinx-aarch64 FDT 机器不接受的正是这一点）+ SLIRP hostfwd 8080→固件:80。串口证据：`*** Booting Zephyr OS build 4.4.2 ***` → `dhcp ok` → `http on :80`
+- **真实网络链路**（跨主机，无模拟跳变）：Windows 后端 → VMnet2 → Ubuntu 宿主（VMnet2 地址:8080，SLIRP hostfwd）→ QEMU 固件 :80；遥测值实时变化（25.1→25.4℃）
+- **验收（backend/scripts/stage7_zephyr_live.py，20/20 ALL PASS，证据 reports/zephyr-live-20261014-085507/）**：
+  - 自动发现：/25 真实扫描（≤128 地址上限）端口 [22,80,443,8080] → Zephyr 设备上线
+  - 身份建档：identity_source=device_identity_endpoint、置信 0.9、os/device_type/firmware_version 全部来自固件自报；固件元数据（board=qemu_cortex_a9、arch=arm、build_id、MAC、telemetry simulated=true）入档
+  - 版本化组件：Zephyr-Sensor-01 firmware + zephyr-sensor-httpd（均 0.1.0-stage7）；能力边界 ssh/package/eBPF = unsupported 如实标注；os_capability_profiles 端点含 Zephyr/Linux 画像
+  - CVE 分级：清洁库诚实零命中（无证据≠无漏洞）；TEST-FIXTURE 三层验证（厂商精确 affected/0.95/vendor_advisory、NVD 候选 potentially_affected/nvd_generic、无关 CVE 不出现；夹具仅存一次性临时库）
+  - 幂等：复扫 enrolled_new=0、设备唯一、组件无重复（复扫自动重跑设备匹配）
+  - 边界：未授权网段 400；harness/remediation 零副作用；NAT 拓扑（宿主 VMnet2 地址为 SLIRP 入口，:22/:80 属宿主服务、OpenSSH 组件来自宿主）如实写入证据
+- **回归**：26/26 复跑通过（zephyr 5 + discovery_pipeline 9 + identity_edge_cases 5 + api_smoke 7）；未触碰 OpenWrt/SmartCam 既有口径
 
 ## 2026-10-13（第七阶段）：Zephyr RTOS 终端接入（固件就绪，QEMU 运行阻塞）
 

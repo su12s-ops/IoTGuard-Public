@@ -1,0 +1,44 @@
+From: IoTGuard Stage 7 lab
+Subject: [PATCH] soc: xlnx zynq7000: map SLCR when GEM is enabled
+
+Upstream gap (Zephyr v4.4.2): drivers/ethernet/eth_xlnx_gem.c reads/writes
+the GEM TX clock control register in SLCR (gem reg index 1, e.g. 0xf8000140
+for gem0) during device init, but soc/xlnx/zynq7000/common/soc.c only maps
+gem reg index 0 (0xe000b000). On a bare boot (no u-boot PS7 init, e.g. QEMU
+-kernel direct boot) the access raises a 1st level translation fault:
+
+  eth_xlnx_gem_configure_clocks -> sys_read32(0xf8000140) -> DATA ABORT
+
+Fix: map the SLCR node region whenever a GEM is enabled, so the driver can
+program the clock dividers itself. This mirrors what the qemu_cortex_a9
+board needs for QEMU user networking with cadence_gem.
+
+Applied on the stage-7 Ubuntu workspace (~/zephyr-stage7/zephyr) for the
+IoTGuard Zephyr-Sensor-01 firmware; kept as a file for reproducibility.
+---
+ soc/xlnx/zynq7000/common/soc.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/soc/xlnx/zynq7000/common/soc.c b/soc/xlnx/zynq7000/common/soc.c
+--- a/soc/xlnx/zynq7000/common/soc.c
++++ b/soc/xlnx/zynq7000/common/soc.c
+@@ -38,6 +38,14 @@ static const struct arm_mmu_region mmu_regions[] = {
+ 	/* ARM Arch timer, GIC are covered by the MPCore mapping */
+
++/* SLCR: eth_xlnx_gem programs GEM TX clock divisors in SLCR (gem reg idx 1)
++ * during init; without this mapping a bare boot (no PS7/u-boot init, e.g.
++ * QEMU -kernel) takes a translation fault on that access.
++ */
++#if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(gem0)) || \
++	DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(gem1))
++	MMU_REGION_FLAT_ENTRY("slcr",
++			      DT_REG_ADDR(DT_NODELABEL(slcr)),
++			      DT_REG_SIZE(DT_NODELABEL(slcr)),
++			      MT_DEVICE | MATTR_SHARED | MPERM_R | MPERM_W),
++#endif
++
+ /* GEMs */
+ #if DT_NODE_HAS_STATUS_OKAY(DT_NODELABEL(gem0))
+ 	MMU_REGION_FLAT_ENTRY("gem0",
+--
+2.34.1

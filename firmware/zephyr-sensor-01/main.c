@@ -4,7 +4,8 @@
  * 真实 Zephyr 应用：TCP 服务线程 + 模拟传感线程 + DHCP 网络初始化。
  * 身份与固件信息全部来自编译配置与运行时状态（内核版本/board/MAC/构建时间），
  * 遥测标记 simulated，不冒充实物采样；只读接口，无任何控制端点。
- * 板级目标：qemu_x86_64（QEMU SLIRP + hostfwd 提供入站可达性）。
+ * 板级目标：qemu_cortex_a9（系统 qemu-system-arm xilinx-zynq-a9 + SLIRP hostfwd
+ * 提供入站可达性；x86_64 路径因 e1000 驱动崩溃已弃用，见 IOT_STAGE7_ZEPHYR_REPORT.md）。
  */
 #include <zephyr/kernel.h>
 #include <zephyr/kernel_version.h>
@@ -23,6 +24,15 @@
 #define TX_BUF_SIZE    1024
 #define SERVER_STACK   6144
 #define SENSOR_STACK   2048
+
+/* 架构如实上报（编译期判定，不硬编码）：ARM 构建报 arm，x86_64 构建报 x86_64 */
+#if defined(CONFIG_ARM)
+#define APP_ARCH "arm"
+#elif defined(CONFIG_X86_64)
+#define APP_ARCH "x86_64"
+#else
+#define APP_ARCH "unknown"
+#endif
 
 static const char HDR_JSON[] =
 	"HTTP/1.0 200 OK\r\nContent-Type: application/json\r\nConnection: close\r\n\r\n";
@@ -168,7 +178,7 @@ static void build_identity_json(struct builder *b)
 	b_field(b, "os", os);
 	b_field(b, "device_id", CONFIG_APP_DEVICE_UID);
 	b_field(b, "board", CONFIG_BOARD);
-	b_field(b, "arch", "x86_64");
+	b_field(b, "arch", APP_ARCH);
 	b_field(b, "build_id", __DATE__ " " __TIME__);
 	b_field(b, "status", "online");
 	b_field(b, "mac_address", mac);
@@ -180,7 +190,7 @@ static void build_identity_json(struct builder *b)
 	b_lit(b, "\"humidity_pct\":{\"value\":");
 	b_lit(b, ver);
 	b_lit(b, ",\"simulated\":true}},");
-	b_lit(b, "\"services\":[{\"type\":\"http\",\"port\":");
+	b_lit(b, "\"services\":[{\"type\":\"http\",");
 	b_num(b, "port", (uint32_t)APP_PORT, false);
 	b->buf[b->len] = '\0';
 	b_lit(b, ",\"product\":\"zephyr-sensor-httpd ");

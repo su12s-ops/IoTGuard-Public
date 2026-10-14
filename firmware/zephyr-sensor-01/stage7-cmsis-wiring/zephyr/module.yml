@@ -1,0 +1,4 @@
+name: stage7-cmsis-wiring
+build:
+  cmake: zephyr
+  kconfig: Kconfig

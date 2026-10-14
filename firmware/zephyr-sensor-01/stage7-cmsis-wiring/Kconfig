@@ -1,0 +1,28 @@
+# 第七阶段实验室接线（非上游组件）
+# 本工作区的 Zephyr 树来自源码包（非 git 仓库），west 模块发现不可用，
+# 上游由 west 清单完成的 CMSIS Kconfig 注册在此以显式模块补齐：
+# 提供 HAS_CMSIS_CORE 系列符号的 live 定义（无依赖、按 CPU 类型默认开启），
+# 使 arch/arm 对 HAS_CMSIS_CORE 的 select 不落入 modules/Kconfig 的
+# `if 0 osource "modules/*/Kconfig"` 死上下文（该上下文会产生
+# "unmet direct dependencies" 警告并中止 Kconfig）。
+# 语义与上游一致：CMSIS Core 头文件由本工作区真实提供（见 zephyr/CMakeLists.txt）。
+
+config HAS_CMSIS_CORE
+	bool
+	default y if CPU_AARCH32_CORTEX_A || CPU_AARCH32_CORTEX_R || CPU_CORTEX_M
+
+if HAS_CMSIS_CORE
+
+config HAS_CMSIS_CORE_A
+	bool
+	default y if CPU_AARCH32_CORTEX_A
+
+config HAS_CMSIS_CORE_R
+	bool
+	default y if CPU_AARCH32_CORTEX_R
+
+config HAS_CMSIS_CORE_M
+	bool
+	default y if CPU_CORTEX_M
+
+endif
