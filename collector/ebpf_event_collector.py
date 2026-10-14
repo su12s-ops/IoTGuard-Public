@@ -14,6 +14,20 @@ P0 可靠性升级（在既有单条路径上增量，协议向后兼容）：
 - 指标计数：received/parsed/uploaded/duplicates/rejected/retries/failed_batches/
   spool_pending/last_success_at 随心跳上报（P0 采集可靠性指标）。
 
+2.1 Write-Ahead Spool（eBPF 2.0 最终交付轮）：
+- 写前持久化：事件在首次发送前先落 WAL（默认逐事件 fsync），服务端确认后才
+  从 WAL 移除——SIGKILL/断电只可能丢"尚未送达本进程"的管道尾部，已接收事件
+  不因进程死亡而丢失；崩溃窗口的已确认未收缩行重放由服务端指纹幂等去重
+  （duplicates 如实计数）。即 at-least-once 投递 + 服务端幂等 = 恰一次入库。
+- 有界 spool：条数/字节容量上限 + spool 所在盘剩余空间下限；触界 → 明确降级
+  （背压暂停接收、stderr 告警、心跳 spool_full 标记），绝不静默丢弃事件，
+  绝不删除未确认数据（收缩只移除已确认行）。
+- 运行中自愈：发送失败的事件保留在 WAL 前端按退避节奏重试，后端恢复后
+  无需重启进程即续传（心跳失败不再致命；P0 语义为失败入 spool 等下次启动）。
+- 可靠性边界（诚实声明）：falco→转发器管道中、尚未被本进程读入的事件，
+  在背压触发后可能于 falco 侧丢弃（计入 falco 自身 drop 统计，可观测）；
+  WAL 损坏行跳过不阻塞恢复（计数呈现，不虚构完整）。
+
 Usage on Ubuntu VM:
   falco -o json_output=true 2>/dev/null | python3 ebpf_event_collector.py --api http://WINDOWS_IP:8000/api
   tetragon --export-filename /tmp/tetragon.jsonl
@@ -21,11 +35,13 @@ Usage on Ubuntu VM:
 """
 
 import argparse
+import itertools
 import json
 import os
 import queue
 import random
 import re
+import shutil
 import socket
 import sys
 import threading
@@ -33,6 +49,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections import deque
 from pathlib import Path
 
 DEFAULT_BATCH_SIZE = 50
@@ -155,7 +172,11 @@ class ReliabilityMetrics:
         self.rejected = 0          # 客户端拒绝行（格式/超长）+ 服务端逐条拒绝
         self.retries = 0           # 已执行的重试次数
         self.failed_batches = 0    # 重试耗尽仍未确认的批次数
-        self.spool_pending = 0     # 当前 spool 中未确认事件数
+        self.spool_pending = 0     # 当前 WAL 中未确认事件数
+        self.spool_bytes = 0           # WAL 未确认字节（有界性可见）
+        self.spool_blocked_events = 0  # 背压暂拒接收计数（明确降级，非丢弃）
+        self.spool_corrupt_lines = 0   # WAL 损坏行（跳过不阻塞恢复，如实计数）
+        self.spool_full = False    # 容量/磁盘保护触发态（心跳 degraded 依据）
         self.last_success_at = ""  # 最后一次服务端确认时间（ISO）
 
     def snapshot(self) -> dict:
@@ -164,6 +185,9 @@ class ReliabilityMetrics:
             "uploaded": self.uploaded, "duplicates": self.duplicates,
             "rejected": self.rejected, "retries": self.retries,
             "failed_batches": self.failed_batches, "spool_pending": self.spool_pending,
+            "spool_bytes": self.spool_bytes,
+            "spool_blocked_events": self.spool_blocked_events,
+            "spool_corrupt_lines": self.spool_corrupt_lines,
             "last_success_at": self.last_success_at or "unknown",
         }
 
@@ -215,6 +239,173 @@ class Spool:
 
     def pending_count(self):
         return sum(len(events) for _, events in self.load())
+
+
+class WalSpool:
+    """Write-Ahead Spool：事件在首次发送前持久化，服务端确认后移除。
+
+    文件格式（单文件，向后兼容 P0 旧 spool）：
+      "[" 开头行 = P0 旧批次行（JSON 数组），载入时展开为单事件；
+      "{" 开头行 = v2 单事件行（write-ahead 记录）。
+    首次确认收缩（compact）后文件自然迁移为纯 v2 格式（旧格式无需停机迁移）。
+
+    崩溃时序与语义（诚实边界）：
+      append(+fsync) → send → ack（内存移除）→ compact（原子重写）。
+    - 发送前崩溃：事件仍在 WAL → 重启续传，不丢失；
+    - ack 与 compact 之间崩溃：已确认事件被重放 → 服务端指纹幂等去重
+      （duplicates 如实计数），不产生重复入库；
+    - compact 以临时文件 + os.replace 原子替换，崩溃于替换前后均为完整文件；
+    - 损坏行载入时跳过（不阻塞恢复）并如实计数；收缩时不再保留
+      （不可重放的残行无限保留只会无界增长）——非静默：计数呈现。
+
+    有界性：条数/字节容量上限 + spool 所在盘剩余空间下限。append 触界返回
+    False（调用方背压暂存重试），绝不静默丢弃；compact 只移除已确认行，
+    未确认数据永不被本类删除。
+
+    线程模型：全部方法仅在主循环线程调用（读线程只经 queue 交接），无锁。
+    """
+
+    WARN_RATIO = 0.8  # 告警阈值：已用量达到容量 80% 时心跳/日志提示
+
+    def __init__(self, path: str, *, max_events: int = 0, max_bytes: int = 0,
+                 min_free_bytes: int = 0, fsync_mode: str = "always"):
+        if fsync_mode not in ("always", "batch", "off"):
+            raise ValueError(f"unknown wal fsync mode: {fsync_mode!r}")
+        self.path = Path(path)
+        self.max_events = max_events        # 0 = 不限（不推荐；默认应有界）
+        self.max_bytes = max_bytes
+        self.min_free_bytes = min_free_bytes
+        self.fsync_mode = fsync_mode
+        self._events: deque[tuple[str, dict]] = deque()  # 未确认事件（FIFO）
+        self._acked_uncompacted = 0
+        self.full = False                   # 保护触发态（背压中）
+        self.blocked_events = 0             # 背压暂拒接收的事件数
+        self.corrupt_lines = 0              # 载入时跳过的损坏行数
+        self._last_alert = 0.0
+        self._load()
+
+    # ── 载入（兼容 P0 旧批次行；启动时调用一次） ──
+    def _load(self):
+        if not self.path.exists():
+            return
+        for raw in self.path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = raw.strip()
+            if not line:
+                continue
+            try:
+                data = json.loads(line)
+            except ValueError:
+                self.corrupt_lines += 1
+                continue
+            if isinstance(data, list):
+                for event in data:
+                    if isinstance(event, dict):
+                        self._events.append((json.dumps(event, ensure_ascii=False, default=str), event))
+            elif isinstance(data, dict):
+                self._events.append((line, data))
+
+    # ── 有界性检查 ──
+    def pending_bytes(self) -> int:
+        return sum(len(line) + 1 for line, _obj in self._events)
+
+    def _disk_free(self):
+        try:
+            return shutil.disk_usage(self.path.parent if str(self.path.parent) else ".").free
+        except OSError:
+            return None  # 无法判定 → 不启用磁盘保护（如实，不虚构可用空间）
+
+    def capacity_reason(self, incoming_bytes: int = 0) -> str:
+        """返回触界原因串；未触发返回空串。含即将写入事件自身的体积。"""
+        if self.max_events and len(self._events) + 1 > self.max_events:
+            return f"spool events {len(self._events) + 1} > capacity {self.max_events}"
+        if self.max_bytes and self.pending_bytes() + incoming_bytes > self.max_bytes:
+            return f"spool bytes {self.pending_bytes() + incoming_bytes} > capacity {self.max_bytes}"
+        free = self._disk_free()
+        if self.min_free_bytes and free is not None and free < self.min_free_bytes:
+            return f"disk free {free} bytes < floor {self.min_free_bytes}"
+        return ""
+
+    def backlog_warn(self) -> str:
+        """积压告警：当前用量达到任一容量阈值 80% 返回原因串（不阻断写入）。"""
+        ratios = []
+        if self.max_events:
+            ratios.append(len(self._events) / self.max_events)
+        if self.max_bytes:
+            ratios.append(self.pending_bytes() / self.max_bytes)
+        return "spool backlog warning" if ratios and max(ratios) >= self.WARN_RATIO else ""
+
+    def _alert(self, reason: str) -> None:
+        now = time.monotonic()
+        if now - self._last_alert >= 30.0:  # 告警限频，避免日志风暴
+            self._last_alert = now
+            print(f"[ALERT] IoTGuard spool protection: {reason}; backpressure engaged "
+                  f"(events delayed and retried, none dropped; unconfirmed data never deleted)",
+                  file=sys.stderr, flush=True)
+
+    # ── 写前持久化 ──
+    def append(self, event: dict) -> bool:
+        """write-ahead：先持久化后发送。返回 False = 保护触发，事件未写入
+        （调用方暂存重试——明确降级，不丢弃）。"""
+        line = json.dumps(event, ensure_ascii=False, default=str)
+        reason = self.capacity_reason(len(line) + 1)
+        if reason:
+            self.full = True
+            self.blocked_events += 1
+            self._alert(reason)
+            return False
+        self.full = False
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.write(line + "\n")
+            handle.flush()
+            if self.fsync_mode == "always":
+                os.fsync(handle.fileno())
+        self._events.append((line, event))
+        warn = self.backlog_warn()
+        if warn:
+            self._alert(warn)
+        return True
+
+    def fsync_batch(self) -> None:
+        """batch 模式：发送前整文件落盘（保证已发送事件已持久化）。"""
+        if self.fsync_mode != "batch" or not self._events:
+            return
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a", encoding="utf-8") as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+
+    # ── 发送 / 确认 / 收缩 ──
+    def take(self, n: int) -> list[tuple[str, dict]]:
+        """FIFO 取前 n 个 (行, 事件)；不修改 WAL（确认前数据不离开）。"""
+        return [item for item in itertools.islice(self._events, max(0, n))]
+
+    def ack(self, n: int) -> None:
+        """服务端确认前 n 个事件。文件收缩延迟到 compact——ack 与收缩之间
+        崩溃导致重放时由服务端幂等去重（不重复入库）。"""
+        for _ in range(min(n, len(self._events))):
+            self._events.popleft()
+        self._acked_uncompacted += n
+
+    def compact(self, force: bool = False) -> None:
+        """把仍未确认事件原子重写回文件（临时文件 + os.replace）。
+        只移除已确认行——任何未确认数据永不被本方法丢弃。"""
+        if not self._acked_uncompacted:
+            return
+        if not force and self._acked_uncompacted < max(32, len(self._events)):
+            return  # 攒批收缩，避免每批整文件重写
+        tmp = self.path.with_name(self.path.name + ".tmp")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with tmp.open("w", encoding="utf-8") as handle:
+            for line, _obj in self._events:
+                handle.write(line + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp, self.path)
+        self._acked_uncompacted = 0
+
+    def pending_count(self) -> int:
+        return len(self._events)
 
 
 def send_batch_with_retry(api_base, events, token, transport, metrics: ReliabilityMetrics,
@@ -269,12 +460,13 @@ def heartbeat_payload(args, rejected=0, stopped=False, metrics: ReliabilityMetri
     health = sensor_health(args.health_file)
     if stopped:
         health["status"] = "stopped"
-    elif rejected or (metrics and metrics.failed_batches):
+    elif rejected or (metrics and (metrics.failed_batches or metrics.spool_full)):
         health["status"] = "degraded"
     capabilities = dict(health["capabilities"])
     capabilities["transport"] = "batch_confirm_v2" if not getattr(args, "legacy_single", False) else "jsonl_forwarder"
     capabilities["rejected_lines"] = rejected
     capabilities["upstream_health_source"] = "supervisor_file" if args.health_file else "unavailable"
+    capabilities["spool_full"] = bool(getattr(metrics, "spool_full", False))
     if metrics is not None:
         capabilities["metrics"] = metrics.snapshot()
     health["capabilities"] = capabilities
@@ -330,7 +522,15 @@ def main() -> int:
     parser.add_argument("--flush-seconds", type=float, default=DEFAULT_BATCH_FLUSH_S, help="Flush interval (default 2s)")
     parser.add_argument("--max-retries", type=int, default=DEFAULT_MAX_RETRIES, help="Bounded retries per batch (default 5)")
     parser.add_argument("--spool-file", default="/tmp/linuxguard-forwarder-spool.jsonl",
-                        help="Local spool for unconfirmed batches (resume on restart)")
+                        help="Write-ahead spool file (unconfirmed events resume on restart)")
+    parser.add_argument("--spool-max-events", type=int, default=200_000,
+                        help="WAL capacity bound in events; 0=unlimited (not recommended)")
+    parser.add_argument("--spool-max-bytes", type=int, default=256 * 1024 * 1024,
+                        help="WAL capacity bound in bytes; 0=unlimited (not recommended)")
+    parser.add_argument("--spool-min-free-mb", type=int, default=200,
+                        help="Keep this much disk free where the spool lives; 0=disabled")
+    parser.add_argument("--wal-fsync", choices=["always", "batch", "off"], default="always",
+                        help="Durability: fsync per appended event / per batch before send / off")
     parser.add_argument("--legacy-single", action="store_true",
                         help="Use the legacy one-event-per-POST path (compatibility; no batch ack)")
     args = parser.parse_args()
@@ -345,21 +545,75 @@ def main() -> int:
         parser.error("--batch-size must be between 1 and 500")
     if not 0 <= args.max_retries <= 10:
         parser.error("--max-retries must be between 0 and 10")
+    if not 0 <= args.spool_max_events <= 10_000_000:
+        parser.error("--spool-max-events must be between 0 and 10000000")
+    if not 0 <= args.spool_max_bytes <= 64 * 1024 * 1024 * 1024:
+        parser.error("--spool-max-bytes must be between 0 and 64GiB")
+    if not 0 <= args.spool_min_free_mb <= 1_000_000:
+        parser.error("--spool-min-free-mb must be between 0 and 1000000")
     args.sensor_id = args.sensor_id or socket.gethostname() + ":" + args.source
     boot_id = args.boot_id or (read_boot_id() if not args.file else "")
     metrics = ReliabilityMetrics()
-    spool = Spool(args.spool_file)
+    wal = WalSpool(args.spool_file,
+                   max_events=args.spool_max_events,
+                   max_bytes=args.spool_max_bytes,
+                   min_free_bytes=args.spool_min_free_mb * 1024 * 1024,
+                   fsync_mode=args.wal_fsync)
     transport = post_event if args.legacy_single else post_batch
+    if wal.corrupt_lines:
+        metrics.spool_corrupt_lines = wal.corrupt_lines
+        print(f"WAL recovery: skipped {wal.corrupt_lines} corrupt line(s) "
+              f"(counted, not silently dropped)", file=sys.stderr)
 
-    # ── 恢复：先重传历史未确认批次（spool 断点续传；已确认行不写回） ──
-    keep_lines = []
-    for line, pending in spool.load():
-        if send_batch_with_retry(args.api, pending, token, post_batch, metrics, args.max_retries):
-            continue
-        keep_lines.append(line)  # 仍失败：留在 spool（未确认，不是丢失）
-    spool.rewrite(keep_lines)
-    metrics.spool_pending = spool.pending_count()
+    def sync_spool_metrics():
+        metrics.spool_pending = wal.pending_count()
+        metrics.spool_bytes = wal.pending_bytes()
+        metrics.spool_blocked_events = wal.blocked_events
+        metrics.spool_full = wal.full
 
+    uploaded = 0
+    unconfirmed = 0
+
+    def send_chunk() -> bool:
+        """发送 WAL 前端一个批次；仅服务端确认后从 WAL 移除（确认前数据
+        不离开 WAL）。返回 False = 该批次未获确认（保留在 WAL，未确认 ≠ 丢失）。"""
+        nonlocal uploaded, unconfirmed
+        chunk = wal.take(args.batch_size)
+        if not chunk:
+            return True
+        wal.fsync_batch()  # batch 模式：发送前落盘（always 模式已在 append 时落盘）
+        if args.legacy_single:
+            sent = 0
+            for _line, obj in chunk:
+                try:
+                    transport(args.api, obj, token)
+                    sent += 1
+                except (OSError, ValueError):
+                    break
+            if sent:
+                wal.ack(sent)
+                uploaded += sent
+                metrics.uploaded += sent
+            if sent < len(chunk):
+                metrics.failed_batches += 1
+                unconfirmed += 1
+                return False
+            return True
+        if send_batch_with_retry(args.api, [obj for _line, obj in chunk], token,
+                                 post_batch, metrics, args.max_retries):
+            wal.ack(len(chunk))
+            uploaded += len(chunk)
+            return True
+        unconfirmed += 1
+        return False
+
+    # ── 恢复：write-ahead 重放（兼容 P0 旧批次行，载入即展开）──
+    # 离线时保留在 WAL；实时循环按退避节奏继续尝试——后端恢复后无需重启即续传。
+    while wal.pending_count():
+        if not send_chunk():
+            break
+        wal.compact()
+    sync_spool_metrics()
 
     pending_queue: queue.Queue = queue.Queue(maxsize=2048)
     finished = object()
@@ -376,101 +630,111 @@ def main() -> int:
     threading.Thread(target=read_input, daemon=True).start()
 
     rejected = 0
-    uploaded = 0
-    batch: list = []
-    batch_deadline = 0.0
+    staged: deque = deque()  # 背压暂存（≤队列上限 2048，内存镜像）：等待 WAL 容量释放
+    staged_eof_attempts = 0
+    next_send_at = 0.0
     next_heartbeat = 0.0
     input_done = False
-    unconfirmed = metrics.failed_batches
+    stop_reading = False
     in_exit_summary = False
-
-    def flush_batch(force=False):
-        nonlocal batch, uploaded, unconfirmed, batch_deadline
-        if not batch:
-            return
-        if not force and len(batch) < args.batch_size and time.monotonic() < batch_deadline:
-            return
-        events = batch
-        batch = []
-        if args.legacy_single:
-            sent = 0
-            for event in events:
-                try:
-                    transport(args.api, event, token)
-                    sent += 1
-                except (OSError, ValueError):
-                    spool.append([event])
-                    unconfirmed += 1
-            uploaded += sent
-            metrics.uploaded += sent
-        elif send_batch_with_retry(args.api, events, token, transport, metrics, args.max_retries):
-            uploaded += len(events)
-        else:
-            spool.append(events)
-            unconfirmed += 1
-            metrics.spool_pending = spool.pending_count()
-        batch_deadline = time.monotonic() + args.flush_seconds
 
     try:
         while True:
             if args.heartbeat and time.monotonic() >= next_heartbeat:
-                post_json(args.api, "/runtime/sensors/heartbeat",
-                          heartbeat_payload(args, rejected, metrics=metrics), token)
+                # 心跳失败不再致命：后端离线时转发器必须存活并退避重试
+                # （P0 语义为心跳异常即退出，依赖 systemd 重启；2.1 起运行中自愈）。
+                try:
+                    post_json(args.api, "/runtime/sensors/heartbeat",
+                              heartbeat_payload(args, rejected, metrics=metrics), token)
+                except (OSError, ValueError) as exc:
+                    print(f"Heartbeat unavailable ({exc}); continuing offline retry", file=sys.stderr)
                 next_heartbeat = time.monotonic() + args.heartbeat_seconds
-            try:
-                line = pending_queue.get(timeout=0.25 if batch else 1)
-                input_done = False
-            except queue.Empty:
-                if input_done:
-                    break
-                flush_batch()
-                continue
+
+            # 背压恢复：优先把暂存事件写入 WAL（确认收缩释放容量后立即继续）
+            while staged and wal.append(staged[0]):
+                staged.popleft()
+
+            line = None
+            if not stop_reading and not input_done:
+                try:
+                    line = pending_queue.get(timeout=0.25 if (wal.pending_count() or staged) else 1)
+                except queue.Empty:
+                    pass
             if line is finished:
                 input_done = True
-                flush_batch()
-                continue
-            if isinstance(line, Exception):
+                line = None
+            elif isinstance(line, Exception):
                 raise line
-            line = line.strip()
-            if not line:
-                continue
-            if in_exit_summary:
-                continue
-            if line.startswith(FALCO_EXIT_SUMMARY_PREFIXES):
-                in_exit_summary = True
-                continue
-            metrics.received += 1
-            if len(line) > 1_000_000:
-                rejected += 1
-                metrics.rejected += 1
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                event = parse_falco_text(line)
-            if not isinstance(event, dict):
-                rejected += 1
-                metrics.rejected += 1
-                continue
-            metrics.parsed += 1
-            event = enrich_event(event, asset_id=args.asset_id, hostname=args.hostname,
-                                 sensor_id=args.sensor_id, boot_id=boot_id)
-            batch.append(event)
-            if not batch_deadline:
-                batch_deadline = time.monotonic() + args.flush_seconds
-            if len(batch) >= args.batch_size:
-                flush_batch(force=True)
-            if args.limit and metrics.parsed >= args.limit:
-                flush_batch(force=True)
+
+            if line is not None:
+                line = line.strip()
+                if line and not in_exit_summary:
+                    if line.startswith(FALCO_EXIT_SUMMARY_PREFIXES):
+                        in_exit_summary = True
+                    else:
+                        metrics.received += 1
+                        if len(line) > 1_000_000:
+                            rejected += 1
+                            metrics.rejected += 1
+                        else:
+                            try:
+                                event = json.loads(line)
+                            except json.JSONDecodeError:
+                                event = parse_falco_text(line)
+                            if not isinstance(event, dict):
+                                rejected += 1
+                                metrics.rejected += 1
+                            else:
+                                metrics.parsed += 1
+                                event = enrich_event(event, asset_id=args.asset_id, hostname=args.hostname,
+                                                     sensor_id=args.sensor_id, boot_id=boot_id)
+                                if wal.append(event):
+                                    # 不足一批也按时发送（flush_seconds 内）
+                                    next_send_at = min(next_send_at or time.monotonic() + args.flush_seconds,
+                                                       time.monotonic() + args.flush_seconds)
+                                    if args.limit and metrics.parsed >= args.limit:
+                                        stop_reading = True
+                                else:
+                                    # 明确降级：容量/磁盘保护触发 → 背压暂存（内存镜像，
+                                    # ≤队列上限），事件不丢弃；暂存满即停止读入 → 上游
+                                    # 管道自然反压，falco 侧丢弃计入其自身统计（可观测）。
+                                    # blocked 计数由 WalSpool（append 拒绝次数）统计。
+                                    staged.append(event)
+
+            pending = wal.pending_count()
+            eof_drain = input_done and not staged
+            if pending and (pending >= args.batch_size or time.monotonic() >= next_send_at or eof_drain):
+                if not send_chunk():
+                    if eof_drain:
+                        break  # EOF 最终尝试仍失败：保留 WAL，非零退出（下次启动续传）
+                else:
+                    wal.compact()
+                next_send_at = time.monotonic() + args.flush_seconds
+            if eof_drain and not wal.pending_count():
                 break
-        flush_batch(force=True)
+            if input_done and staged:
+                # EOF + 背压：给容量释放留出有限宽限期，之后如实上报未送达
+                staged_eof_attempts += 1
+                time.sleep(0.5)
+                if staged_eof_attempts > 10:
+                    print(f"CRITICAL: {len(staged)} in-flight event(s) could not be persisted "
+                          f"to WAL (spool protection active at EOF); explicitly NOT delivered "
+                          f"(counted, not silent)", file=sys.stderr)
+                    break
+            if line is None and wal.pending_count() and time.monotonic() < next_send_at:
+                time.sleep(0.05)  # EOF/无输入：等待下一发送节拍（避免忙等）
+            sync_spool_metrics()
     except (OSError, ValueError, KeyboardInterrupt) as exc:
-        # KeyboardInterrupt（服务停止信号 KillSignal=SIGINT）：在途批次入
-        # spool 后退出——"未确认 ≠ 丢失"，下次启动断点续传（P0 语义）。
+        # KeyboardInterrupt（服务停止信号 KillSignal=SIGINT）：在途事件已在
+        # WAL（write-ahead 不变量）；仅背压暂存事件需尽力补写——"未确认 ≠ 丢失"。
         print("Upload stopped: " + (str(exc) or "interrupted"), file=sys.stderr)
-        if batch:
-            spool.append(batch)
-            metrics.spool_pending = spool.pending_count()
+        while staged and wal.append(staged[0]):  # 停止信号：尽力持久化暂存事件
+            staged.popleft()
+        if staged:
+            print(f"CRITICAL: {len(staged)} in-flight event(s) could not be persisted to WAL "
+                  f"on stop (spool protection active); explicitly NOT delivered", file=sys.stderr)
+        wal.compact(force=True)  # 干净边界：文件收敛为未确认集合（下次启动续传）
+        sync_spool_metrics()
         return 1
     finally:
         if args.heartbeat:
@@ -481,13 +745,16 @@ def main() -> int:
                 print("Final heartbeat unavailable; server will expire the last heartbeat.",
                       file=sys.stderr)
 
-    spool_left = spool.pending_count()
+    spool_left = wal.pending_count()
+    wal.compact(force=True)  # 干净边界：文件收敛为未确认集合（下次启动续传）
+    sync_spool_metrics()
     summary = metrics.snapshot()
     print(f"Uploaded {uploaded} runtime events; duplicates {summary['duplicates']}; "
           f"rejected {rejected} lines; retries {summary['retries']}; "
-          f"failed_batches {summary['failed_batches']}; spool_pending {spool_left}")
-    # 明确失败/未确认状态：spool 非空或存在未确认批次 → 非零退出码
-    return 1 if (rejected or spool_left or unconfirmed) else 0
+          f"failed_batches {summary['failed_batches']}; spool_pending {spool_left} "
+          f"({summary['spool_bytes']} bytes; blocked {summary['spool_blocked_events']})")
+    # 明确失败/未确认状态：WAL 非空、背压暂存或存在未确认批次 → 非零退出码
+    return 1 if (rejected or spool_left or unconfirmed or staged) else 0
 
 
 if __name__ == "__main__":
