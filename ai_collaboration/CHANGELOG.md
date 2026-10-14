@@ -2,6 +2,14 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-14 — eBPF 2.0 审计轮：源码审计 + 真实验证 + 升级设计（零功能代码改动）
+
+- 交付 IOT_EBPF2_AUDIT_REPORT.md：现有架构图、十项逐一审计（路径/函数/调用链/验证结果）、Tetragon/Falco/Tracee/Hubble 对比矩阵、D1-D9 缺陷清单、P0/P1/P2 升级设计与验收方法、性能评测方案、四智能体/Harness/Trace 兼容性分析
+- 真实运行验证：阶段二 40 条真实内核事件全链回放（上传→双表幂等→证据→API→进程树→风险消费 mosquitto=verified）；WSL root 用项目脚本原样全新采集（execve/openat 真实事件）；智能体工具/心跳/demo 标注实测
+- 重要发现：D1 资产绑定态变化破坏幂等（重传 40→80 重复、证据不回绑）等 9 项缺陷如实入册；VM falco 0.44.1+bpftrace 已装但自定义规则未部署、LSM 无 bpf、sudo 阻塞（环境限制如实记录）
+- 边界：本轮零功能代码改动；升级方案默认只读，不引入 Tetragon/Tracee 级重型依赖；新增探针仅 execve argv/session-id 与 connect 返回值两处
+- 证据 reports/ebpf-audit-20261014/（本地留存）
+
 ## 2026-10-14 — 第八阶段：统一任务 Trace 与可观测性系统
 
 - 统一追踪：新增 trace_run / trace_event（seq 顺序、is_llm_step 如实标注、证据引用、payload 服务端脱敏+限长）；旧表增量 trace_id 列（SQLite ALTER），旧记录不回填

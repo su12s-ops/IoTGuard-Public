@@ -66,10 +66,20 @@
 - [x] 测试：专项 test_trace_system 15/15；全量回归 356 passed（19 失败均为既有已知冲突文件，改动前基线 33 失败——无新增回归）；前端构建通过
 - [x] 诚实性修复：成功路径 LLM 统计回填补齐（真实 model/tokens 不再显示 unavailable）
 
-## 下一步（等待指令，不自动开始）
+## 最近完成
 
+**eBPF 2.0 审计轮：源码审计、真实验证与升级设计**（2026-10-14，报告 IOT_EBPF2_AUDIT_REPORT.md，证据 reports/ebpf-audit-20261014/ 本地留存）
+- [x] 十项逐一审计（真实源码/挂载点、真实vs模拟、Falco 现状、信息面、存储绑定、丢失重复缺失、CVE 消费、Runtime Agent、前端数据源、三端能力）——每项含路径/函数/调用链/验证结果
+- [x] 真实验证：40 条真实内核事件全链回放；WSL root 全新探针采集；风险引擎正/负例消费（verified/not_observed）；发现 D1 幂等破坏等 9 项缺陷
+- [x] 对标矩阵（Tetragon/Falco/Tracee/Hubble，官方文档依据）+ 差距四级分级
+- [x] P0/P1/P2 升级设计（复用 Falco 为主、新增探针仅 2 处、默认只读）+ 每项验收方法 + 性能评测方案 + 兼容性分析
+- [x] 零功能代码改动（仅报告与文档）；阶段七/八功能无回归面
+
+## 下一步（等待审阅，不自动开始）
+
+- eBPF 2.0 正式实施：P0（D1 修复/丢失闭环/转发器 2.0/清空语义）→ P1（argv+session-id 探针、Falco 规则部署与常驻、证据链×Trace）→ P2（性能评测、OpenWrt 降级采集、Agent 工具增强）
+- 实施需 VM sudo 授权窗口（Falco 常驻与规则部署）
 - 第九阶段待用户指令（未开始）
-- 可选：Mimosa 完整扫描仍不可用（project_model/python_ast_unavailable），全局安全审计未执行（如实记录）
 
 ## 已知事项
 

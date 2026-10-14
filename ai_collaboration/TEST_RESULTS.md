@@ -72,6 +72,17 @@
 
 诚实性备注：LLM 用量仅记录响应真实携带的 usage（deepseek-v4-flash，prompt/completion/total tokens 真实）；剧本客户端与无密钥场景如实 unavailable。
 
+## eBPF 2.0 审计轮（2026-10-14，证据 reports/ebpf-audit-20261014/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 真实夹具全链回放（上传/双表幂等/证据 API/进程树/去重） | 通过（二次上传 total 保持 40） |
+| WSL root 全新探针采集（项目脚本原样运行） | 真实 execve/openat 内核事件捕获 |
+| 风险引擎消费（mosquitto 正例 / openssl 负例） | runtime_status=verified+linked / not_observed（语义正确） |
+| 智能体证据工具 / 传感器心跳 / demo probe 标注 | 实测通过 |
+| 缺陷复现 D1（资产绑定态变化） | 复现（40→80 重复 + 证据不回绑）——升级 P0-1 验收基线 |
+| 环境阻塞 | VM sudo 密码（探针无法在 VM 执行）；Mimosa 完整扫描不可用 |
+
 ## CI（.github/workflows/ci.yml）
 
 - backend-job：Python 3.12 + 常规回归口径

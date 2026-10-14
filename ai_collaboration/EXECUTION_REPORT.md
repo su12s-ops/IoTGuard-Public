@@ -2,6 +2,15 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
 
+## 2026-10-14（eBPF 2.0 审计轮）：源码审计 + 真实验证 + 升级设计（零功能改动交付）
+
+- **审计范围**：collector 全部 eBPF/Falco/LSM 脚本与转发器、后端 ebpf_event_collector/security_evidence/runtime_telemetry/runtime 路由、智能体证据工具、风险引擎消费链、前端 RuntimeMonitor——十项逐一给出文件路径、函数、调用链与**真实运行验证结果**（IOT_EBPF2_AUDIT_REPORT.md）
+- **真实验证**：① 阶段二 40 条真实内核事件全链回放（normalize→RuntimeEvent 指纹幂等→SecurityEvidence SE- 幂等→三类证据 API→真实 bash→sh→wget 进程树→二次上传幂等）；② WSL root 以项目脚本原样运行 12-14s 全新采集（真实 execve/openat 事件，含 pid/ppid/uid→root）；③ 风险引擎消费正负例（mosquitto 真实进程/连接证据→runtime_status=verified、reachable=linked；openssl→not_observed 语义正确）；④ 智能体工具返回真实 SE- 记录；⑤ 心跳/coverage、demo probe 标注实测
+- **重要发现（D1-D9）**：D1 资产绑定态变化破坏幂等（重传 40→80、证据不回绑，已复现）；D2 丢失不可度量（bpftrace lost/Falco drops 未采集）；D3 转发器无批量/重试；D5 无 argv/exec 会话键；D6 Falco 自定义规则未部署；D7 无性能指标；D8 connect 不校验返回值；D9 清空事件不清证据层；D10 OpenWrt/Zephyr 运行时盲区（如实 unsupported）
+- **环境事实**：Ubuntu VM falco 0.44.1 + bpftrace 已装、内核 LSM 无 bpf（LSM 钩子不可用）、自定义规则未部署、sudo 密码阻塞探针执行；WSL bpftrace v0.20.2 可用（本轮真实采集即在此完成）
+- **升级设计**：P0 可靠性（D1/D2/D3/D9，含验收方法与复现基线）→ P1 进程关联与 CVE 联动（execve argv+session-id 探针、Falco 规则部署常驻、证据链×Trace）→ P2 性能评测/异构降级/Agent 工具增强；默认只读，不引入重型依赖，新增探针仅 2 处；四智能体/Harness/Trace 全兼容（分析见报告 §8）
+- **边界**：本轮零功能代码改动（仅报告+文档），阶段七/八已验收功能零回归面；Mimosa 完整扫描仍不可用，不声称完成全局安全审计
+
 ## 2026-10-14（第八阶段）：统一任务 Trace 与可观测性系统（专项 15/15 + 真实 LLM 演示 ALL PASS）
 
 - **统一 Trace**：trace_run（唯一 trace_id、任务类型、资产标识、运行标识、Harness 关联、起止与状态）+ trace_event（trace 内 seq 单调保持顺序、actor、is_llm_step、脱敏 payload、证据引用、耗时）；既有审计表零改动，仅 SQLite ALTER 增量 trace_id 列，旧记录保持原样可读（不回填不伪造）
