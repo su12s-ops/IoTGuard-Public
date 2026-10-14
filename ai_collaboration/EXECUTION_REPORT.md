@@ -2,6 +2,16 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
 
+## 2026-10-14（eBPF 2.0 P1 部署验收轮）：Ubuntu VM 真实常驻部署全链路打通（2418 真实事件 / 8 规则命中 / 10 分钟窗口 / 回归零差异）
+
+- **部署**：Ubuntu 24.04 VM（内核 7.0.0，falco 0.44.1）按 §10 流序完成 --check→规则部署（备份先行）→systemd 单元→常驻启动；SSH 反向隧道接入 Windows 后端（零防火墙改动）；资产登记绑定 asset_id=1
+- **常驻验收**：19:39:52→19:50:41 连续 >10 分钟；转发器自报 983/983/982、零拒绝零重试零 spool；服务端 2418 RuntimeEvent = 2418 SecurityEvidence（1:1）、零无归属
+- **链式规则（全部真实自然触发）**：sshd→bash（sftp）Service Spawned Shell、bash→curl Shell Run Downloader、sudo→sh→cat /etc/shadow 全链含 Shadow Access(CRITICAL) 多规则同事件命中
+- **drops 真实指标**：运行中=unavailable（0.44.1 无周期 stats，实测确认）；SIGINT 退出摘要 event drop detected: 0 occurrences → 健康文件 dropped_events=0（真实零）
+- **VM 增强探针**：内核 7.0.0 实测 17 条，argv/start_time/会话键全通过（与 Falco 路线 boot_id 交叉一致）
+- **部署中发现并修复 8 个真实问题**（详见 IOT_EBPF2_P1_DEPLOY_REPORT.md §3）：0.44 规则兼容 ×2、rule_matching=first 遮蔽 CRITICAL、主机名大小写、KillMode SIGKILL、SIGINT 在途批次丢失路径、单元态语义、drops 来源确认——全部同步仓库源码
+- **回归**：相关 48/48、全量 385/19 与基线失败集合零差异（零新增）；falco-modern-bpf 已恢复原状；密码仅经 PTY stdin 一次，未落任何文件/命令行/输出
+- **边界**：未改 sudoers/SSH/防火墙/LSM enforce；未动 P1-3/P1-4/P2
 ## 2026-10-14（eBPF 2.0 P1 准备轮）：探针增强真实内核验证 + Falco 部署包（专项 11/11 + 回归 385/19 与基线零差异）
 
 - **P1 前置审计**：动手前全量回归重测锁定基线 374/19（失败集合与 P0 逐项一致）；P0 专项 18/18 复验通过；WSL 探针环境可用（6.6.87.2/bpftrace 0.20.2/root/BTF），VM 无 sudo 窗口维持阻塞记录，Mimosa 命令不在 PATH（不可用复现）

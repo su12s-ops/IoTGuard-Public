@@ -14,9 +14,15 @@ ExecStartPre=/bin/sh -c '! systemctl is-active --quiet falco-modern-bpf.service 
 ExecStart=/opt/linuxguard/collector/deploy/falco/run_standing_capture.sh /var/lib/linuxguard/falco
 Restart=on-failure
 RestartSec=10
-# 停止语义：SIGTERM → 转发器退出前尽力发 stopped 心跳与 spool 对账
+# 停止语义：SIGINT 广播到整个 cgroup —— python 转发器经 KeyboardInterrupt
+# 走 finally（stopped 心跳 + spool 对账）；falco 同信号写出退出摘要
+# （真实 drops 计数）。30s 后仍未退出才 SIGKILL。
 TimeoutStopSec=30
-KillMode=mixed
+KillMode=control-group
+KillSignal=SIGINT
+# 转发器在"存在未确认/spool 残留"时按设计返回 1（P0 诚实退出码）——
+# 这是待续传信号而非崩溃；单元态按成功处理，spool 由 reliability 端点呈现。
+SuccessExitStatus=1
 
 [Install]
 WantedBy=multi-user.target

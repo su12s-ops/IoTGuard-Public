@@ -62,6 +62,10 @@ sudo systemctl stop linuxguard-falco       # 停止（SIGTERM；转发器发 sto
 ```
 
 停止语义：未确认批次留在 spool（未确认≠丢失），下次启动先续传（P0 语义）。
+实测补充（2026-10-14 VM 验收）：`KillSignal=SIGINT` + `KillMode=control-group`
+使 python 转发器经 KeyboardInterrupt 走 finally（stopped 心跳 + 在途批次
+入 spool），falco 同信号写出退出摘要（真实 drops 计数）；
+`SuccessExitStatus=1` 使"存在 spool 残留"的诚实退出码呈现为正常停止。
 验收基线：常驻 ≥10 分钟，期间制造真实行为（见 §7），服务端收到对应事件。
 
 ## 6. 失败回滚方案
@@ -91,15 +95,26 @@ sudo ./deploy_falco.sh --rollback
 
 ## 8. 真实丢失计数：获取与不可用判定
 
-- **来源**：falco stderr 结构化 stats（`"drops":<N>` 字段族）。
-  `run_standing_capture.sh` 的 supervisor 循环每 15s 解析一次
-  `${STATE_DIR}/falco.err` → 健康文件 `falco-probe-health.json`。
+- **来源（falco 0.44.1 VM 实测确认）**：① **退出摘要**
+  `event drop detected: N occurrences`（SIGINT 停止时全量真值，实测 0）；
+  ② 结构化 stats `"drops":<N>`（若引擎周期输出）；③ 阈值告警
+  `N events lost`。`run_standing_capture.sh` 的 supervisor 循环每 15s
+  解析 `${STATE_DIR}/falco.err` → 健康文件 `falco-probe-health.json`。
 - **语义（与 P0 一致）**：解析到数值 → `dropped_events=N`（0=真实零）；
   从未解析到 → `null` → 转发器心跳/`GET /runtime/ebpf/reliability` 呈现
   `unavailable`，**绝不虚构为零**。
-- **待真实验证项**：目标 falco 0.44.1 的 stderr stats 输出格式与频率
-  （`-o log_level=info` 下是否周期输出 stats 行）需在 VM 授权窗口实测确认；
-  若格式不符，仅调整解析正则，语义不变。
+- **实测注意**：falco 0.44.1 在 `-o statistics.enabled=true` 下也未观测到
+  周期性 stderr stats；退出摘要是当前版本可靠的全量来源（停止时写入，
+  supervisor 解析存在毫秒级竞态——未解析到即如实 null，不虚构）。
+
+## 9. Falco 0.44.1 兼容性实测记录（本轮部署发现并修复）
+
+| 问题 | 现象 | 修复 |
+|---|---|---|
+| 默认规则集已移除 `open_directory` 宏 | 规则加载失败（LOAD_ERR_VALIDATE） | 规则条件改为 `open_read`（语义等价覆盖） |
+| `evt.dir=<` 已废弃 | 加载警告（enter 事件已丢弃，恒真） | 三条规则移除该条件 |
+| 默认 `rule_matching: first` | 同事件仅首条规则出告警（CRITICAL 规则被低优先级规则遮蔽） | 管线显式 `-o rule_matching=all`（证据采集需要多规则命中） |
+| KillMode=mixed 下子进程被 SIGKILL | 转发器 stopped 心跳/falco 退出摘要丢失 | KillSignal=SIGINT + control-group |
 
 ## 与 bpftrace 路线的关系
 

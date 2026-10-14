@@ -28,20 +28,23 @@ command -v python3 >/dev/null || { echo "[LinuxGuard] 缺少 python3" >&2; exit 
 [ -n "${LINUXGUARD_CONTROL_TOKEN:-}" ] || { echo "[LinuxGuard] 心跳模式需要 LINUXGUARD_CONTROL_TOKEN" >&2; exit 2; }
 
 # ── supervisor：把 falco stderr 的 drops 统计转成健康文件（P0 语义） ──
-update_health() {
-  # falco 结构化日志中的 stats 段含 "drops":<N>（含 kernel.drops 等嵌套字段）。
+update_health() {  # $1=status（默认 running）
+  # drops 三种真实来源（falco 0.44.1 VM 实测）：
+  #   ① 退出摘要 "event drop detected: N occurrences"（常驻服务在停止时给出全量真值）
+  #   ② 结构化 stats "drops":<N>（若引擎周期输出）
+  #   ③ 阈值告警 "N events lost"
   # 解析到 → 数值（0=真实零）；解析不到 → null=unavailable（不虚构为零）。
-  # 注：stderr 统计格式需在目标 VM 真实运行确认（见 README 验收步骤 6）。
   local dropped
-  dropped=$(grep -Eo '"drops":[0-9]+' "${FALCO_ERR}" 2>/dev/null | tail -1 | grep -Eo '[0-9]+' || true)
+  dropped=$(grep -Eo 'event drop detected: [0-9]+ occurrences' "${FALCO_ERR}" 2>/dev/null | tail -1 | grep -Eo '[0-9]+' || true)
+  [ -n "${dropped}" ] || dropped=$(grep -Eo '"drops":[0-9]+' "${FALCO_ERR}" 2>/dev/null | tail -1 | grep -Eo '[0-9]+' || true)
+  [ -n "${dropped}" ] || dropped=$(grep -Eo '[0-9]+ events? lost' "${FALCO_ERR}" 2>/dev/null | tail -1 | grep -Eo '^[0-9]+' || true)
   if [ -n "${dropped}" ]; then
     DROPPED_JSON="${dropped}"
   else
     DROPPED_JSON="null"
   fi
-  cat > "${HEALTH_FILE}" <<HEALTH
-{"status": "running", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "falco", "lost_source": "falco_stderr_stats"}, "detail": "falco stderr stats drops 解析；null=尚未观测到统计输出（unavailable）"}
-HEALTH
+  printf '{"status": "%s", "dropped_events": %s, "capabilities": {"driver": "falco", "lost_source": "falco_stderr_stats"}, "detail": "falco stderr stats drops 解析；null=尚未观测到统计输出（unavailable）"}\n' \
+    "${1:-running}" "${DROPPED_JSON}" > "${HEALTH_FILE}"
 }
 HEALTH_PID=""
 health_loop() {
@@ -49,7 +52,7 @@ health_loop() {
 }
 cleanup() {
   [ -n "${HEALTH_PID}" ] && kill "${HEALTH_PID}" 2>/dev/null || true
-  update_health
+  update_health stopped
 }
 trap cleanup EXIT
 health_loop &
@@ -64,5 +67,6 @@ python3 "${SCRIPT_DIR}/ebpf_event_collector.py" \
       -o json_output=true \
       -o stdout_output.enabled=true \
       -o log_level=info \
+      -o rule_matching=all \
       2> >(tee "${FALCO_ERR}" >&2)
   )

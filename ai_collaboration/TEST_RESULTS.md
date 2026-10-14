@@ -2,6 +2,20 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-14
 
+## eBPF 2.0 P1 部署验收轮（2026-10-14，证据 reports/ebpf-p1-deploy-20261014/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| deploy_falco.sh --check（VM 实测） | 全绿（falco 0.44.1/BTF/rules.d/python3；运行中服务如实报告） |
+| 规则加载预验证 | 首次失败（open_directory 宏 0.44 移除）→ 修复后零错误零警告 |
+| 常驻窗口 | 19:39:52→19:50:41（>10 分钟连续），active 全程 |
+| 转发器（窗口末自报） | received/parsed/uploaded=983/983/982；rejected/retries/failed/spool=0/0/0/0 |
+| 服务端入库 | RuntimeEvent 2418 = SecurityEvidence 2418（1:1）；无归属 0；资产绑定全中 |
+| 规则命中（8 种） | ProcessExec 1032 / LocalConnect 667 / WatchedRead 621 / Outbound 72 / ShadowAccess(CRITICAL) 18 / 默认 3 / ShellRunDownloader 3 / ServiceSpawnedShell 2 |
+| 停止语义 | SIGINT：stopped 心跳送达后端；健康文件 stopped+dropped=0（falco 退出摘要真实零）；在途批次入 spool（实测 31651B 保全，未确认≠丢失）；单元态 inactive |
+| drops 运行中语义 | unavailable（0.44.1 statistics.enabled 亦无周期输出，实测；不虚构为零） |
+| VM 增强探针（内核 7.0.0） | 17 条真实事件：argv/start_time/会话键/同进程三类事件关联全通过 |
+| VM bpftrace 专项 + 回归 | bash -n 通过；相关套件 48/48；全量 385/19 与准备轮失败集合零差异（零新增回归） |
 ## eBPF 2.0 P1 准备轮（2026-10-14，证据 reports/ebpf-p1-20261014/ 本地留存）
 
 | 项 | 结果 |

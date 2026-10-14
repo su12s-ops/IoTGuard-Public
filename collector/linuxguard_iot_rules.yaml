@@ -17,7 +17,7 @@
 
 - rule: LinuxGuard IoT Process Execution
   desc: 记录设备上每一次进程启动（PID/PPID/用户/命令/父进程），构建进程树证据。
-  condition: evt.type in (execve, execveat) and evt.dir=< and proc.pid > 0
+  condition: evt.type in (execve, execveat) and proc.pid > 0
   output: "LG-IoT process exec: user=%user.name proc=%proc.name exe=%proc.exepath args=%proc.cmdline pid=%proc.pid ppid=%proc.ppid pcomm=%proc.pname evt=%evt.type"
   priority: INFORMATIONAL
   tags: [linuxguard, iot, process]
@@ -45,7 +45,7 @@
 - rule: LinuxGuard IoT Outbound Connection
   desc: 记录进程发起的对外 TCP 连接（进程、目的 IP、端口、时间）。
   condition: >
-    evt.type=connect and evt.dir=< and fd.typechar=4
+    evt.type=connect and fd.typechar=4
     and not fd.rip in (127.0.0.1, ::1)
   output: "LG-IoT outbound connect: proc=%proc.name pid=%proc.pid user=%user.name dest=%fd.rip:%fd.rport exe=%proc.exepath args=%proc.cmdline"
   priority: NOTICE
@@ -54,7 +54,7 @@
 - rule: LinuxGuard IoT Local Service Connect
   desc: 记录对本机服务的连接（MQTT 1883、RTSP 554、SSH 22 等）。
   condition: >
-    evt.type=connect and evt.dir=< and fd.typechar=4
+    evt.type=connect and fd.typechar=4
     and fd.rip in (127.0.0.1, ::1)
   output: "LG-IoT local connect: proc=%proc.name pid=%proc.pid user=%user.name dest=%fd.rip:%fd.rport args=%proc.cmdline"
   priority: INFORMATIONAL
@@ -65,7 +65,7 @@
 - rule: LinuxGuard IoT Watched File Read
   desc: 读取受控路径（/etc/mosquitto、/etc/iotguard、/etc/passwd、/etc/shadow、/opt/firmware）。
   condition: >
-    (open_read or open_directory) and
+    open_read and
     (fd.name startswith /etc/mosquitto or
      fd.name startswith /etc/iotguard or
      fd.name startswith /opt/firmware or

@@ -445,10 +445,13 @@ def main() -> int:
                 flush_batch(force=True)
                 break
         flush_batch(force=True)
-    except (OSError, ValueError) as exc:
-        print("Upload stopped: " + str(exc), file=sys.stderr)
+    except (OSError, ValueError, KeyboardInterrupt) as exc:
+        # KeyboardInterrupt（服务停止信号 KillSignal=SIGINT）：在途批次入
+        # spool 后退出——"未确认 ≠ 丢失"，下次启动断点续传（P0 语义）。
+        print("Upload stopped: " + (str(exc) or "interrupted"), file=sys.stderr)
         if batch:
             spool.append(batch)
+            metrics.spool_pending = spool.pending_count()
         return 1
     finally:
         if args.heartbeat:
