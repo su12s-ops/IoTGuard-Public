@@ -209,6 +209,7 @@ def _evidence_rows(db: Session, evidence_type: str, device_id: str, limit: int) 
     return [{
         "evidence_id": row.evidence_id, "process": row.process, "pid": row.pid,
         "ppid": row.ppid, "user": row.user, "commandline": row.commandline,
+        "process_exec_id": row.process_exec_id or "",
         "operation": row.operation, "destination_ip": row.destination_ip,
         "destination_port": row.destination_port, "file_path": row.file_path,
         "severity": row.severity, "timestamp": row.timestamp, "source": row.source,

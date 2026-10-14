@@ -112,6 +112,78 @@ def timeline(db, asset_id, limit=300):
             "exploitation_confirmed": False, "note": "仅关联同一资产的可靠进程标识；不凭重复 PID 拼接行为链。"}
 
 
+def evidence_sessions(db, asset_id, limit=500):
+    """P1-3：按进程会话键聚合 SecurityEvidence（行为链页的证据明细视图）。
+
+    分组语义与 timeline() 一致（键名可互相对照）：
+    - process_exec_id 存在 → f"{asset_id}:exec:{exec_id}"（PID 复用可区分）；
+    - 缺 exec_id 的存量证据 → 每条独立成组并标注
+      insufficient_session_identity（证据表无 boot_id/start_time，
+      凭 pid 分组会凭空拼接 PID 复用行为——不虚构）。
+
+    只聚合同一资产内的证据；父会话边仅在 parent_exec_id 恰为本资产
+    已知会话时输出。
+    """
+    rows = db.query(models.SecurityEvidence).filter_by(asset_id=asset_id) \
+        .order_by(models.SecurityEvidence.id.desc()).limit(max(1, min(limit, 2000))).all()
+    rows.reverse()
+
+    sessions: dict[str, dict] = {}
+    for row in rows:
+        if row.process_exec_id:
+            key, basis = f"{asset_id}:exec:{row.process_exec_id}", "exec_id"
+        else:
+            key, basis = f"evidence:{row.id}", "insufficient_session_identity"
+        session = sessions.get(key)
+        if session is None:
+            session = sessions[key] = {
+                "id": key, "basis": basis, "process_exec_id": row.process_exec_id or "",
+                "parent_exec_id": row.parent_exec_id or "",
+                "device_id": row.device_id, "process": row.process or "unknown",
+                "pid": row.pid, "ppid": row.ppid, "user": row.user,
+                "commandline": row.commandline or "",
+                "evidence_by_type": {}, "evidence_ids": [],
+                "first_timestamp": row.timestamp, "last_timestamp": row.timestamp,
+                "max_severity_score": row.severity_score or 0, "max_severity": row.severity,
+            }
+        session["evidence_by_type"][row.evidence_type] = session["evidence_by_type"].get(row.evidence_type, 0) + 1
+        session["evidence_ids"].append(row.evidence_id)
+        if row.timestamp:
+            if not session["first_timestamp"]:
+                session["first_timestamp"] = row.timestamp
+            session["last_timestamp"] = row.timestamp
+        if (row.severity_score or 0) > session["max_severity_score"]:
+            session["max_severity_score"] = row.severity_score
+            session["max_severity"] = row.severity
+        # exec 会替换映像：同会话内取最后一条证据的最终映像/命令行（ps 语义）
+        if row.process:
+            session["process"] = row.process
+        if row.commandline:
+            session["commandline"] = row.commandline
+        if row.parent_exec_id and not session["parent_exec_id"]:
+            session["parent_exec_id"] = row.parent_exec_id
+
+    edges, seen = [], set()
+    for session in sessions.values():
+        parent = f"{asset_id}:exec:{session['parent_exec_id']}"
+        pair = (parent, session["id"])
+        if (session["parent_exec_id"] and session["basis"] == "exec_id"
+                and parent in sessions and pair[0] != pair[1] and pair not in seen):
+            edges.append({"parent": pair[0], "child": pair[1], "basis": "parent_exec_id"})
+            seen.add(pair)
+
+    sessions_list = sorted(sessions.values(),
+                           key=lambda s: (s["first_timestamp"] or "", min(s["evidence_ids"])))
+    return {
+        "asset_id": asset_id,
+        "sessions": sessions_list,
+        "edges": edges,
+        "session_count": len(sessions_list),
+        "insufficient_identity_count": sum(1 for s in sessions_list if s["basis"] == "insufficient_session_identity"),
+        "note": "按 process_exec_id 聚合同一进程（exec+网络+文件证据）；缺会话身份的存量证据独立成组，不凭 PID 拼接。",
+    }
+
+
 def compare_windows(db, asset_id, checkpoint, window_seconds=300):
     at = event_time(checkpoint)
     if not at:

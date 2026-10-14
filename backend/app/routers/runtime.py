@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
 from app.services.device_access import require_control
-from app.services.runtime_telemetry import coverage, timeline, compare_windows
+from app.services.runtime_telemetry import coverage, timeline, compare_windows, evidence_sessions
 from app.services import ebpf_lsm
 from app.services.security_evidence import (
     FILE_WATCH_PATHS,
@@ -370,6 +370,14 @@ def asset_timeline(asset_id: int, limit: int = Query(300, ge=1, le=2000), db: Se
     if not db.get(models.LinuxAsset, asset_id):
         raise HTTPException(404, "资产不存在")
     return timeline(db, asset_id, limit)
+
+
+@router.get("/assets/{asset_id}/evidence-sessions")
+def asset_evidence_sessions(asset_id: int, limit: int = Query(500, ge=1, le=2000), db: Session = Depends(get_db)):
+    """P1-3：按进程会话键聚合的证据明细视图（与 timeline 的会话键互相可对照）。"""
+    if not db.get(models.LinuxAsset, asset_id):
+        raise HTTPException(404, "资产不存在")
+    return evidence_sessions(db, asset_id, limit)
 
 
 @router.get("/assets/{asset_id}/comparison")

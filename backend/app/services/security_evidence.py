@@ -171,6 +171,10 @@ def event_to_evidence(event: dict[str, Any]) -> dict[str, Any]:
         "process": process,
         "pid": pid,
         "ppid": ppid,
+        # P1-3 会话身份：随事件透传到证据层（不参与 evidence_hash 基准，
+        # 保证升级前后同一事件的证据身份零漂移）。
+        "process_exec_id": str(event.get("process_exec_id") or "")[:255],
+        "parent_exec_id": str(event.get("parent_exec_id") or "")[:255],
         "user": user[:64],
         "commandline": commandline,
         "parent_process": str(event.get("parent_process") or ""),
@@ -199,6 +203,15 @@ def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str
                 existing.asset_id = record["asset_id"]
                 db.commit()
                 record["asset_rebound"] = True
+            # P1-3 回填：升级前入库的证据行缺会话身份而本次重放事件可提供
+            # 时补写（只填空值，不改写既有非空值）。
+            backfilled = False
+            for field in ("process_exec_id", "parent_exec_id"):
+                if not getattr(existing, field) and record.get(field):
+                    setattr(existing, field, record[field])
+                    backfilled = True
+            if backfilled:
+                db.commit()
             stored.append(record)
             continue
         if event.get("duplicate"):
@@ -228,6 +241,8 @@ def serialize_evidence(row: models.SecurityEvidence, include_raw: bool = False) 
         "process": row.process,
         "pid": row.pid,
         "ppid": row.ppid,
+        "process_exec_id": row.process_exec_id or "",
+        "parent_exec_id": row.parent_exec_id or "",
         "user": row.user,
         "commandline": row.commandline,
         "parent_process": row.parent_process,

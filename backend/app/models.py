@@ -523,6 +523,9 @@ class SecurityEvidence(Base):
     user = Column(String(64), default="")
     commandline = Column(Text, default="")
     parent_process = Column(String(128), default="")
+    # ── P1-3 会话身份（与 RuntimeEvent 同源合成键；PID 复用可区分） ──
+    process_exec_id = Column(String(255), default="", index=True)
+    parent_exec_id = Column(String(255), default="")
     # ── 类型化明细 ──
     operation = Column(String(64), default="")    # exec/connect/read/write/...
     destination_ip = Column(String(64), default="")

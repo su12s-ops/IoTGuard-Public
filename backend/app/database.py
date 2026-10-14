@@ -104,6 +104,13 @@ DEVICE_CONNECTION_COLUMN_MIGRATIONS = {
     "key_passphrase_env": "VARCHAR(128) NOT NULL DEFAULT ''",
 }
 
+# P1-3：security_evidence 会话身份列（存量库升级走列迁移；evidence_hash
+# 基准不含这两个字段——证据身份零漂移，老数据重放不会产生重复证据）。
+SECURITY_EVIDENCE_COLUMN_MIGRATIONS = {
+    "process_exec_id": "VARCHAR(255) DEFAULT ''",
+    "parent_exec_id": "VARCHAR(255) DEFAULT ''",
+}
+
 RUNTIME_COLUMN_MIGRATIONS = {
     "process_id": "INTEGER DEFAULT 0", "parent_process_id": "INTEGER DEFAULT 0",
     "process_exec_id": "VARCHAR(255) DEFAULT ''", "parent_exec_id": "VARCHAR(255) DEFAULT ''",
@@ -345,6 +352,7 @@ def _migrate_sqlite_schema():
             ("linux_asset", ASSET_COLUMN_MIGRATIONS),
             ("device_connection", DEVICE_CONNECTION_COLUMN_MIGRATIONS),
             ("runtime_event", RUNTIME_COLUMN_MIGRATIONS),
+            ("security_evidence", SECURITY_EVIDENCE_COLUMN_MIGRATIONS),
             ("vulnerability_match", VULNERABILITY_MATCH_COLUMN_MIGRATIONS),
             ("risk_assessment", RISK_ASSESSMENT_COLUMN_MIGRATIONS),
             ("remediation_task", REMEDIATION_TASK_COLUMN_MIGRATIONS),
