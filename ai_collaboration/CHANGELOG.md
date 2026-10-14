@@ -2,6 +2,22 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-14 — 单一仓库制落地（Public 为唯一正式开发仓库）
+
+- 决策：所有开发/测试/Commit/Push 在本仓库进行；双仓同步机制取消，`scripts/sync_public.py` 删除
+- 完整性核对：原 Private（IoTGuard-Project）跟踪文件清单为本仓库真子集（逐一比对零缺失）；其独有本地数据（历史证据 reports/×11、backend/data、backend/.env、asset_inventory.json，共 59M）归档至 `local-archive/private-backup-20261014/`（.gitignore 排除，永不入库）
+- C1–C5 补推：安全检查通过（无私网 IP/用户名/硬编码密钥/二进制/大文件）后推送 1368fae..5a9244b，本地与远端差 0；P1 部署/稳定性报告（已推送）含实验室 VMnet8 私网地址与 VM 用户名，如实告知，后续报告具体地址仅存本地证据
+- 原 Private 降级为临时本地备份（E:\IoTGuard-Project，内容冻结不动）；删除须待本仓库独立构建/运行/重新 Clone 验证与归档核验通过，并经用户逐项批准
+
+## 2026-10-14 — eBPF 2.0 P1 + final C1–C5（提交 f8b9f80…5a9244b，均已推送）
+
+- P1 准备/部署/稳定性三轮：探针增强（execve argv/start_time/会话键）；Ubuntu VM Falco 0.44.1 真实常驻（2418 事件=2418 证据 1:1，8 规则命中全链）；VMnet8 直连 + 开机自启 + kill -9/SIGTERM 自愈（缺口<2s）+ 32 分钟连续运行 2619 真实事件；修复 3 处真实缺陷；回归 385/19 零差异×2（报告 IOT_EBPF2_P1_PREP/DEPLOY/STABILITY_REPORT.md）
+- final C1 write-ahead spool：先持久化后发送（逐事件 fsync），SIGKILL 仅丢管道尾部、服务端幂等去重重放；有界 spool 三重上限背压；真实 SIGKILL 硬杀恢复对账（专项 12 项）
+- final C2 connect retval 守卫：失败连接（ENETUNREACH）不再产生网络证据，WSL2 真实内核双模式验证；回环异步 RST 边界如实记录
+- final C3 证据会话身份：SecurityEvidence 增 process_exec_id/parent_exec_id（evidence_hash 基不变零漂移）；evidence_sessions() 聚合，PID 复用不合并
+- final C4 CVE 证据下钻：package_match_reasons() 单一语义源 + GET /runtime/cve-evidence + 前端行为链下钻块；exploitation_confirmed 恒 False
+- final C5 数据质量工具：query_runtime_data_quality（coverage/dropped 0 与 unavailable 严格区分/证据新鲜度/显式 data_gaps；未知名 found=False）
+
 ## 2026-10-14 — eBPF 2.0 P0：运行时证据可靠性升级（D1 修复 + 转发器 2.0 + 可靠性指标 + 清空语义）
 
 - 新幂等：原始事件身份（anchor+boot_id+raw 去传输键，递归剔除归一化 artifact）/采集来源/资产归属三层分离；判重路径双表回绑（先绑定不改写）；并发=进程锁+部分唯一索引+SAVEPOINT

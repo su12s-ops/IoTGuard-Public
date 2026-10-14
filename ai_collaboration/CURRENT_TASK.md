@@ -4,7 +4,40 @@
 
 ## 最近完成
 
-**Git 完整托管与自动同步机制建设**（2026-10-13）
+**eBPF 2.0 final C6：回归钩子根因修复 + demo SSH 安全加固**（2026-10-14，提交 de9f1f9）
+- [x] conftest 审计钩子环回放行（127.0.0.0/8、::1、localhost、数字 IP getaddrinfo；主机名与非环回连接仍阻断）——根因修复原 19 个既有失败（钩子误杀环回测试桩）
+- [x] test_scan_runs 本地 lab 套发现白名单（与同类 execute_scan 测试一致）
+- [x] demo SSH 加固：主机指纹钉扎（VM_HOSTKEY_SHA256，fail-closed，替换 AutoAddPolicy）+ sudo 口令仅经 stdin（sudo -S）不进命令行 + 上传脚本 0700；补齐缺失导入（本轮审查发现）
+- [x] .env.example 补 VM_HOSTKEY_SHA256 文档
+- [x] 全量回归 **435 passed / 0 failed**（原基线 385/19，19 既有失败清零、零新增回归）；修复后 435 收集无导入错误 + 23 项快测复验
+- [x] 推送前安全检查通过后推送
+
+## 最近完成
+
+**单一仓库制落地：Public 成为唯一正式开发仓库**（2026-10-14）
+- [x] 决策确认：E:\IoTGuard-Public 为唯一正式开发仓库，此后全部开发/测试/Commit/Push 在此进行；双仓同步机制取消（scripts/sync_public.py 已 git rm）
+- [x] 完整性核对：Private 跟踪文件清单为本仓库真子集（逐一 comm 比对，零缺失）——代码/文档/测试无需回迁
+- [x] Private 独有本地数据归档：local-archive/private-backup-20261014/（历史实验证据 reports/×11、backend/data 数据库、backend/.env、asset_inventory.json，共 59M；.gitignore 排除永不入库）
+- [x] backend/.env 就位于本仓库本地，具备独立运行条件
+- [x] C1–C5（未推送提交）安全检查通过（无私网 IP/用户名/硬编码密钥/二进制/大文件）后推送 GitHub；本地与远端差 0
+- [x] 独立构建/运行/重新 Clone 验证（见下方回归与 Clone 记录）
+- [x] 已知事项更新：原 Private 初始提交 a05f3c8 的整改前环境标识问题随双仓取消自然终结（该仓库降级为本地备份，待批准后删除）
+
+## 最近完成
+
+**eBPF 2.0 P1 三轮 + final C1–C5 补记**（2026-10-14 晚，提交 f8b9f80…5a9244b，均已推送）
+- [x] P1 准备轮（f8b9f80）：探针增强（execve argv / process start_time / 会话键）+ Falco 部署包（collector/deploy/falco/）
+- [x] P1 部署验收（8cfd519）：Ubuntu VM Falco 0.44.1 真实常驻部署全链路（>10 分钟）；2418 真实事件=2418 SecurityEvidence（1:1）；8 规则命中（sshd→bash / bash→curl / sudo→sh→cat shadow 全链自然触发）；drops 真实指标闭环
+- [x] P1 稳定性收尾（1368fae）：弃用临时 SSH 反向隧道改 VMnet8 直连；spool 续传对账 34/34 精确入库、双表 1:1（6071=6071）、全库重复 0；开机自启 + kill -9/SIGTERM 自动恢复（数据缺口<2s）+ SIGINT 干净停止；32 分钟连续运行 2619 条真实事件；修复 3 处真实缺陷（前台阻塞吞 SIGTERM/停止摘要竞态/falco 摘要污染 rejected）；回归 385/19 与基线零差异×2
+- [x] final C1（a0b5ac3）：write-ahead spool（事件先持久化后发送，服务端确认后移除；SIGKILL 仅丢管道尾部，重放由服务端幂等去重）+ 有界 spool（条数/字节/磁盘三重上限背压）+ 运行中自愈；专项 12 项含真实 SIGKILL 硬杀恢复对账
+- [x] final C2（fa0886d）：connect retval==0 守卫（立即失败连接不再产生网络事件）；WSL2 6.6.87.2 真实内核双模式验证（黑洞路由 ENETUNREACH→0 事件）；已知边界如实记录（回环异步 RST 不可过滤）；验证脚本 collector/ebpf_p24_verify.sh
+- [x] final C3（aeae6df）：SecurityEvidence 增 process_exec_id/parent_exec_id（列迁移幂等，evidence_hash 基不变零漂移）；evidence_sessions() 按进程会话键聚合，PID 复用不合并，legacy 行如实标注不足身份
+- [x] final C4（c24f410）：package_match_reasons() 抽取为 CVE×运行时匹配单一语义源；cve_runtime_evidence() 下钻 + GET /runtime/cve-evidence 端点 + 行为链详情页下钻块；exploitation_confirmed 恒 False 诚实边界
+- [x] final C5（5a9244b）：query_runtime_data_quality 智能体工具（覆盖/心跳/真实 dropped（0 与 unavailable 严格区分）/证据新鲜度/显式 data_gaps）；未知名 found=False 不编造报告
+
+## 最近完成
+
+**Git 完整托管与自动同步机制建设**（2026-10-13，历史记录；该机制已于 2026-10-14 取消）
 - [x] 整改提交 6f4724b 推送 Private
 - [x] ai_collaboration/ 协作文件、GitHub 模板（Issue/PR）、CI 工作流
 - [x] scripts/sync_public.py 自动同步脚本（流式导出+敏感扫描+增量推送，幂等）
@@ -88,12 +121,13 @@
 
 ## 下一步（等待审阅，不自动开始）
 
-- eBPF 2.0 P1：execve argv+会话键探针、Falco 规则部署与常驻、证据链×Trace 下钻（前置：VM sudo 授权窗口）
-- eBPF 2.0 P2：性能评测落地、OpenWrt 降级采集、Runtime Agent coverage 工具
+- eBPF 2.0 P2 剩余：P2-1 性能评测落地、P2-2 OpenWrt 降级采集（syslog 尾随）
 - 第九阶段待用户指令（未开始）
+- Private 仓库删除申请：本仓库独立 Clone/构建/运行验证与归档核验已通过，可向用户提交删除申请
 
 ## 已知事项
 
-- 后端 4 个真实套接字测试文件（test_iot_device_upgrade / test_mqtt_remediation_workflow / test_scan_runs 部分）与 conftest 审计钩子冲突，常规回归显式排除（与交付回归口径一致），待加独立 profile 开关
-- Private 初始提交 a05f3c8 历史含整改前环境标识——Private 保持历史不重写；Public 不继承该历史（独立初始化）
-- 竞赛章程对公开时点的要求待用户确认（Public 仓库内容已脱敏）
+- ~~后端 4 个真实套接字测试文件与 conftest 审计钩子冲突~~ → **已根因修复**（de9f1f9 环回放行；全量 435/0）
+- 已推送的 P1 部署/稳定性报告（f8b9f80…1368fae）含实验室 VMnet8 私网地址与 VM 用户名（具体值见那些报告，此处不再复写）——RFC1918 实验网段、不可公网路由，已如实告知用户；后续报告遵循"具体地址仅存本地证据"惯例，不再写入跟踪文件
+- Mimosa 完整项目扫描仍不可用（python_ast_unavailable）；本轮推送以人工多维敏感扫描（凭据/私网标识/密钥材料/二进制/大文件）为闸门，如实记录，不宣称全局安全审计已完成
+- 竞赛章程对公开时点的要求待用户确认
