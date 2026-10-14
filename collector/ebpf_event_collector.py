@@ -38,6 +38,19 @@ from pathlib import Path
 DEFAULT_BATCH_SIZE = 50
 DEFAULT_BATCH_FLUSH_S = 2.0
 DEFAULT_MAX_RETRIES = 5
+
+# falco ≥0.37 在退出时向 stdout 追加的统计摘要块（纯文本，非事件）。
+# 实测（falco 0.44.1，VM 2026-10-14）：首行如下之一，其后跟随任意格式的
+# 缩进明细行（severity/rule 计数）。摘要总在流末尾（引擎退出时输出）——
+# 进入摘要态后跳过全部后续行，不计 received/rejected（非事件、非解析失败）。
+FALCO_EXIT_SUMMARY_PREFIXES = (
+    "Events detected:",
+    "Rule counts by severity:",
+    "Triggered rules by rule name:",
+    "Syscall event drop monitoring:",
+    "- event drop detected:",
+    "- num times actions taken:",
+)
 BACKOFF_BASE_S = 1.0
 BACKOFF_CAP_S = 16.0
 BATCH_ENDPOINT = "/runtime/ebpf/events/batch"
@@ -369,6 +382,7 @@ def main() -> int:
     next_heartbeat = 0.0
     input_done = False
     unconfirmed = metrics.failed_batches
+    in_exit_summary = False
 
     def flush_batch(force=False):
         nonlocal batch, uploaded, unconfirmed, batch_deadline
@@ -419,6 +433,11 @@ def main() -> int:
                 raise line
             line = line.strip()
             if not line:
+                continue
+            if in_exit_summary:
+                continue
+            if line.startswith(FALCO_EXIT_SUMMARY_PREFIXES):
+                in_exit_summary = True
                 continue
             metrics.received += 1
             if len(line) > 1_000_000:

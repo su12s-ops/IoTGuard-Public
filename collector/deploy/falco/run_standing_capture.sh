@@ -55,10 +55,31 @@ cleanup() {
   update_health stopped
 }
 trap cleanup EXIT
+on_term() {
+  # 外部 SIGTERM（非 systemctl stop——stop 走 KillSignal=SIGINT）按异常退出
+  # 处理：保留 143 失败语义 → Restart=on-failure 自动拉起；EXIT trap 幂等复跑。
+  cleanup
+  exit 143
+}
+trap on_term TERM
+on_int() {
+  # systemctl stop（SIGINT 广播整个 cgroup）：转发器自身同时收到 SIGINT，
+  # 经 KeyboardInterrupt→finally（stopped 心跳 + 在途批次入 spool）后退出；
+  # 先等转发器（其 stdin 即 falco stdout，等价等 falco 退出摘要落盘），
+  # 再 cleanup（此时 update_health 才能读到真实 drops）并透传退出码
+  # （spool 残留=1 → SuccessExitStatus=1 映射为正常停止）。
+  wait "${FORWARDER_PID}"
+  RC=$?
+  cleanup
+  exit "${RC}"
+}
+trap on_int INT
 health_loop &
 HEALTH_PID=$!
 
 # 先重传 spool（P0 断点续传），再进入实时流
+# 转发器放后台 + wait：wait 可被 trap 信号即时中断（前台外部命令会把
+# trap 挂起到命令结束——转发器常驻即永不执行，外部 SIGTERM 将被吞掉）。
 python3 "${SCRIPT_DIR}/ebpf_event_collector.py" \
   --api "${API_BASE}" --source falco --sensor-id "${SENSOR_ID}" --asset-id "${ASSET_ID}" \
   --heartbeat --health-file "${HEALTH_FILE}" --spool-file "${SPOOL_FILE}" \
@@ -68,5 +89,8 @@ python3 "${SCRIPT_DIR}/ebpf_event_collector.py" \
       -o stdout_output.enabled=true \
       -o log_level=info \
       -o rule_matching=all \
-      2> >(tee "${FALCO_ERR}" >&2)
-  )
+      2> >(trap '' INT TERM; exec tee "${FALCO_ERR}" >&2)
+  ) &
+FORWARDER_PID=$!
+wait "${FORWARDER_PID}"
+exit $?

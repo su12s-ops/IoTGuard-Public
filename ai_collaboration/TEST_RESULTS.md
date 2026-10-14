@@ -2,6 +2,17 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-14
 
+## eBPF 2.0 P1 稳定性收尾轮（2026-10-14，证据 reports/ebpf-p1-deploy-20261014/stability-* 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 直连连通性（VM→Windows 192.168.183.1:8000） | /api/health ok（零防火墙改动，复用既有规则） |
+| spool 续传对账 | 34/34 唯一指纹精确入库（时间窗逐一对应）；双表 1:1；全库重复指纹/证据 0；spool 1 行→0（确认后清空） |
+| 开机自启 / kill -9 / SIGTERM / SIGINT | enabled ✓；两类异常均自动恢复（NRestarts=1，缺口<2s）；SIGINT 停止=inactive+stopped 心跳+drops=0+spool 保全 |
+| 32 分钟连续运行 | 2619 条真实事件（4 规则）；自报 1433/1433/1432、零拒绝零重试零 spool；服务端 6071=6071（1:1） |
+| dropped 真实来源 | 运行中 unavailable（如实）；停止后退出摘要 0 occurrences → 健康文件与 reliability 端点 dropped=0 |
+| 本轮缺陷修复（真实验证） | bash 吞 SIGTERM（后台+wait）；摘要竞态（on_int 顺序+tee 免疫）；rejected 噪声（状态机，6~9→0） |
+| 回归（全量×2） | 385/19 与基线失败集合零差异（零新增） |
 ## eBPF 2.0 P1 部署验收轮（2026-10-14，证据 reports/ebpf-p1-deploy-20261014/ 本地留存）
 
 | 项 | 结果 |
