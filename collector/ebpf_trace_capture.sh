@@ -171,6 +171,21 @@ with open(raw_path, encoding="utf-8", errors="replace") as fh, open(out_path, "w
 print(f"[LinuxGuard] 归一化完成：{count} 条事件 -> {out_path}")
 PYEOF
 
+# ── P0 采集可靠性：解析 bpftrace 丢失计数 → 探针健康文件（supervisor 语义） ──
+# bpftrace 在退出时向 stderr 报告 "N events lost"（perf 缓冲丢失）。
+# 能解析到 → dropped_events=真实数值；解析不到 → unavailable（绝不虚构为零）。
+HEALTH_FILE="/tmp/linuxguard-probe-health.json"
+LOST=$(grep -Eo '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null | grep -Eo '^[0-9]+' | paste -sd+ - | bc 2>/dev/null || echo "")
+if [ -n "$LOST" ] && [ "$LOST" -ge 0 ] 2>/dev/null; then
+  DROPPED_JSON="$LOST"
+else
+  DROPPED_JSON="null"
+fi
+cat > "$HEALTH_FILE" <<HEALTH
+{"status": "running", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "bpftrace", "lost_source": "bpftrace_stderr"}, "detail": "events lost: $(grep -Ec '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null || echo 0) 条 stderr 丢失报告；null=本次运行未报告丢失计数（unavailable，非零丢失）"}
+HEALTH
+echo "[LinuxGuard] 探针健康文件: ${HEALTH_FILE}（供转发器 --health-file 消费）"
+
 if [ -n "$API_BASE" ]; then
   echo "[LinuxGuard] 上传到 ${API_BASE}/runtime/ebpf/upload ..."
   curl -fsS -F "file=@${OUT_JSON}" "${API_BASE}/runtime/ebpf/upload" && echo

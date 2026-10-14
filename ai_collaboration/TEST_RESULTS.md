@@ -83,6 +83,16 @@
 | 缺陷复现 D1（资产绑定态变化） | 复现（40→80 重复 + 证据不回绑）——升级 P0-1 验收基线 |
 | 环境阻塞 | VM sudo 密码（探针无法在 VM 执行）；Mimosa 完整扫描不可用 |
 
+## eBPF 2.0 P0（2026-10-14，证据 reports/ebpf-p0-20261014/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 专项 test_ebpf_p0.py（幂等/回绑/不误合并/并发/批量重试/未确认重试/指标/0-unknown/旧 API/工具/Trace/迁移/清空） | **18/18 passed** |
+| 转发器契约 test_runtime_forwarder.py（boot_id 不注入、degraded/stopped 心跳、失败退出码；新旧双路径） | 5/5 passed |
+| 相关回归（ebpf/runtime/trace/zephyr/agent/harness） | 92/92 passed |
+| 真实 E2E（真实转发器进程 + 40 条真实内核事件夹具） | 断网 spool(exit1)→恢复续传 40 accepted→重放 duplicates→对账 40/40/0 零重复 |
+| 全量回归 | **374 passed / 19 failed 与 P0 前基线完全一致（零新增）** |
+
 ## CI（.github/workflows/ci.yml）
 
 - backend-job：Python 3.12 + 常规回归口径

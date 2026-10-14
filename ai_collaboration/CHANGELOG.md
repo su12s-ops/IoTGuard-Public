@@ -2,6 +2,16 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-14 — eBPF 2.0 P0：运行时证据可靠性升级（D1 修复 + 转发器 2.0 + 可靠性指标 + 清空语义）
+
+- 新幂等：原始事件身份（anchor+boot_id+raw 去传输键，递归剔除归一化 artifact）/采集来源/资产归属三层分离；判重路径双表回绑（先绑定不改写）；并发=进程锁+部分唯一索引+SAVEPOINT
+- 迁移 v2：历史指纹确定性重算、精确去重（绑定无歧义传递）、证据精确匹配回绑、标记幂等可重跑
+- 转发器 2.0：批量确认协议（POST /runtime/ebpf/events/batch，逐条拒绝）+有界重试指数退避+spool 断点续传（未确认≠丢失）+ack 确认语义+非零退出状态；--legacy-single 兼容
+- 可靠性指标：转发器真实计数随心跳上报；bpftrace stderr 丢失计数解析→supervisor 健康文件；GET /runtime/ebpf/reliability 自报×服务端观测（0 与 unavailable 严格区分）
+- 清空语义：仅清 RuntimeEvent+镜像文件；SecurityEvidence 为只追加审计层（风险复核/Trace 引用）一律保留并上报
+- 验证：专项 18/18；转发器契约 5/5（boot_id 不注入/degraded-stopped 心跳意图保留）；相关回归 92/92；真实 E2E（断网→续传→四次重放零重复：40/40/0）；全量回归 374 passed/19 failed 与基线完全一致（零新增）
+- 边界：未动内核/Falco 服务/LSM enforce/设备写；P1 前置=VM sudo 授权窗口
+
 ## 2026-10-14 — eBPF 2.0 审计轮：源码审计 + 真实验证 + 升级设计（零功能代码改动）
 
 - 交付 IOT_EBPF2_AUDIT_REPORT.md：现有架构图、十项逐一审计（路径/函数/调用链/验证结果）、Tetragon/Falco/Tracee/Hubble 对比矩阵、D1-D9 缺陷清单、P0/P1/P2 升级设计与验收方法、性能评测方案、四智能体/Harness/Trace 兼容性分析

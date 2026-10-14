@@ -2,6 +2,16 @@
 
 > 每完成一个任务归档摘要并同步至 Public。最后更新：2026-10-14
 
+## 2026-10-14（eBPF 2.0 P0）：运行时证据可靠性升级完成（专项 18/18 + 真实 E2E 零重复 + 回归与基线一致）
+
+- **D1 修复（双层根因）**：旧指纹基含当前 asset_id 且传输键（asset_id/sensor_id）经归一化嵌进 raw（含嵌套链）——三层身份分离后，anchor+boot_id+去传输键 raw 构成原始事件身份；真实复现 40→80 → 修复后同批 4 次上传（断网 spool→恢复→重放×2）对账 **40 行/40 证据/0 重复**
+- **回绑**：RuntimeEvent 与 SecurityEvidence 在判重路径补绑（先绑定不改写、冲突显式拒绝）；旧库迁移确定性重算+精确去重（绑定无歧义传递，歧义保守置空）+证据精确匹配回绑，标记 ebpf_p0_stable_fingerprint_v2 幂等
+- **转发器 2.0**：批量确认端点（逐条拒绝、ack=已持久化）+ 有界重试/指数退避/安全随机抖动 + spool 断点续传（未确认≠丢失、已确认行不写回）+ 明确非零退出状态；--legacy-single 兼容路径保留；两处旧契约测试按安全意图等价改写（boot_id 不注入、degraded/stopped、失败退出码）
+- **可靠性指标**：转发器九项真实计数随心跳；ebpf_trace_capture.sh 解析 bpftrace stderr 丢失计数→supervisor 健康文件（解析不到=null→unavailable，绝不虚构为零）；GET /runtime/ebpf/reliability 自报×服务端观测交叉（E2E 实测 dropped=unavailable 与 received=40 并存、按 sensor 归属 stored=40）
+- **清空语义**：仅 RuntimeEvent+镜像文件；SecurityEvidence 只追加审计层（review_evidence_ids/Trace evidence_refs 引用）保留并上报，禁止全表清空替代重复处理
+- **验证分级**：真实运行（E2E 全链+四重放对账）/ 集成测试（并发线程、批量端点、迁移旧库）/ 单元（退避、spool、身份基）；全量回归 374/19 与基线逐集合相同（19=既有已知冲突文件）
+- **边界**：未动内核/Falco 服务/LSM enforce/设备写；Mimosa 完整扫描仍不可用，如实报告
+
 ## 2026-10-14（eBPF 2.0 审计轮）：源码审计 + 真实验证 + 升级设计（零功能改动交付）
 
 - **审计范围**：collector 全部 eBPF/Falco/LSM 脚本与转发器、后端 ebpf_event_collector/security_evidence/runtime_telemetry/runtime 路由、智能体证据工具、风险引擎消费链、前端 RuntimeMonitor——十项逐一给出文件路径、函数、调用链与**真实运行验证结果**（IOT_EBPF2_AUDIT_REPORT.md）

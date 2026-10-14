@@ -140,8 +140,57 @@ def create_demo_ebpf_events(per_asset: int = 4, clear_existing: bool = False, db
 
 @router.delete("/ebpf/events", dependencies=[Depends(require_control)])
 def reset_ebpf_events(db: Session = Depends(get_db)):
-    count = clear_events(db=db)
-    return {"message": "eBPF events cleared", "count": count}
+    result = clear_events(db=db)
+    return {"message": "eBPF events cleared", "count": result["runtime_events_cleared"],
+            "runtime_events_cleared": result["runtime_events_cleared"],
+            "evidence_preserved": result["evidence_preserved"],
+            "scope": result["scope"], "note": result["note"]}
+
+
+@router.post("/ebpf/events/batch", dependencies=[Depends(require_control)])
+async def ingest_ebpf_events_batch(payload: dict[str, Any], db: Session = Depends(get_db)):
+    """P0 转发器批量确认端点。
+
+    契约：请求 {"events":[...]}（≤500 条）；响应即服务端持久化确认——
+    accepted=新入库，duplicates=幂等命中（重试/重放安全），rejected=
+    逐条拒绝原因（不影响其余事件）。仅当 HTTP 200 且响应可解析时客户端
+    才可视为已确认；"请求已发出"不等于已持久化。
+    """
+    events_in = payload.get("events")
+    if not isinstance(events_in, list) or not events_in:
+        raise HTTPException(400, "请求体必须包含非空 events 数组")
+    if len(events_in) > 500:
+        raise HTTPException(413, "每批最多 500 条事件")
+    from app.services.ebpf_event_collector import normalize_event
+    accepted_payloads: list[dict[str, Any]] = []
+    rejected: list[dict[str, Any]] = []
+    for index, item in enumerate(events_in):
+        if not isinstance(item, dict):
+            rejected.append({"index": index, "reason": "事件必须是 JSON 对象"})
+            continue
+        if len(json.dumps(item, ensure_ascii=False, default=str)) > 1_000_000:
+            rejected.append({"index": index, "reason": "单条事件超过 1MB 上限"})
+            continue
+        try:
+            accepted_payloads.append(normalize_event(item))
+        except ValueError as exc:
+            rejected.append({"index": index, "reason": str(exc)[:200]})
+    stored: list[dict[str, Any]] = []
+    if accepted_payloads:
+        try:
+            stored = append_events(accepted_payloads, db=db)
+        except ValueError as exc:
+            db.rollback()
+            raise HTTPException(400, str(exc)) from exc
+    duplicates = sum(1 for event in stored if event.get("duplicate"))
+    return {
+        "ack": True,
+        "received": len(events_in),
+        "accepted": len(stored) - duplicates,
+        "duplicates": duplicates,
+        "rejected": rejected,
+        "stored_event_ids": [event.get("id") for event in stored],
+    }
 
 
 # ── 阶段二：SecurityEvidence 统一证据 API（进程 / 网络 / 文件 / 进程树） ──────
@@ -278,6 +327,17 @@ class SensorHeartbeat(BaseModel):
     dropped_events: int | None = Field(default=None, ge=0)
     capabilities: dict = Field(default_factory=dict)
     detail: str = Field(default="", max_length=1000)
+
+
+@router.get("/ebpf/reliability")
+def ebpf_reliability(db: Session = Depends(get_db)):
+    """P0 采集可靠性快照：自报指标（心跳）与服务端观测交叉呈现。
+
+    语义约定：数值 0 表示真实为零；底层无法提供的一律 "unavailable"/"unknown"，
+    绝不虚构为零（dropped_events 仅在采集器如实上报时为数值）。
+    """
+    from app.services.runtime_telemetry import reliability_snapshot
+    return reliability_snapshot(db)
 
 
 @router.post("/sensors/heartbeat", dependencies=[Depends(require_control)])

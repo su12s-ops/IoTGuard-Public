@@ -231,7 +231,109 @@ def init_db():
     from app import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
-    return _migrate_sqlite_schema()
+    added = _migrate_sqlite_schema()
+    added.extend(_migrate_ebpf_p0())
+    return added
+
+
+EBPF_P0_MARKER = "ebpf_p0_stable_fingerprint_v2"
+
+
+def _migrate_ebpf_p0() -> list[str]:
+    """eBPF 2.0 P0 增量迁移（幂等，带标记）。
+
+    1. 以稳定身份基（app/ebpf_identity，不含资产归属）重算历史 runtime_event 指纹；
+    2. 新基下完全同指纹的行保留最早一条，其余为精确重复予以移除（计数上报；
+       无指纹/无法判定的行一律保留——不猜测、不强制合并）；
+    3. 建部分唯一索引（非空指纹）作为并发上传的最后防线；
+    4. SecurityEvidence 确定性回绑：asset_id 为空且 device_id 与既有资产
+       hostname/ip 完全一致时补绑（仅精确匹配，不做模糊推断）。
+    """
+    if engine.dialect.name != "sqlite":
+        return []
+    from app.ebpf_identity import stable_event_fingerprint
+
+    notes: list[str] = []
+    with engine.begin() as conn:
+        if not _sqlite_table_exists(conn, "runtime_event"):
+            return []
+        conn.execute(text("CREATE TABLE IF NOT EXISTS schema_migration_marker ("
+                          "name TEXT PRIMARY KEY, applied_at TEXT NOT NULL)"))
+        if conn.execute(text("SELECT 1 FROM schema_migration_marker WHERE name = :name"),
+                        {"name": EBPF_P0_MARKER}).first() is not None:
+            return []
+        import json as _json
+        from datetime import datetime, timezone as _tz
+
+        rows = conn.execute(text(
+            "SELECT id, raw_json, hostname, asset_id FROM runtime_event WHERE event_fingerprint != ''")).fetchall()
+        recomputed = removed = 0
+        seen: dict[str, int] = {}
+        binding_candidates: dict[str, set] = {}
+        for row_id, raw_json, hostname, asset_id in rows:
+            try:
+                raw = _json.loads(raw_json or "{}")
+            except ValueError:
+                continue
+            fingerprint = stable_event_fingerprint(raw if isinstance(raw, dict) else {},
+                                                   hostname_hint=str(hostname or ""))
+            if not fingerprint:
+                continue
+            prior_id = seen.get(fingerprint)
+            if prior_id is None:
+                seen[fingerprint] = row_id
+                conn.execute(text("UPDATE runtime_event SET event_fingerprint = :fp WHERE id = :id"),
+                             {"fp": fingerprint, "id": row_id})
+                recomputed += 1
+            else:
+                # 新基下的精确重复：保留最早行，移除后来行（RuntimeEvent 无外部
+                # 外键引用；SecurityEvidence 按自身 hash 独立保留，不受影响）。
+                conn.execute(text("DELETE FROM runtime_event WHERE id = :id"), {"id": row_id})
+                removed += 1
+            # 绑定传递：同一原始事件跨行的非空资产归属候选（仅当组内唯一时才
+            # 补绑到保留行——多种不同归属属歧义，保守保留 NULL，不猜测）。
+            if asset_id is not None:
+                binding_candidates.setdefault(fingerprint, set()).add(asset_id)
+        for fingerprint, candidates in binding_candidates.items():
+            keep_id = seen.get(fingerprint)
+            if keep_id is None or len(candidates) != 1:
+                continue
+            conn.execute(text("UPDATE runtime_event SET asset_id = :a WHERE id = :id AND asset_id IS NULL"),
+                         {"a": next(iter(candidates)), "id": keep_id})
+        # 防御性收尾：仍存在非空同指纹的遗留行（如 raw 不可解析保留了旧基指纹）
+        # 属精确重复（旧基含 asset_id，同指纹=同资产+同原始报文+同时间），保留最早行。
+        stragglers = conn.execute(text(
+            "SELECT event_fingerprint, COUNT(*) FROM runtime_event "
+            "WHERE event_fingerprint != '' GROUP BY event_fingerprint HAVING COUNT(*) > 1")).fetchall()
+        for fingerprint, _count in stragglers:
+            ids = [row[0] for row in conn.execute(
+                text("SELECT id FROM runtime_event WHERE event_fingerprint = :fp ORDER BY id"),
+                {"fp": fingerprint}).fetchall()]
+            for duplicate_id in ids[1:]:
+                conn.execute(text("DELETE FROM runtime_event WHERE id = :id"), {"id": duplicate_id})
+                removed += 1
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS uq_runtime_event_fingerprint_v2 "
+                          "ON runtime_event(event_fingerprint) WHERE event_fingerprint != ''"))
+        rebound = 0
+        if _sqlite_table_exists(conn, "security_evidence") and _sqlite_table_exists(conn, "linux_asset"):
+            assets = conn.execute(text("SELECT id, hostname, ip_address FROM linux_asset")).fetchall()
+            by_name = {name: asset_id for asset_id, hostname, ip in assets
+                       for name in (hostname, ip) if name}
+            evidence_rows = conn.execute(text(
+                "SELECT id, device_id FROM security_evidence WHERE asset_id IS NULL")).fetchall()
+            for evidence_id, device_id in evidence_rows:
+                asset_id = by_name.get(str(device_id or ""))
+                if asset_id is not None:
+                    conn.execute(text("UPDATE security_evidence SET asset_id = :a WHERE id = :id"),
+                                 {"a": asset_id, "id": evidence_id})
+                    rebound += 1
+        conn.execute(text("INSERT OR REPLACE INTO schema_migration_marker (name, applied_at) "
+                          "VALUES (:name, :at)"),
+                      {"name": EBPF_P0_MARKER,
+                       "at": datetime.now(_tz.utc).isoformat()})
+    notes.append(f"ebpf_p0: fingerprints_recomputed={recomputed}, exact_duplicates_removed={removed}, "
+                 f"evidence_rebound={rebound}")
+    return notes
 
 
 def _migrate_sqlite_schema():

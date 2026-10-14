@@ -1,15 +1,17 @@
 import json
-import hashlib
 import os
 import re
+import threading
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app import models
+from app.ebpf_identity import stable_event_fingerprint
 from app.services.runtime_telemetry import IDENTITY_FIELDS, identity_fields
 
 
@@ -346,22 +348,41 @@ def _observation_mode(source: str) -> str:
     return "runtime"
 
 
+_PERSIST_LOCK = threading.Lock()
+
+
 def _persist_events(db: Session, events: list[dict[str, Any]]) -> None:
     # 阶段二：事件入库的同时生成统一 SecurityEvidence（process/network/file），
     # 形成 eBPF → Evidence → 数据库 → API → 智能体 的链路，而非独立日志。
+    #
+    # P0（eBPF 2.0）幂等修复：原始事件指纹只由事件自身声明内容决定
+    # （锚点 + boot_id + raw，见 app/ebpf_identity.py），不含资产归属——
+    # 资产注册前后重传同一事件命中同一指纹，绝不产生第二份记录；
+    # 既有记录缺资产归属时在判重路径上补绑（先到先绑定，不改写既有归属）。
+    with _PERSIST_LOCK:
+        _persist_events_locked(db, events)
+
+
+def _persist_events_locked(db: Session, events: list[dict[str, Any]]) -> None:
     from app.services.security_evidence import persist_evidence
 
     for event in events:
+        # 指纹提示取绑定前的自报主机名（绑定可能改写 event["hostname"]），
+        # 保证无锚点事件在资产注册前后指纹一致（P0 幂等连续性）。
+        declared_hostname = str(event.get("hostname") or "")
         asset = _asset_for_event(db, event)
         if asset:
             event["asset_id"], event["hostname"] = asset.id, asset.hostname
         raw = event.get("raw", {})
-        fingerprint = ""
-        if raw.get("timestamp") or raw.get("time"):
-            fingerprint = hashlib.sha256(json.dumps({"asset_id": event.get("asset_id"), "raw": raw}, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+        fingerprint = stable_event_fingerprint(raw, hostname_hint=declared_hostname)
+        if fingerprint:
             prior = db.query(models.RuntimeEvent).filter_by(event_fingerprint=fingerprint).first()
-            if prior:
+            if prior is not None:
                 event["id"], event["duplicate"] = prior.id, True
+                if prior.asset_id is None and asset is not None:
+                    prior.asset_id = asset.id
+                    db.commit()
+                    event["asset_rebound"] = True
                 continue
         row = models.RuntimeEvent(
             asset_id=asset.id if asset else None,
@@ -386,8 +407,23 @@ def _persist_events(db: Session, events: list[dict[str, Any]]) -> None:
             event_fingerprint=fingerprint,
             **{name: event.get(name, 0 if name in {"process_id", "parent_process_id"} else "") for name in IDENTITY_FIELDS},
         )
-        db.add(row)
-        db.flush()
+        try:
+            with db.begin_nested():
+                db.add(row)
+                db.flush()
+        except IntegrityError:
+            # 并发上传同指纹：部分唯一索引兜底（见 database 迁移），回退为判重
+            if not fingerprint:
+                raise
+            prior = db.query(models.RuntimeEvent).filter_by(event_fingerprint=fingerprint).first()
+            if prior is None:
+                raise
+            event["id"], event["duplicate"] = prior.id, True
+            if prior.asset_id is None and asset is not None:
+                prior.asset_id = asset.id
+                db.commit()
+                event["asset_rebound"] = True
+            continue
         event["id"] = row.id
     db.commit()
     persist_evidence(db, events)
@@ -715,13 +751,29 @@ def generate_demo_runtime_events(db: Session, per_asset: int = 4) -> list[dict[s
     return append_events(payloads, db=db)
 
 
-def clear_events(db: Session | None = None) -> int:
-    count = len(load_events(limit=100000))
+def clear_events(db: Session | None = None) -> dict[str, Any]:
+    """清空运行时事件流（P0 语义明确化）。
+
+    作用范围：仅清 runtime_event 表与其 JSONL 镜像文件（原始事件流可重建、
+    无外部外键引用）。SecurityEvidence 为只追加审计证据层，被风险复核
+    （review_evidence_ids）与统一 Trace（evidence_refs）引用，**禁止批量删除**，
+    本操作一律保留并如实上报保留数量。重复数据由 P0 幂等与迁移机制解决，
+    不得以清空替代。
+    """
+    file_count = len(load_events(limit=100000))
     if EVENT_FILE.exists():
         EVENT_FILE.unlink()
+    runtime_cleared = 0
+    evidence_preserved = 0
     if db is not None:
-        db_count = db.query(models.RuntimeEvent).count()
+        runtime_cleared = db.query(models.RuntimeEvent).count()
         db.query(models.RuntimeEvent).delete()
+        evidence_preserved = db.query(models.SecurityEvidence).count()
         db.commit()
-        count = max(count, db_count)
-    return count
+    return {
+        "runtime_events_cleared": max(file_count, runtime_cleared),
+        "evidence_preserved": evidence_preserved,
+        "scope": "runtime_event + events.jsonl mirror only",
+        "note": ("SecurityEvidence 为只追加审计层并被风险复核/Trace 引用，不随本操作删除；"
+                 "重复数据由幂等指纹与迁移处理，禁止全表清空替代。"),
+    }

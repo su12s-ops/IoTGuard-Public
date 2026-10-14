@@ -9,6 +9,8 @@ import json
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 
+from sqlalchemy import func
+
 from app import models
 
 IDENTITY_FIELDS = ("process_id", "parent_process_id", "process_exec_id", "parent_exec_id",
@@ -133,3 +135,65 @@ def compare_windows(db, asset_id, checkpoint, window_seconds=300):
             "truncated": len(rows) == 10000, "coverage": coverage(db, asset_id),
             "verification_status": "requires_inventory_and_business_checks",
             "note": "事件数量变化或没有事件都不单独证明漏洞已修复。"}
+
+
+def reliability_snapshot(db) -> dict:
+    """P0 采集可靠性快照：心跳自报指标 × 服务端观测交叉。
+
+    0 与 unknown 的语义边界（验收要点）：
+    - dropped_events：仅采集器如实上报时为数值（0=真实零丢失）；
+      从未上报（None）→ "unavailable"。
+    - stored_events：按 sensor_id 归属的服务端入库计数，0=该传感器名下
+      确无归属事件（P0 之前的历史事件可能无 sensor 归属，附注说明）。
+    - forwarder 计数器（received/uploaded/duplicates/retries/failed/...）：
+      仅在使用 P0 转发器（批量确认协议）时存在，否则 "unknown"。
+    """
+    sensors = db.query(models.RuntimeSensor).order_by(models.RuntimeSensor.id).all()
+    attributed = dict(
+        db.query(models.RuntimeEvent.sensor_id, func.count(models.RuntimeEvent.id))
+        .filter(models.RuntimeEvent.sensor_id != "")
+        .group_by(models.RuntimeEvent.sensor_id).all())
+    times = {}
+    for sensor_id, first_at, last_at in (
+            db.query(models.RuntimeEvent.sensor_id,
+                     func.min(models.RuntimeEvent.occurred_at),
+                     func.max(models.RuntimeEvent.occurred_at))
+            .filter(models.RuntimeEvent.sensor_id != "")
+            .group_by(models.RuntimeEvent.sensor_id).all()):
+        times[sensor_id] = (first_at, last_at)
+    rows = []
+    for sensor in sensors:
+        try:
+            capabilities = json.loads(sensor.capabilities_json or "{}")
+        except ValueError:
+            capabilities = {}
+        metrics = capabilities.get("metrics")
+        first_at, last_at = times.get(sensor.sensor_id, (None, None))
+        rows.append({
+            "asset_id": sensor.asset_id,
+            "sensor_id": sensor.sensor_id,
+            "source": sensor.source,
+            "status": sensor.status,
+            "dropped_events": sensor.dropped_events if sensor.dropped_events is not None else "unavailable",
+            "self_reported_metrics": metrics if isinstance(metrics, dict) else "unknown",
+            "server_observed": {
+                "stored_events": attributed.get(sensor.sensor_id, 0),
+                "first_event_at": first_at or "unknown",
+                "last_event_at": last_at or "unknown",
+            },
+            "detail": (sensor.detail or "")[:400],
+        })
+    return {
+        "sensors": rows,
+        "server_totals": {
+            "runtime_events": db.query(models.RuntimeEvent).count(),
+            "security_evidence": db.query(models.SecurityEvidence).count(),
+            "events_without_sensor_attribution": db.query(models.RuntimeEvent)
+                .filter(models.RuntimeEvent.sensor_id == "").count(),
+        },
+        "semantics": {
+            "zero_vs_unknown": "0 表示真实为零；unavailable/unknown 表示底层未提供，不虚构为零",
+            "dropped_events_source": "仅采集器如实上报（探针 supervisor 健康文件或转发器指标）",
+            "note": "P0 之前入库的历史事件可能缺少 sensor_id 归属，计入 events_without_sensor_attribution",
+        },
+    }

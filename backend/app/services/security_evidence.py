@@ -187,13 +187,23 @@ def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str
     """幂等写入：同一 evidence_hash 只保留一条，重复事件返回已有 evidence_id。"""
     stored: list[dict[str, Any]] = []
     for event in events:
-        if event.get("duplicate"):
-            continue
+        # P0：duplicate 事件跳过新建，但仍参与"缺绑补绑"检查（asset_rebound 语义）。
         record = event_to_evidence(event)
         existing = db.query(models.SecurityEvidence).filter_by(evidence_hash=record["evidence_hash"]).first()
         if existing:
             record["evidence_id"] = existing.evidence_id
             record["duplicate"] = True
+            # 证据层回绑（修复审计 D1 后半）：既有证据缺资产归属而本次事件
+            # 可解析到资产时补绑；先到先绑定，不改写既有非空归属。
+            if existing.asset_id is None and record.get("asset_id"):
+                existing.asset_id = record["asset_id"]
+                db.commit()
+                record["asset_rebound"] = True
+            stored.append(record)
+            continue
+        if event.get("duplicate"):
+            # 同批内已被 RuntimeEvent 判重且库中无既有证据（异常场景）：
+            # 不新建，保持与 RuntimeEvent 一致，避免双写漂移。
             stored.append(record)
             continue
         row = models.SecurityEvidence(**{key: value for key, value in record.items()})
