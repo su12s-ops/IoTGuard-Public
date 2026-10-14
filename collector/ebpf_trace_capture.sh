@@ -49,6 +49,8 @@ tracepoint:syscalls:sys_enter_execve
 }
 
 // ── 网络：TCP connect（kprobe+retprobe 读取 sock 目的地址 + start_time） ──
+// P2-4（D8 修复）：retval != 0 的失败连接不产生事件（审计轮 §2.4：
+// 失败连接不应计入网络证据）。map 项始终删除，避免谓词外泄导致泄漏。
 kprobe:tcp_v4_connect
 {
   @sk[tid] = arg0;
@@ -57,9 +59,11 @@ kretprobe:tcp_v4_connect
 /@sk[tid]/
 {
   $sk = (struct sock *)@sk[tid];
-  $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
-  printf("LG|connect|%llu|%d|%u|%s|%s|%d|%llu\n",
-    nsecs, pid, uid, comm, ntop($sk->__sk_common.skc_daddr), $port, curtask->start_time);
+  if (retval == 0) {
+    $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
+    printf("LG|connect|%llu|%d|%u|%s|%s|%d|%llu\n",
+      nsecs, pid, uid, comm, ntop($sk->__sk_common.skc_daddr), $port, curtask->start_time);
+  }
   delete(@sk[tid]);
 }
 kprobe:tcp_v6_connect
@@ -70,9 +74,11 @@ kretprobe:tcp_v6_connect
 /@sk6[tid]/
 {
   $sk = (struct sock *)@sk6[tid];
-  $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
-  printf("LG|connect|%llu|%d|%u|%s|%s|%d|%llu\n",
-    nsecs, pid, uid, comm, ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $port, curtask->start_time);
+  if (retval == 0) {
+    $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
+    printf("LG|connect|%llu|%d|%u|%s|%s|%d|%llu\n",
+      nsecs, pid, uid, comm, ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $port, curtask->start_time);
+  }
   delete(@sk6[tid]);
 }
 
@@ -111,9 +117,11 @@ kretprobe:tcp_v4_connect
 /@sk[tid]/
 {
   $sk = (struct sock *)@sk[tid];
-  $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
-  printf("LG|connect|%llu|%d|%u|%s|%s|%d\n",
-    nsecs, pid, uid, comm, ntop($sk->__sk_common.skc_daddr), $port);
+  if (retval == 0) {
+    $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
+    printf("LG|connect|%llu|%d|%u|%s|%s|%d\n",
+      nsecs, pid, uid, comm, ntop($sk->__sk_common.skc_daddr), $port);
+  }
   delete(@sk[tid]);
 }
 kprobe:tcp_v6_connect
@@ -124,9 +132,11 @@ kretprobe:tcp_v6_connect
 /@sk6[tid]/
 {
   $sk = (struct sock *)@sk6[tid];
-  $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
-  printf("LG|connect|%llu|%d|%u|%s|%s|%d\n",
-    nsecs, pid, uid, comm, ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $port);
+  if (retval == 0) {
+    $port = ($sk->__sk_common.skc_dport >> 8) | (($sk->__sk_common.skc_dport & 0xff) << 8);
+    printf("LG|connect|%llu|%d|%u|%s|%s|%d\n",
+      nsecs, pid, uid, comm, ntop(10, $sk->__sk_common.skc_v6_daddr.in6_u.u6_addr8), $port);
+  }
   delete(@sk6[tid]);
 }
 tracepoint:syscalls:sys_enter_openat
