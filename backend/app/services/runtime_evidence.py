@@ -85,6 +85,64 @@ def _localized_counter(data: Counter, labels: dict[str, str]) -> dict[str, int]:
     return {labels.get(key, key): value for key, value in data.items()}
 
 
+def package_match_reasons(
+    event: dict[str, Any],
+    package_name: str,
+    service_names: set[str],
+    service_ports: set[int],
+    scenario_id: str = "",
+) -> tuple[list[str], list[str]]:
+    """单事件 × 软件包匹配判定（CVE↔运行时证据关联的唯一语义源）。
+
+    返回 (direct_reasons, contextual_reasons)。evaluate_runtime_evidence
+    （风险评估）与 P1-4 CVE 证据下钻共用本函数，保证两处语义一致；
+    修改判定规则必须同时回归两条链路。
+    """
+    package_token = (package_name or "").lower()
+    process = (event.get("process_name") or "").lower()
+    commandline = (event.get("commandline") or "").lower()
+    parent_process = (event.get("parent_process") or "").lower()
+    category = (event.get("category") or "").lower()
+    raw_text = json.dumps(event.get("raw") or {}, ensure_ascii=False).lower()
+    file_path = (event.get("file_path") or "").lower()
+    event_port = int(event.get("port") or 0)
+    direct_reasons = []
+    contextual_reasons = []
+
+    aliases = {package_token}
+    aliases.update({"openssh-server": {"sshd"}, "redis-server": {"redis-server"}, "mosquitto": {"mosquitto"},
+                    "dropbear": {"dropbear"}}.get(package_token, set()))
+    if package_token and PurePosixPath(process).name in aliases:
+        direct_reasons.append("process")
+    if package_token and package_token in commandline:
+        contextual_reasons.append("commandline_text")
+    if package_token and package_token in parent_process:
+        contextual_reasons.append("parent_process_text")
+    if package_token and package_token in raw_text:
+        contextual_reasons.append("raw_payload_text")
+    if package_token and package_token in file_path:
+        contextual_reasons.append("file_path_text")
+
+    privileged_context = category in {"sensitive_file_access", "privilege_activity"} and (
+        scenario_id in {"lpe", "data_leak"} or package_name in {"sudo", "bash", "openssh-server", "ssh", "pam", "passwd", "shadow"}
+    )
+    if privileged_context:
+        contextual_reasons.append("privileged_context")
+
+    if any(name and name in process for name in service_names):
+        contextual_reasons.append("service_process")
+    if any(name and name in commandline for name in service_names):
+        contextual_reasons.append("service_command")
+    if any(name and name in parent_process for name in service_names):
+        contextual_reasons.append("service_parent")
+    if any(name and name in raw_text for name in service_names):
+        contextual_reasons.append("service_raw")
+    if event_port in service_ports:
+        contextual_reasons.append("service_port")
+
+    return direct_reasons, contextual_reasons
+
+
 def evaluate_runtime_evidence(
     asset: models.LinuxAsset,
     package_name: str,
@@ -122,52 +180,12 @@ def evaluate_runtime_evidence(
     related_services = [service for service in services if package_related_to_service(package_name, service_name(service))]
     service_names = {service_name(service).lower() for service in related_services if service_name(service)}
     service_ports = {service.port for service in related_services if service.port}
-    package_token = (package_name or "").lower()
     direct_hits: list[dict[str, Any]] = []
     contextual_hits: list[dict[str, Any]] = []
 
     for event in asset_events:
-        process = (event.get("process_name") or "").lower()
-        commandline = (event.get("commandline") or "").lower()
-        parent_process = (event.get("parent_process") or "").lower()
-        category = (event.get("category") or "").lower()
-        raw_text = json.dumps(event.get("raw") or {}, ensure_ascii=False).lower()
-        file_path = (event.get("file_path") or "").lower()
-        event_port = int(event.get("port") or 0)
-        direct_reasons = []
-        contextual_reasons = []
-
-        aliases = {package_token}
-        aliases.update({"openssh-server": {"sshd"}, "redis-server": {"redis-server"}, "mosquitto": {"mosquitto"},
-                        "dropbear": {"dropbear"}}.get(package_token, set()))
-        if package_token and PurePosixPath(process).name in aliases:
-            direct_reasons.append("process")
-        if package_token and package_token in commandline:
-            contextual_reasons.append("commandline_text")
-        if package_token and package_token in parent_process:
-            contextual_reasons.append("parent_process_text")
-        if package_token and package_token in raw_text:
-            contextual_reasons.append("raw_payload_text")
-        if package_token and package_token in file_path:
-            contextual_reasons.append("file_path_text")
-
-        privileged_context = category in {"sensitive_file_access", "privilege_activity"} and (
-            scenario_id in {"lpe", "data_leak"} or package_name in {"sudo", "bash", "openssh-server", "ssh", "pam", "passwd", "shadow"}
-        )
-        if privileged_context:
-            contextual_reasons.append("privileged_context")
-
-        if any(name and name in process for name in service_names):
-            contextual_reasons.append("service_process")
-        if any(name and name in commandline for name in service_names):
-            contextual_reasons.append("service_command")
-        if any(name and name in parent_process for name in service_names):
-            contextual_reasons.append("service_parent")
-        if any(name and name in raw_text for name in service_names):
-            contextual_reasons.append("service_raw")
-        if event_port in service_ports:
-            contextual_reasons.append("service_port")
-
+        direct_reasons, contextual_reasons = package_match_reasons(
+            event, package_name, service_names, service_ports, scenario_id)
         if direct_reasons:
             direct_hits.append(_annotate_event(event, "direct", direct_reasons))
         elif contextual_reasons:

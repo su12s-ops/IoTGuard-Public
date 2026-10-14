@@ -11,7 +11,43 @@
 
     <section class="detail-section"><header><span>04</span><div><h2>证据链</h2><p>资产 → 服务 → 软件包 → CVE 的可达路径</p></div></header><dl class="detail-dl compact"><div><dt>可达性</dt><dd>{{ depText(chain.dependency_graph.status) }}</dd></div><div><dt>路径数</dt><dd>{{ chain.dependency_graph.path_count || 0 }}</dd></div><div><dt>暴露服务</dt><dd>{{ chain.dependency_graph.exposed_service_count || 0 }}</dd></div><div><dt>置信度</dt><dd>{{ pct(chain.dependency_graph.confidence) }}</dd></div></dl><div class="evidence-path" v-for="(path,i) in paths" :key="i"><span v-for="(node,j) in path" :key="j"><code>{{ node }}</code><b v-if="j < path.length - 1">→</b></span></div><div class="service-table" v-if="services.length"><table class="data-table"><thead><tr><th>服务</th><th>端口</th><th>协议</th><th>监听地址</th><th>公网暴露</th></tr></thead><tbody><tr v-for="(service,index) in services" :key="index"><td>{{ service.service_name }}</td><td>{{ service.port }}</td><td>{{ service.protocol }}</td><td class="mono">{{ service.listen_address }}</td><td>{{ service.is_public_exposed ? "是" : "否" }}</td></tr></tbody></table></div></section>
 
-    <section class="detail-section"><header><span>05</span><div><h2>运行时验证</h2><p>验证结论与原始运行时证据</p></div><span class="status-label" :class="chain.runtime_verification.status === 'verified' ? 'is-l' : 'is-info'">{{ rtText(chain.runtime_verification.status) }}</span></header><p class="section-note">{{ chain.runtime_verification.conclusion }}</p><dl class="detail-dl compact"><div><dt>证据强度</dt><dd>{{ chain.runtime_verification.strength || 0 }}</dd></div><div><dt>置信度</dt><dd>{{ pct(chain.runtime_verification.confidence) }}</dd></div><div><dt>直接命中</dt><dd>{{ chain.runtime_verification.signals?.direct_count || 0 }}</dd></div><div><dt>上下文命中</dt><dd>{{ chain.runtime_verification.signals?.contextual_count || 0 }}</dd></div></dl><div class="runtime-rows"><article v-for="(event,index) in chain.runtime_verification.matched_events || []" :key="index"><header><strong>{{ event.rule || event.category }}</strong><span>{{ matchTypeText(event.match_type) }} / {{ freshnessText(event.freshness) }} / 权重 {{ event.evidence_weight }}</span></header><pre>{{ [event.process_name,event.commandline,event.file_path].filter(Boolean).join(" / ") }}</pre></article><div v-if="!(chain.runtime_verification.matched_events || []).length" class="empty-inline">未记录匹配的原始运行时事件。</div></div></section>
+    <section class="detail-section"><header><span>05</span><div><h2>运行时验证</h2><p>验证结论与原始运行时证据</p></div><span class="status-label" :class="chain.runtime_verification.status === 'verified' ? 'is-l' : 'is-info'">{{ rtText(chain.runtime_verification.status) }}</span></header><p class="section-note">{{ chain.runtime_verification.conclusion }}</p><dl class="detail-dl compact"><div><dt>证据强度</dt><dd>{{ chain.runtime_verification.strength || 0 }}</dd></div><div><dt>置信度</dt><dd>{{ pct(chain.runtime_verification.confidence) }}</dd></div><div><dt>直接命中</dt><dd>{{ chain.runtime_verification.signals?.direct_count || 0 }}</dd></div><div><dt>上下文命中</dt><dd>{{ chain.runtime_verification.signals?.contextual_count || 0 }}</dd></div></dl><div class="runtime-rows"><article v-for="(event,index) in chain.runtime_verification.matched_events || []" :key="index"><header><strong>{{ event.rule || event.category }}</strong><span>{{ matchTypeText(event.match_type) }} / {{ freshnessText(event.freshness) }} / 权重 {{ event.evidence_weight }}</span></header><pre>{{ [event.process_name,event.commandline,event.file_path].filter(Boolean).join(" / ") }}</pre></article><div v-if="!(chain.runtime_verification.matched_events || []).length" class="empty-inline">未记录匹配的原始运行时事件。</div></div>
+<div class="evidence-drill" v-if="drillBlock">
+  <header class="drill-head">
+    <h4>该 CVE 相关证据下钻（SecurityEvidence × 进程会话）</h4>
+    <span class="status-label" :class="drillBlock.runtime_status === 'verified' ? 'is-l' : drillBlock.runtime_status === 'contextual' ? 'is-info' : 'is-h'">{{ rtText(drillBlock.runtime_status) }}</span>
+  </header>
+  <p class="section-note">{{ drillBlock.note }}</p>
+  <div class="drill-signals">
+    <span>直接命中 <strong>{{ drillBlock.signals.direct_count }}</strong></span>
+    <span>上下文命中 <strong>{{ drillBlock.signals.contextual_count }}</strong></span>
+    <span>涉及进程会话 <strong>{{ drillBlock.signals.session_count }}</strong></span>
+    <span>最高权重 <strong>{{ drillBlock.signals.max_weight }}</strong></span>
+  </div>
+  <el-collapse v-if="drillBlock.sessions.length">
+    <el-collapse-item v-for="session in drillBlock.sessions" :key="session.id" :name="session.id">
+      <template #title>
+        <code class="drill-session-id">{{ session.id }}</code>
+        <span class="drill-session-meta">{{ session.process || "未知进程" }}{{ session.pid ? ` (pid=${session.pid})` : "" }} · {{ session.evidence_ids.length }} 条证据 · 权重峰值 {{ session.max_weight }}</span>
+      </template>
+      <table class="data-table">
+        <thead><tr><th>类型</th><th>证据 ID</th><th>时间</th><th>匹配</th><th>权重</th><th>明细</th></tr></thead>
+        <tbody>
+          <tr v-for="item in sessionEvidence(session)" :key="item.evidence_id">
+            <td>{{ evidenceTypeText(item.evidence_type) }}</td>
+            <td class="mono">{{ item.evidence_id }}</td>
+            <td class="mono">{{ item.timestamp || "-" }}</td>
+            <td><span class="status-label" :class="item.match_type === 'direct' ? 'is-h' : 'is-info'">{{ matchTypeText(item.match_type) }}</span></td>
+            <td class="mono">{{ item.evidence_weight }}</td>
+            <td>{{ evidenceDetail(item) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </el-collapse-item>
+  </el-collapse>
+  <div v-else class="empty-inline">该 CVE 在此资产上暂无可下钻的安全证据（未观察到 ≠ 安全）。</div>
+</div>
+</section>
 
     <section class="detail-section"><header><span>06</span><div><h2>风险研判</h2><p>专业分析、冲突复议与最终裁决</p></div></header><table class="data-table"><thead><tr><th>研判角色</th><th>核心结论</th><th>置信度 / 方向</th><th>证据引用</th></tr></thead><tbody><tr v-for="row in agentRows" :key="row.id"><td><strong>{{ row.label }}</strong><small class="cell-sub mono">{{ row.id }}</small></td><td>{{ row.reason }}</td><td>{{ row.meta }}</td><td class="mono">{{ row.evidence || "-" }}</td></tr><tr v-if="!agentRows.length"><td colspan="4" class="empty-cell">暂无专业分析记录。</td></tr></tbody></table><div class="final-decision"><div><span>当前风险</span><strong>{{ displayScore }} / {{ riskLevelText(displayLevel) }}</strong></div><div><span>风险裁决</span><strong>{{ riskRecord.review_verdict || decisionText(chain.risk.decision) }}</strong></div><div><span>处置建议</span><strong>{{ riskRecord.recommended_action || decisionText(chain.risk.decision) }}</strong></div><p>{{ riskRecord.review_reason || chain.risk.decision_reason }}</p></div></section>
 
@@ -30,13 +66,24 @@ import { ArrowLeft, CopyDocument } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { fetchBehaviorChains, fetchRiskRanking, fetchVulnerability } from "../api";
+import { fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
 
 const route = useRoute();
 const router = useRouter();
 const chains = ref([]);
 const vulnerabilityDetail = ref({});
 const riskRows = ref([]);
+const cveEvidence = ref(null);
+
+const drillBlock = computed(() => cveEvidence.value?.assets?.[0] || null);
+const sessionEvidence = (session) => {
+  const ids = new Set(session.evidence_ids);
+  return (drillBlock.value?.evidence || []).filter((item) => ids.has(item.evidence_id));
+};
+const evidenceTypeText = (t) => ({ process: "进程", network: "网络", file: "文件" }[t] || t || "-");
+const evidenceDetail = (item) =>
+  [item.commandline, item.destination ? `${item.destination}${item.port ? ":" + item.port : ""}` : "", item.file_path]
+    .filter(Boolean).join("  ") || item.category || "-";
 
 const chainId = computed(() => (Array.isArray(route.query.chain_id) ? route.query.chain_id[0] : route.query.chain_id));
 const chain = computed(() => chains.value.find((c) => c.chain_id === chainId.value));
@@ -106,6 +153,8 @@ onMounted(async () => {
   riskRows.value = rankingData || [];
   if (chain.value?.intelligence?.cve_id) {
     vulnerabilityDetail.value = await fetchVulnerability(chain.value.intelligence.cve_id).catch(() => ({}));
+    cveEvidence.value = await fetchCveRuntimeEvidence(chain.value.intelligence.cve_id, chain.value.asset.id)
+      .catch(() => null);
   }
 });
 </script>
@@ -319,5 +368,6 @@ onMounted(async () => {
 .runtime-rows { display: grid; gap: 8px; margin-top: 12px; }.runtime-rows article { border: 1px solid var(--soc-border-soft); background: #0d151e; }.runtime-rows article > header { display: flex; justify-content: space-between; gap: 14px; padding: 8px 10px; border-bottom: 1px solid var(--soc-border-soft); }.runtime-rows article header strong { color: #cad4df; }.runtime-rows article header span { color: var(--soc-text-muted); font-size: 10px; }.runtime-rows pre { margin: 0; padding: 10px; color: #aebdcb; font: 11px/1.6 Consolas, monospace; white-space: pre-wrap; }
 .final-decision { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0; margin-top: 12px; border: 1px solid var(--soc-border-soft); }.final-decision > div { padding: 10px; border-right: 1px solid var(--soc-border-soft); }.final-decision span { display: block; color: var(--soc-text-muted); font-size: 10px; }.final-decision strong { display: block; margin-top: 3px; }.final-decision p { grid-column: 1 / -1; margin: 0; padding: 10px; border-top: 1px solid var(--soc-border-soft); color: var(--soc-text-secondary); line-height: 1.6; }
 .command-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-top: 12px; }.command-grid > div { border: 1px solid #29394a; background: #090f16; }.command-grid header { display: flex; justify-content: space-between; align-items: center; min-height: 36px; padding: 0 10px; border-bottom: 1px solid #29394a; color: #8fa0b2; }.command-grid pre { margin: 0; padding: 12px; overflow: auto; color: #adbed0; font: 11px/1.65 Consolas, monospace; white-space: pre-wrap; }
+.evidence-drill { margin-top: 14px; border: 1px solid var(--soc-border-soft); background: #0b1219; }.drill-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 9px 10px; border-bottom: 1px solid var(--soc-border-soft); }.drill-head h4 { margin: 0; color: #cad4df; font-size: 12px; }.drill-signals { display: flex; flex-wrap: wrap; gap: 16px; padding: 8px 10px; color: var(--soc-text-muted); font-size: 11px; }.drill-signals strong { color: #d7e1ec; font-family: Consolas, monospace; }.drill-signals span { display: inline-flex; gap: 6px; align-items: baseline; }.evidence-drill .section-note { margin: 0; padding: 8px 10px 0; }.evidence-drill .el-collapse { border-top: 1px solid var(--soc-border-soft); border-bottom: 0; }.drill-session-id { color: #9fc1e4; font: 11px Consolas, monospace; word-break: break-all; }.drill-session-meta { margin-left: 10px; color: var(--soc-text-muted); font-size: 11px; }.evidence-drill .empty-inline { padding: 10px; color: var(--soc-text-secondary); }
 @media (max-width: 900px) { .cve-header { grid-template-columns: 1fr; }.cve-metrics, .detail-dl, .detail-dl.compact, .final-decision, .command-grid { grid-template-columns: 1fr; }.detail-dl .wide { grid-column: auto; }.detail-dl > div { border-right: 0; } }
 </style>

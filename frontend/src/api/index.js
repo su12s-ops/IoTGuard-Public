@@ -70,6 +70,8 @@ export const fetchEbpfEvents = (params) => api.get("/runtime/ebpf/events", { par
 export const fetchEbpfSummary = () => api.get("/runtime/ebpf/summary").then((res) => res.data);
 export const fetchEbpfStatus = () => api.get("/runtime/ebpf/status").then((res) => res.data);
 export const fetchEbpfCorrelations = () => api.get("/runtime/ebpf/correlations").then((res) => res.data);
+export const fetchCveRuntimeEvidence = (cveId, assetId) =>
+  api.get("/runtime/cve-evidence", { params: { cve_id: cveId, asset_id: assetId } }).then((res) => res.data);
 export const uploadEbpfEvents = (file) => {
   const form = new FormData();
   form.append("file", file);

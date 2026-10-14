@@ -184,6 +184,127 @@ def evidence_sessions(db, asset_id, limit=500):
     }
 
 
+def cve_runtime_evidence(db, cve_id: str, asset_id: int | None = None):
+    """P1-4：某 CVE 的相关进程/网络/文件证据下钻（行为链页 → 证据明细）。
+
+    匹配语义与风险评估共用 runtime_evidence.package_match_reasons（直接/
+    上下文命中同源判定）；证据按 P1-3 会话键聚合，可跳转会话视图。
+    诚实边界：文本/端口匹配属上下文关联，exploitation_confirmed 恒为
+    False，无匹配时如实返回 not_observed，不虚构证据。
+    """
+    from app.services.runtime_evidence import _annotate_event, package_match_reasons
+    from app.services.runtime_context import package_related_to_service, service_name
+    from app.services.security_evidence import _watch_path_match
+
+    risk_query = db.query(models.RiskAssessment).filter(
+        models.RiskAssessment.cve_id == cve_id,
+        models.RiskAssessment.active.is_(True))
+    if asset_id is not None:
+        risk_query = risk_query.filter(models.RiskAssessment.asset_id == asset_id)
+    risks = risk_query.all()
+    if not risks:
+        return None
+
+    category_map = {"process": "process_execution", "network": "network_activity"}
+
+    blocks = []
+    for risk in risks:
+        asset = db.get(models.LinuxAsset, risk.asset_id)
+        if asset is None:
+            continue
+        services = list(asset.services)
+        related = [s for s in services if package_related_to_service(risk.package_name, service_name(s))]
+        service_names = {service_name(s).lower() for s in related if service_name(s)}
+        service_ports = {s.port for s in related if s.port}
+        # 攻击场景 id（lpe/data_leak 等驱动特权上下文判定）与行为链同一来源
+        from app.services.agent_intelligence import classify_scenario
+        vuln = db.query(models.VulnerabilityInfo).filter_by(cve_id=risk.cve_id).first()
+        scenario_id = classify_scenario(vuln, risk.package_name).get("id", "") if vuln else ""
+
+        rows = db.query(models.SecurityEvidence).filter_by(asset_id=asset.id) \
+            .order_by(models.SecurityEvidence.id.desc()).limit(2000).all()
+        rows.reverse()
+
+        matched = []
+        for row in rows:
+            file_path = row.file_path or ""
+            category = category_map.get(row.evidence_type or "",
+                                        "sensitive_file_access" if _watch_path_match(file_path) else "runtime_observation")
+            try:
+                raw = json.loads(row.raw_data or "{}")
+            except ValueError:
+                raw = {}
+            event = {
+                "asset_id": asset.id,
+                "timestamp": row.timestamp or "",
+                "category": category,
+                "process_name": row.process or "",
+                "pid": row.pid or 0,
+                "commandline": row.commandline or "",
+                "parent_process": row.parent_process or "",
+                "file_path": file_path,
+                "port": row.destination_port or 0,
+                "destination": row.destination_ip or "",
+                "raw": raw,
+                "severity_score": row.severity_score or 0,
+            }
+            direct_reasons, contextual_reasons = package_match_reasons(
+                event, risk.package_name, service_names, service_ports, scenario_id)
+            if not direct_reasons and not contextual_reasons:
+                continue
+            match_type = "direct" if direct_reasons else "contextual"
+            reasons = direct_reasons or contextual_reasons
+            annotated = _annotate_event(event, match_type, reasons)
+            annotated["evidence_id"] = row.evidence_id
+            annotated["evidence_type"] = row.evidence_type
+            annotated["user"] = row.user
+            annotated["session_key"] = f"{asset.id}:exec:{row.process_exec_id}" if row.process_exec_id else ""
+            matched.append(annotated)
+
+        matched.sort(key=lambda item: item["evidence_weight"], reverse=True)
+        direct_count = sum(1 for item in matched if item["match_type"] == "direct")
+        by_type: dict[str, int] = {}
+        for item in matched:
+            by_type[item["evidence_type"]] = by_type.get(item["evidence_type"], 0) + 1
+
+        # 按 P1-3 会话键聚合（同一进程实例的直接/上下文证据归并展示）
+        sessions: dict[str, dict] = {}
+        for item in matched:
+            key = item["session_key"] or f"evidence:{item['evidence_id']}"
+            session = sessions.setdefault(key, {
+                "id": key, "basis": "exec_id" if item["session_key"] else "insufficient_session_identity",
+                "process": item["process_name"], "pid": item.get("pid") or 0,
+                "evidence_ids": [], "max_weight": 0.0,
+            })
+            session["evidence_ids"].append(item["evidence_id"])
+            session["max_weight"] = max(session["max_weight"], item["evidence_weight"])
+
+        runtime_status = "verified" if direct_count else "contextual" if matched else "not_observed"
+        blocks.append({
+            "cve_id": risk.cve_id,
+            "asset_id": asset.id,
+            "hostname": asset.hostname,
+            "package_name": risk.package_name,
+            "runtime_status": runtime_status,
+            "signals": {
+                "direct_count": direct_count,
+                "contextual_count": len(matched) - direct_count,
+                "by_type": by_type,
+                "max_weight": matched[0]["evidence_weight"] if matched else 0,
+                "session_count": len(sessions),
+            },
+            "evidence": matched[:500],
+            "sessions": list(sessions.values()),
+            "scenario_id": scenario_id,
+            "exploitation_confirmed": False,
+            "absence_proves_safe": False,
+            "note": "匹配=进程名/命令行/文件路径/原始报文含软件包或别名（直接），或命中关联服务名/端口（上下文）；"
+                    "上下文关联不构成漏洞被利用的证明，无匹配时表示“未观察到”，不代表安全。",
+        })
+
+    return {"cve_id": cve_id, "assets": blocks, "asset_count": len(blocks)}
+
+
 def compare_windows(db, asset_id, checkpoint, window_seconds=300):
     at = event_time(checkpoint)
     if not at:

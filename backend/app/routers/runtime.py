@@ -9,7 +9,13 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app import models
 from app.services.device_access import require_control
-from app.services.runtime_telemetry import coverage, timeline, compare_windows, evidence_sessions
+from app.services.runtime_telemetry import (
+    compare_windows,
+    coverage,
+    cve_runtime_evidence,
+    evidence_sessions,
+    timeline,
+)
 from app.services import ebpf_lsm
 from app.services.security_evidence import (
     FILE_WATCH_PATHS,
@@ -378,6 +384,19 @@ def asset_evidence_sessions(asset_id: int, limit: int = Query(500, ge=1, le=2000
     if not db.get(models.LinuxAsset, asset_id):
         raise HTTPException(404, "资产不存在")
     return evidence_sessions(db, asset_id, limit)
+
+
+@router.get("/cve-evidence")
+def cve_evidence_view(cve_id: str, asset_id: int | None = Query(None), db: Session = Depends(get_db)):
+    """P1-4：该 CVE 相关进程/网络/文件证据下钻（行为链详情页消费）。
+
+    匹配语义与风险评估共用同一判定函数；无活跃风险记录 → 404，
+    有记录无证据 → not_observed（两者语义不同，不混淆）。
+    """
+    result = cve_runtime_evidence(db, cve_id, asset_id)
+    if result is None:
+        raise HTTPException(404, "该 CVE 无活跃风险记录")
+    return result
 
 
 @router.get("/assets/{asset_id}/comparison")
