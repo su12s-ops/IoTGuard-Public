@@ -1,6 +1,17 @@
 # 最近一次开发结果
 
-> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（eBPF 2.0 P2-2 OpenWrt 降级采集）
+> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（第九阶段前置专项：四智能体有效性审计）
+
+## 2026-10-15（第九阶段前置专项）：四智能体有效性深度审计（真实代码追踪 + 真实 LLM 消融/反事实；零生产代码改动）
+
+- **交付**：IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md（12 节：架构/逐智能体贡献/消融/反事实/摆设化结论/整改清单 F1-F10/升级方案 R1-R8/竞赛数据表/方法学声明）；实验脚本 backend/scripts/stage9_agent_effectiveness_audit.py + stage9_recompute_metrics.py（可复跑、无密钥入库）
+- **静态审计核心结论**：仓库存在两套"四智能体"——System A（services/agents/，真工具循环 14 专属工具）与 System B（event_review_pipeline.py，单次类型化 LLM + 确定性证据包 + 确定性门禁）。System B 输出全链真实消费（RiskAssessment.final/decision → 排序/人工复核/修复授权/Harness 补采复评）；System A 主输出 risk_json 为死端（仅 AgentOps 展示），其 remediation 智能体因上下文饥饿+授权依赖结构性空转（实测 risk_ref=""、actions=[]）
+- **真实实验**（deepseek-v4-flash 与生产同配置，约 160 次调用，合成 CVE/TEST-NET Fixture，真值表先于实验独立定义）：A 纯规则处置正确 2/7（E3 假阳性/E4 无视冲突/E5 忽视过期全部命中）；B/C 四智能体 6/7、影响判定 7/7、114 条证据引用 0 幻觉、0 确定性矛盾；D 屏蔽任一智能体→建议全坍缩兜底、人工门禁 4/4 保持；System A runtime 屏蔽 62→54 分/high→medium；CF6 Zephyr：能力标注入 Trace 但 RUNTIME 智能体 schema 两次全败（fail-safe 降级）
+- **正面实证**：E3 误匹配候选被 impact 智能体识破（定向复议后明确"版本规则命中为假阳性"并引用分支范围证据），coordinator 拒绝依未核实 fixed_version 触发升级——规则引擎同案例给 High 69.05/scheduled_fix。E4 矛盾情报全部转人工复核。结论：规则+智能体优于纯规则；但简单案例（E1/E2）两者一致，成本只应花在困难候选（R8 分层方案）
+- **量化边界**：auto_confirmed 0/14（high_or_critical_final_score 14/14、confidence_below_0.70 12/14 门禁）——LLM 对分数影响理论性、对建议/路由/补采影响实在；成本 System B ≈2.2-2.5 万 token/事件、System A ≈3.7 万 token/编排
+- **缺陷清单**（未整改，待评审）：F1 P0 report_service opinions list 崩溃（已复现）/F2 双体系死端/F3 System A 重试无反馈/F4 remediation 上下文饥饿/F5 aggregate_risk 不消费 version_impact/F6 新鲜度不参与运行时状态/F7 无优雅降级/F8 竞赛口径双体系混名/F9 评审成本/F10 统计器伪报已修正
+- **诚实性**：统计器首版 2 处伪报（首报 50 条无依据断言）留档并离线修正为 0；单次运行方差如实标注；合成 CVE 的能力边界如实声明；密钥/真实库/原始日志未入库
+- **回归**：全量 **499 passed / 0 failed**（零生产代码改动，与基线一致）
 
 ## 2026-10-15（eBPF 2.0 P2-2）：OpenWrt logread 只读降级采集（真实链路 21/21 + 全量 499/0）
 

@@ -2,6 +2,18 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
 
+## 四智能体有效性审计轮（2026-10-15，零生产代码改动；实验证据 backend/reports/stage9-agent-audit/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归（零生产代码改动） | **499 passed / 0 failed**（6m27s，与基线完全一致） |
+| 真实 LLM 消融实验（backend/scripts/stage9_agent_effectiveness_audit.py，deepseek-v4-flash 真实调用） | A/B/C/D 全部完成：B 组 33 调用/159,897 token/75.1s；C 组 31 调用/177,159 token/77.1s；D1-D4 屏蔽组 6-10 调用；System A 完整 14 调用/36,710 token/41.7s、屏蔽 runtime 11 调用/26,628 token、Zephyr 13 调用/27,141 token；usage 全部真实上报（无估算） |
+| 规则基线 vs 四智能体（7 事件对照真值） | 规则处置正确 2/7；四智能体 6/7（影响判定 7/7、人工路由 3/3） |
+| 证据引用完整性（离线对齐证据包核验） | 114 条引用（B48/C66）0 包外幻觉；与证据包事实的确定性矛盾 0/14 事件 |
+| 反事实 CF1-CF7 | 6/7 合格或优于规则；CF6 Zephyr RUNTIME 智能体 schema 两次全败（fail-safe 降级，无风险虚增）——缺陷 F3 |
+| 实验统计器自检 | 首版 2 处伪报（case 键碰撞+packet 未包裹 → 首报"50 条无依据断言"）→ stage9_recompute_metrics.py 离线修正为 0，全程留档 |
+| F1 缺陷最小复现 | 存在 v3 研判报告后 markdown_report 抛 `AttributeError: 'list' object has no attribute 'items'`（report_service.py opinions 遍历），本轮未整改待评审 |
+
 ## eBPF 2.0 P2-2 OpenWrt 降级采集轮（2026-10-15，证据 reports/ebpf-p22-20261015-111451/ 本地留存）
 
 | 项 | 结果 |

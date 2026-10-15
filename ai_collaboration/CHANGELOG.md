@@ -2,6 +2,15 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — 第九阶段前置专项：四智能体有效性深度审计（零生产代码改动，Stage 9B 未启动）
+
+- 交付 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md：双"四智能体"体系架构核验（System A 设备编排=真工具循环、System B 逐风险评审=单次类型化 LLM+确定性证据包/门禁）、逐智能体输入→工具→输出→消费追踪、摆设化明确结论
+- 真实实验（deepseek-v4-flash，约 160 次真实调用；合成 CVE/TEST-NET Fixture；真值表先于实验定义）：消融 A/B/C/D + 反事实 CF1-CF7 + System A 屏蔽。核心数字：规则处置正确 2/7 vs 智能体 6/7（影响判定 7/7）；114 条证据引用 0 幻觉、0 确定性矛盾；屏蔽任一 System B 智能体建议全坍缩（人工门禁保持）；System A runtime 屏蔽 62→54 分；auto_confirmed 0/14（门禁直方图留档）；成本 System B ≈2.2-2.5 万 token/事件、System A ≈3.7 万 token/编排
+- 关键发现：E3 误匹配候选上智能体纠正规则假阳性（定向复议后"版本规则命中为假阳性"）；E4 矛盾情报/E5 过期监控均被保守路由而规则无视；F1 P0 缺陷（存在 v3 报告后 markdown_report 必崩 AttributeError，最小复现）；System A risk_json 死端、remediation 智能体结构性空转、Zephyr 场景 RUNTIME 智能体 schema 两次全败；证据新鲜度不参与运行时状态语义
+- 新增（非生产代码）：backend/scripts/stage9_agent_effectiveness_audit.py（可复跑实验 Harness：Fixture/消融/反事实/Token 计量）、backend/scripts/stage9_recompute_metrics.py（证据包离线对齐的修正统计）；原始实验产物本地 reports/ 留存不入库
+- 诚实性：实验统计器首版 2 处伪报（首报"50 条无依据断言"）如实留档并离线修正为 0；单次运行方差（E3b 方向 1 例变差）如实标注
+- 回归：全量 **499 passed / 0 failed** 与基线一致（零改动生产代码）
+
 ## 2026-10-15 — eBPF 2.0 P2-2：OpenWrt 轻量化降级采集（logread 只读，21/21 真实验收）
 
 - 真实链路：OpenWrt 25.12.5 经既有 DeviceConnection（SSH 指纹钉扎+凭据环境变量）只读拉取 logread → P0 统一事件管线（零新表零新库）；1237 条真实事件入库、资产绑定 1237/1237、SecurityEvidence 1:1；对设备零改动、零 eBPF、零软件包（报告 IOT_EBPF2_P22_REPORT.md，证据本地留存）

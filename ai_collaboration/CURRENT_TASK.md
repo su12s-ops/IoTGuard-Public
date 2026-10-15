@@ -4,6 +4,18 @@
 
 ## 最近完成
 
+**第九阶段前置专项：四智能体有效性深度审计（真实代码追踪 + 真实 LLM 消融/反事实实验）**（2026-10-15，报告 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md；Stage 9B 未启动，等待审阅）
+- [x] 静态审计：查明仓库存在**两套"四智能体"体系**——System A 设备编排（services/agents/，真工具循环 14 工具）与 System B 逐风险评审（event_review_pipeline.py，单次类型化 LLM+确定性证据包/门禁），职责互不映射、数据互不流通
+- [x] 消费链路核验：System B 输出全链真实消费（风险排序/人工复核/修复授权/Harness 补采复评）；System A 主输出 risk_json 确认为**死端**（仅 AgentOps 展示+一条修复任务写回），其修复智能体实测结构性空转（risk_ref=""、actions=[]）
+- [x] 真实实验（deepseek-v4-flash，约 160 次真实调用；合成 CVE/TEST-NET Fixture 隔离参数知识；真值表先于实验独立定义）：A 纯规则处置正确 **2/7**（E3 假阳性 scheduled_fix / E4 无视 under_investigation 冲突 / E5 忽视 72h 过期），B/C 四智能体 **6/7** 且影响判定 7/7、114 条证据引用 **0 幻觉**、0 确定性矛盾；D 组屏蔽任一智能体→建议全部坍缩兜底（人工门禁 100% 保持）；System A 屏蔽 runtime→风险分 62→54、优先级 high→medium
+- [x] 反事实 CF1-CF7：矛盾公告（E4）/误匹配候选（E3，impact 智能体定向复议后明确"版本规则命中为假阳性"）/过期监控（E5）三类案例智能体显著优于规则；Zephyr 能力标注入 Trace、其余智能体产出高质量诚实 data_gaps，但 RUNTIME 智能体因 schema extra="forbid" 两次全败（fail-safe 降级无风险虚增）
+- [x] 成本与可达性量化：System B ≈2.2-2.5 万 token/事件（4.4 次调用/事件）；System A ≈3.7 万 token/次编排（14 调用/42s）；auto_confirmed 14 事件 0 触发（门禁直方图：high_or_critical_final_score 14/14、confidence_below_0.70 12/14）——LLM 对分数的影响理论性、对建议/路由/补采的影响实在
+- [x] 发现 10 项问题（F1 P0：存在 v3 报告后 markdown_report 必崩 AttributeError 已最小复现；F2 双体系死端；F3 System A 重试无反馈；F5 aggregate_risk 不消费 version_impact；F6 证据新鲜度不参与运行时状态等），升级方案 R1-R8（双体系对账/崩溃修复/重试反馈/新鲜度语义/3/4 降级评审/成本分层）；不新增智能体、不换大模型、不动 Harness 门禁
+- [x] 零生产代码改动；全量回归 **499 passed / 0 failed** 与基线一致；实验脚本两份入库（backend/scripts/stage9_agent_effectiveness_audit.py、stage9_recompute_metrics.py，无密钥）；原始实验产物（含 LLM 原文）本地 reports/ 留存不入库
+- [x] 实验统计器首版 2 处伪报（case 键碰撞+packet 未包裹，首报"50 条无依据断言"）如实留档并离线修正为 0
+
+## 最近完成
+
 **eBPF 2.0 P2-2：OpenWrt 轻量化降级采集（logread 只读）**（2026-10-15，报告 IOT_EBPF2_P22_REPORT.md，证据 reports/ebpf-p22-20261015-111451/ 本地留存）
 - [x] 真实链路 21/21 验收：OpenWrt 25.12.5 经既有 DeviceConnection（指纹钉扎+凭据环境变量）只读拉取 logread → 1237 条真实事件全链入库（source=openwrt_logread、观察模式=syslog、资产绑定 1237/1237、SecurityEvidence 1:1）
 - [x] 时间/身份语义（不猜测）：设备本地时间按采集偏移换算 UTC（实测 +0000）；缺年份/不可解析行跳过计数不虚构；boot_id 参与指纹（跨重启不误合并，专项锁定）；ring 覆盖丢失 unavailable；窗口元数据留档
