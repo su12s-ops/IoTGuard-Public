@@ -72,8 +72,13 @@ def _simple_tier_state(state: UnifiedAnalysisState) -> UnifiedAnalysisState:
 def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      client_factory: ClientFactory = default_client_factory,
                      sink: PersistSink | None = None,
-                     run_deadline_s: float = 900.0) -> models.UnifiedAnalysisRun:
-    """同步执行一次统一编排（worker 线程/测试/实验共用）。"""
+                     run_deadline_s: float = 900.0,
+                     ablation_mask: frozenset[str] = frozenset()) -> models.UnifiedAnalysisRun:
+    """同步执行一次统一编排（worker 线程/测试/实验共用）。
+
+    ablation_mask（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策
+    输入（角色照常执行）——用于语义消融度量各角色独立贡献，不是失败路径。
+    """
     state = empty_state(
         run_row.run_id, run_row.task_type, run_row.target_ref,
         run_row.target_type, run_row.mode)
@@ -94,7 +99,8 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
     meter = UsageMeter(max_llm_calls=state.budgets.max_llm_calls)
     ctx = RunContext(
         db_factory=SessionLocal, trace_id=run_row.trace_id, meter=meter,
-        client_factory=client_factory, risk=risk, run_deadline_s=run_deadline_s)
+        client_factory=client_factory, risk=risk, run_deadline_s=run_deadline_s,
+        ablation_mask=frozenset(ablation_mask))
     if risk is not None:
         baseline_ids = json.loads(risk.evidence_packet_json or "{}") if risk.evidence_packet_json else {}
         ctx.packet_evidence_ids = {

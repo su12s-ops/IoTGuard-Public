@@ -414,13 +414,18 @@ class TestDecisionSemanticConstraints:
         bad = json.loads(json.dumps(GOOD_DECISION))
         bad["verdicts"][0]["urgency_basis"] = "fresh_runtime_evidence"
         good = json.loads(json.dumps(GOOD_DECISION))
-        good["verdicts"][0]["urgency_basis"] = "static_evidence_only"
-        good["verdicts"][0]["reason"] = "预认证暴露+厂商精确公告独立支撑紧迫性"
+        # M4.2（E2 整改）语义演进：本场景无确定性放大因子（无 KEV、无公网暴露×
+        # CVSS≥9.0 组合），静态证据独立支撑的 immediate_fix 不再被接受——正确
+        # 修正是降级为 scheduled_fix（原「static_evidence_only 维持 immediate_fix」
+        # 为 M4.1 遗留整改项，已被 urgency_amplifiers 约束取代）
+        good["verdicts"][0]["recommended_action"] = "scheduled_fix"
+        good["verdicts"][0]["urgency_basis"] = "no_urgency_evidence"
+        good["verdicts"][0]["reason"] = "运行时证据过期且无紧迫放大因子，降级排期处置"
         final, client = self._run_decide(session_factory, bad,
                                          runtime=stale_report, second_decision=good)
         assert "并非新鲜" in "\n".join(client.sent)
         verdict = (final.decision or {}).get("verdicts")[0]
-        assert verdict["urgency_basis"] == "static_evidence_only"
+        assert verdict["recommended_action"] == "scheduled_fix"
 
     def test_immediate_fix_requires_declared_urgency_basis(self, session_factory):
         bad = json.loads(json.dumps(GOOD_DECISION))

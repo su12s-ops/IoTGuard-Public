@@ -110,6 +110,34 @@ def detect_conflicts(state_like: dict[str, Any]) -> ConflictResultRecord:
                             "（如厂商 under_investigation vs NVD affected）。",
                 involved_agents=[AGENT_VULNERABILITY]))
 
+    # 规则 8（M4.2）：确定性核验事实（预取包）与漏洞分析师结论矛盾——
+    # 分支排除/低于受影响区间/已修复 与 confirmed/potentially 受影响并存时，
+    # 触发被牵连专家的定向复议（有界 ≤1 次）；复议后仍矛盾 → unresolved
+    # → 审计门禁按同语义 fail-closed（与已核实事实相矛盾的结论不得自动采纳）。
+    prep = state_like.get("evidence_prep") or {}
+    prep_candidates = prep.get("candidates") or []
+    if prep_candidates:
+        first = prep_candidates[0] if prep_candidates else {}
+        branch_result = (first.get("branch_check") or {}).get("result")
+        compare_result = (first.get("version_compare") or {}).get("result")
+        vendor_status = (first.get("vendor_patch") or {}).get("release_status")
+        contradicted = bool(
+            (branch_result in {"branch_excluded", "below_stated_affected_range"}
+             and any(isinstance(f, dict) and f.get("applicability") in
+                     {"confirmed_affected", "potentially_affected"} for f in findings))
+            or (compare_result == "fixed"
+                and any(isinstance(f, dict) and f.get("applicability") in
+                        {"confirmed_affected", "potentially_affected"} for f in findings))
+            or (vendor_status == "not_affected"
+                and any(isinstance(f, dict) and f.get("applicability") in
+                        {"confirmed_affected", "potentially_affected"} for f in findings)))
+        if contradicted:
+            conflicts.append(ConflictItemRecord(
+                code="deterministic_fact_vs_analyst_conclusion",
+                description="确定性核验事实（分支排除/低于受影响区间/已修复/厂商 not_affected）"
+                            "与漏洞分析师的受影响结论矛盾；触发定向复议核对证据来源。",
+                involved_agents=[AGENT_VULNERABILITY]))
+
     return ConflictResultRecord(
         has_major_conflict=bool(conflicts),
         conflicts=conflicts,

@@ -38,15 +38,21 @@ def risk_level(score: float) -> str:
 
 def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: list,
                                          runtime: dict) -> list[str]:
-    """模型裁定与程序确定性核验的矛盾检查（M4.1 校准，通用安全语义规则）。
+    """模型裁定与程序确定性核验的矛盾检查（M4.1 校准 + M4.2 深化，通用安全语义规则）。
 
-    - branch_exclusion_contradiction：可信分支排除证据 vs confirmed_affected；
+    - branch_exclusion_contradiction：可信分支排除证据 vs confirmed/potentially
+      受影响（M4.2 扩展：potentially 同样纳入——E3a 残余方差整改）；
     - deterministic_fixed_overridden：确定性已修复判定被推翻为受影响；
+    - fixed_disposal_contradiction：已修复判定下仍给出修复类处置（X2 加固）；
+    - vendor_not_affected_overridden：厂商精确公告 not_affected（含 backport）
+      被通用候选推翻（Y1/Y2/E3 家族）；
     - vendor_conflict_unresolved_disposal：厂商适用性冲突未消解却确认受影响
       或直接进入修复处置（「组件已安装」≠「CVE 适用已确认」）；
     - urgency_claim_without_fresh_runtime：宣称新鲜运行时证据支撑紧迫但证据
       并不新鲜（stale_verified 不是活跃利用的充分依据）；
     - urgency_basis_undeclared：immediate_fix 未声明紧迫依据；
+    - static_urgency_without_amplifier：静态证据独立支撑 immediate_fix 但无
+      确定性放大因子（KEV 或 受影响组件公网监听×CVSS≥9.0）——E2 整改；
     - static_evidence_urgency_requires_human：静态证据独立支撑的紧急修复
       不被一刀切禁止，但必须人工复核（不做武断禁止）；
     - applicability_conflated_with_stale_runtime：把「运行时证据过期」直接
@@ -63,6 +69,8 @@ def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: l
     branch = first.get("branch_check") or {}
     compare = first.get("version_compare") or {}
     conflict = first.get("vendor_conflict") or {}
+    vendor_patch = first.get("vendor_patch") or {}
+    amplifiers = first.get("urgency_amplifiers") or {}
 
     freshness = str(runtime.get("evidence_freshness") or "")
     if not freshness:
@@ -73,10 +81,17 @@ def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: l
 
     reasons: list[str] = []
     if candidates:   # 仅当预取包携带候选确定性事实时才做矛盾核查
-        if branch.get("result") == "branch_excluded" and impact == "confirmed_affected":
+        branch_excluded = branch.get("result") in {
+            "branch_excluded", "below_stated_affected_range"}
+        if branch_excluded and impact in {"confirmed_affected", "potentially_affected"}:
             reasons.append("branch_exclusion_contradiction")
         if compare.get("result") == "fixed" and impact in {"confirmed_affected", "potentially_affected"}:
             reasons.append("deterministic_fixed_overridden")
+        if compare.get("result") == "fixed" and action in {"immediate_fix", "scheduled_fix"}:
+            reasons.append("fixed_disposal_contradiction")
+        if (vendor_patch.get("release_status") == "not_affected"
+                and impact in {"confirmed_affected", "potentially_affected"}):
+            reasons.append("vendor_not_affected_overridden")
         if conflict.get("unresolved") and (impact == "confirmed_affected"
                                            or action in {"scheduled_fix", "immediate_fix"}):
             reasons.append("vendor_conflict_unresolved_disposal")
@@ -87,6 +102,9 @@ def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: l
         elif basis == "unknown" and freshness != "fresh":
             reasons.append("urgency_basis_undeclared")
         elif basis == "static_evidence_only":
+            if candidates and impact in {"confirmed_affected", "potentially_affected"} \
+                    and not amplifiers.get("any_present"):
+                reasons.append("static_urgency_without_amplifier")
             reasons.append("static_evidence_urgency_requires_human")
     if impact == "insufficient_evidence" and compare.get("result") == "affected" \
             and freshness == "stale":

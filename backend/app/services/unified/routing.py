@@ -48,7 +48,12 @@ def _has_runtime_evidence(db: Session, target_ref: str, target_type: str) -> boo
 
 
 def _count_intelligence_conflicts(db: Session, candidates: list[dict[str, Any]]) -> int:
-    """候选 CVE 的多源情报是否已存在结构化冲突记录（廉价预检，不调 LLM）。"""
+    """候选 CVE 的多源情报是否已存在结构化冲突记录（廉价预检，不调 LLM）。
+
+    M4.2 扩展：除既有 fetch_status=error/conflict 记录外，各可信源适用性
+    立场之间的矛盾（厂商调查中/否定 vs NVD 肯定）同样计入——此类候选不得
+    走 simple 规则直通（Y1/Y2/Y7 类：立场冲突正是需要四智能体研判的信号）。
+    """
     conflicts = 0
     for candidate in candidates:
         cve_id = candidate.get("cve_id", "")
@@ -58,7 +63,37 @@ def _count_intelligence_conflicts(db: Session, candidates: list[dict[str, Any]])
         statuses = {row.source: (row.fetch_status or "") for row in rows}
         if any(status in {"error", "conflict"} for status in statuses.values()):
             conflicts += 1
+            continue
+        try:
+            from app.services.unified.evidence_prep import collect_stances
+            from app.services.vulnerability_intelligence.service import get_source_bundle
+            release = cve_id.rsplit(":", 1)[1] if ":" in cve_id else ""
+            bundle = get_source_bundle(db, cve_id, release=release,
+                                       package_name=candidate.get("package_name", ""))
+            stances = collect_stances(bundle)
+            values = {str(stance).lower() for stance in stances.values()}
+            affirmative = {"affected", "operator_supplied_affected"}
+            divergent = {"under_investigation", "needs_triage", "unknown_priority",
+                         "not_affected", "not_applicable"}
+            if (values & affirmative) and (values & divergent):
+                conflicts += 1
+        except Exception:
+            continue   # 预检失败不阻断路由（保守按无冲突处理，后续节点仍会核验）
     return conflicts
+
+
+def _candidates_evidence_insufficient(candidates: list[dict[str, Any]]) -> bool:
+    """候选证据不足（装机版本未知/匹配状态不可靠）→ 不得 simple 直通。
+
+    M4.2（任务书第六部分 Y4 类）：清单不完整资产上的「未确认组件」候选
+    必须走全量评审（证据质量不满足 simple 层前提）。
+    """
+    unreliable = {"unknown", "insufficient_data", "data_error", ""}
+    for candidate in candidates:
+        status = str(candidate.get("match_status") or "")
+        if status in unreliable or not str(candidate.get("installed_version") or "").strip():
+            return True
+    return False
 
 
 def decide_routing(db: Session, task_type: str, target_ref: str, target_type: str,
@@ -88,6 +123,7 @@ def decide_routing(db: Session, task_type: str, target_ref: str, target_type: st
         preliminary_level in DIFFICULT_LEVELS
         or has_kev
         or _count_intelligence_conflicts(db, candidates) > 0
+        or _candidates_evidence_insufficient(candidates)
     )
     if not hard and preliminary_level in SIMPLE_ALLOWED_LEVELS:
         return RoutingDecision(

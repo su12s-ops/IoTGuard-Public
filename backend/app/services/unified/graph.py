@@ -102,6 +102,9 @@ class RunContext:
     persisted_stage: dict[str, str] = field(default_factory=dict)
     # 深度控制（测试可注入）
     agent_budget_s: float = 150.0
+    # 语义消融（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策输入
+    # （角色本身照常执行；这是「贡献度量」钩子，不是失败/降级路径）
+    ablation_mask: frozenset[str] = frozenset()
 
     def session(self) -> Session:
         return self.db_factory()
@@ -383,14 +386,19 @@ def _vulnerability_prep_context(state: UnifiedAnalysisState) -> str:
             "version_compare": item.get("version_compare"),
             "branch_check": item.get("branch_check"),
             "vendor_conflict": item.get("vendor_conflict"),
+            "vendor_patch": item.get("vendor_patch"),
+            "urgency_amplifiers": item.get("urgency_amplifiers"),
             "intel_summary": item.get("intel_summary"),
             "source_bundle": item.get("source_bundle"),
         }, ensure_ascii=False))
     lines.append(
-        "以上版本比较/分支声明/多源状态均为程序确定性核验结果："
-        "分支排除声明（branch_check=branch_excluded）与已修复判定"
-        "（version_compare=fixed）不得被通用候选匹配推翻；"
+        "以上版本比较/分支声明/厂商补丁语义/多源状态均为程序确定性核验结果："
+        "分支排除声明（branch_check=branch_excluded/below_stated_affected_range）、"
+        "已修复判定（version_compare=fixed）与厂商精确公告的 not_affected 声明"
+        "（vendor_patch.release_status，含 backport）不得被通用候选匹配推翻；"
         "厂商适用性冲突（vendor_conflict.unresolved）在消解前不得判 confirmed_affected。"
+        "version_compare 出现 caveat 时表示上游口径与厂商 release 口径相左——"
+        "以厂商口径优先，并在 rationale 说明 backport 语义。"
         "只有对上述事实存在疑问或需要补齐缺口时才调用专属工具深查。"
     )
     return "\n".join(lines)
@@ -503,7 +511,14 @@ def node_investigate_asset(ctx: RunContext):
             f"调查目标资产: {state.target_ref}（类型 {state.target_type}）。\n"
             "请先调用工具获取真实画像、暴露面与运行时数据质量，再输出结构化结论。\n"
             "evidence_inventory 必须来自 query_runtime_data_quality 的真实返回；"
-            "evidence_quality 按覆盖/新鲜度/缺口如实评级。"
+            "evidence_quality 按覆盖/新鲜度/缺口如实评级。\n"
+            "证据分级纪律（M4.2）：结论必须区分三个等级并分别落到对应字段——\n"
+            "- verified_facts：当前运行内由工具真实返回且来源明确的事实（标注 source）；\n"
+            "- unverified_observations：来源不明确/单一来源/未经交叉核实的数据（标注 reason，"
+            "如清单不完整的资产上「包未列出」不能直接当作「包不存在」）；\n"
+            "- conflicting_facts：来源之间互相矛盾的事实（列出双方来源）。\n"
+            "不得把未核实数据写进 verified_facts；清单不完整（inventory_complete=false）时"
+            "必须在 missing_evidence 声明，不得把「没看到」当成「不存在」。"
             + _asset_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, ASSET_INVESTIGATOR_SPEC, context_text)
@@ -578,7 +593,19 @@ def node_analyze_vulnerability(ctx: RunContext):
             f"{asset_summary}\n"
             "要求：用 query_version_impact 做真实版本比较；用 query_intelligence_sources 核对"
             "厂商/NVD/KEV/EPSS 各源状态是否互相矛盾；输入故意不包含规则分数，不要猜测基线结论；"
-            "适用分支与装机版本不符时明确判 not_affected 并说明理由（E3 类假阳性识别）。"
+            "适用分支与装机版本不符时明确判 not_affected 并说明理由（E3 类假阳性识别）。\n"
+            "适用性专业维度（M4.2，逐 finding 如实填写，不得留 unknown 而给出高置信结论）：\n"
+            "- version_range_relation：装机版本与公告受影响区间的关系（区间语义独立于"
+            " fixed_version 单点比较——低于区间下界同样不受影响）；\n"
+            "- branch_relation：装机发行分支与公告作用分支是否一致；\n"
+            "- patch_semantics：厂商补丁与 backport 语义——发行版把上游修复回移植进"
+            "历史版本时，「装机版本 < 上游修复版本」不等于受影响（厂商精确公告优先）；\n"
+            "- advisory_specificity：本结论依据的是厂商精确公告（release 作用域）还是"
+            " NVD 通用候选匹配——两者矛盾时厂商精确公告优先，但必须在 "
+            "intelligence_conflicts 如实记录。\n"
+            "适用性结论只有四种：已修复（fixed）/不受影响（not_affected）/可能受影响"
+            "（potentially_affected）/证据不足（insufficient_evidence）——不存在第五种"
+            "「保守起见当受影响」；证据不足就写 insufficient_evidence。"
             + _vulnerability_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, VULNERABILITY_ANALYST_SPEC, context_text,
@@ -626,7 +653,19 @@ def node_analyze_runtime(ctx: RunContext):
             f"{inventory_note}\n"
             "要求：用多标识键查询（device_id/IP/主机名均可）；引用 evidence_id 必须来自工具真实返回；"
             "先看 query_runtime_data_quality 再判定——证据全部过期时用 stale_verified，"
-            "能力不支持用 unavailable；包活动不等于漏洞被利用。"
+            "能力不支持用 unavailable；包活动不等于漏洞被利用。\n"
+            "动态证据关联语义（M4.2，逐 finding 与报告级结论都必须区分）：\n"
+            "- relation（逐条证据）：component_present（组件进程存在）/service_active（服务活跃）/"
+            "attack_precondition（攻击前置条件具备，如暴露端口）/suspicious_behavior（可疑行为）/"
+            "cve_related_evidence（与候选 CVE 攻击模式直接相关）/confirmed_exploitation"
+            "（已确认利用）/unrelated（与候选无关）；每条 finding 必须写 observed_at"
+            "（真实时间戳）与 source_quality；\n"
+            "- exploitation_relation（报告级总结）：整体动态证据与候选 CVE 的关联程度——"
+            "「可疑但与该 CVE 无关」是 suspicious_unlinked 不是 cve_related_evidence；"
+            "「组件在跑」是 service_active/component_present 不是利用证据。\n"
+            "两条铁律：运行时异常不得直接解释为该 CVE 已被利用（confirmed_exploitation 需要"
+            "与攻击模式直接匹配的证据链）；缺少运行时事件不得解释为漏洞不存在——"
+            "监控缺失/能力受限时如实标注 monitoring_missing/monitoring_unavailable。"
             + _runtime_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, RUNTIME_ANALYST_SPEC, context_text,
@@ -743,14 +782,22 @@ def _route_after_decide(state: UnifiedAnalysisState) -> str:
 def node_decide(ctx: RunContext):
     def decide(state: UnifiedAnalysisState) -> dict[str, Any]:
         facts = _deterministic_facts(state)
+        # 语义消融（实验专用）：被屏蔽角色的报告不进入决策输入——角色照常执行，
+        # 决策端按「该维度信息缺失」研判，用于度量各角色的独立分析贡献
+        masked = sorted(ctx.ablation_mask)
+        asset_report = None if AGENT_ASSET in ctx.ablation_mask else state.investigation
+        vulnerability_report = (None if AGENT_VULNERABILITY in ctx.ablation_mask
+                                else state.vulnerability)
+        runtime_report = (None if AGENT_RUNTIME in ctx.ablation_mask
+                          else (state.runtime or state.runtime_program_fallback))
         decision_context = {
             "object_id": state.object_id,
             "task_type": state.task_type,
             "baseline": {k: v for k, v in state.baseline.items()
                          if k not in {"packet_evidence_ids"}},
-            "asset_report": state.investigation,
-            "vulnerability_report": state.vulnerability,
-            "runtime_report": state.runtime or state.runtime_program_fallback,
+            "asset_report": asset_report,
+            "vulnerability_report": vulnerability_report,
+            "runtime_report": runtime_report,
             "runtime_report_is_program_fallback": state.runtime is None,
             "conflict_result": state.conflict_result.model_dump(),
             "degraded_roles": state.degraded_roles,
@@ -763,6 +810,8 @@ def node_decide(ctx: RunContext):
             # 防幻觉：可引用的证据 ID 全集（引用之外一律视为编造）
             "available_evidence_ids": sorted(_decision_known_ids(state)),
         }
+        if masked:
+            decision_context["semantic_ablation_masked"] = masked
         context_text = (
             "综合以下结构化材料完成研判与处置规划。\n"
             f"{json.dumps(decision_context, ensure_ascii=False, default=str)}\n"
@@ -770,26 +819,55 @@ def node_decide(ctx: RunContext):
             "1. impact_status/risk_direction/recommended_action 只能取 schema 枚举；"
             "supporting_evidence_ids 只能引用 available_evidence_ids 中列出的证据 ID"
             "（CVE 编号、版本号、主机名都不是证据 ID，禁止填入）；\n"
-            "2. 字段语义必须分离：impact_status 只回答「漏洞是否适用于该组件"
+            "2. 分层研判模型（M4.2）——四个维度各自独立评估、各自表达证据不足，"
+            "在 verdict 的三个 dimension 字段中分开填写（status/conclusion/confidence/"
+            "supporting_evidence_ids/gaps）：\n"
+            "   - applicability_dimension：漏洞是否适用于装机组件（静态版本/情报证据）；\n"
+            "   - runtime_dimension：运行时证据现状及其与该漏洞的关联（组件存在/服务活跃/"
+            "攻击条件/可疑行为/CVE 相关动态证据/已确认利用；证据过期与监控缺失也要如实写）；\n"
+            "   - exposure_dimension：暴露面与利用条件（公网可达/仅内网/仅本地/已缓解/"
+            "证据不足）；\n"
+            "   - 处置维度由 recommended_action/recommended_priority/urgency_basis 承载。\n"
+            "   维度纪律：运行时异常不得直接解释为该 CVE 已被利用；缺少运行时事件不得"
+            "解释为漏洞不存在；某一维度证据不足不得连带否定其他维度已成立的结论；"
+            "unsatisfied_conditions 列出处置前置条件中仍不满足的项。\n"
+            "3. 字段语义必须分离：impact_status 只回答「漏洞是否适用于该组件"
             "（静态版本/情报证据）」；runtime_evidence_validity 只回答「运行时证据现在的"
             "有效性」；recommended_action/urgency_basis 回答处置与紧迫度。"
             "运行时证据过期（stale_verified/stale）不得推导为适用性不足，也不得作为"
             "当前活跃利用的充分依据；\n"
-            "3. deterministic_facts 是程序确定性核验结果：分支排除"
-            "（branch_check=branch_excluded）与已修复（version_compare=fixed）不得被"
-            "通用候选匹配或 KEV 状态推翻；厂商适用性冲突未消解（vendor_conflict."
+            "4. deterministic_facts 是程序确定性核验结果：分支排除"
+            "（branch_check=branch_excluded/below_stated_affected_range）与已修复"
+            "（version_compare=fixed）不得被通用候选匹配或 KEV 状态推翻；厂商精确公告"
+            "声明本 release not_affected（vendor_patch.release_status，含 backport）时"
+            "同样优先于 NVD 通用候选；厂商适用性冲突未消解（vendor_conflict."
             "unresolved）时「组件已安装」不等于「CVE 适用已确认」，impact 不得为 "
             "confirmed_affected，处置只能取 monitor/collect_more_evidence/mitigate/defer；\n"
-            "4. recommended_action=immediate_fix 必须声明 urgency_basis："
-            "fresh_runtime_evidence（有新鲜运行时证据）或 static_evidence_only"
-            "（静态证据独立支撑紧迫性，在 reason 说明依据；该路径会被强制人工复核）；"
-            "不得引用过期运行时证据作为紧迫依据；\n"
-            "5. 独立核对关键证据：对承重证据逐条给 key_evidence_checks（存在性/相关性/时效性）；\n"
-            "6. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
-            f"{state.budgets.follow_up_rounds - state.follow_ups_used}）；已提供 follow_up_results 时优先使用，不要重复申请；\n"
-            "7. 给出候选修复计划 response_plan：只能使用白名单动作，必须包含回滚计划与验证条件；"
+            "5. 处置紧迫度通用推理（不以单一字段为无条件充分依据）：immediate_fix 需要"
+            "新鲜运行时利用证据（urgency_basis=fresh_runtime_evidence），或静态证据"
+            "独立支撑（urgency_basis=static_evidence_only）且存在确定性放大因子"
+            "（deterministic_facts.urgency_amplifiers：KEV 收录，或受影响组件自身公网"
+            "监听×CVSS≥9.0）并在 reason 说明；无放大因子的静态证据组合（厂商 affected+"
+            "高 CVSS+装机受影响）只支撑 scheduled_fix；已缓解（exposure_dimension="
+            "已缓解/仅本地）或触发条件不满足时紧迫度进一步降低；\n"
+            "6. risk_direction 是「相对规则基线的证据修正方向」建议——最终分数由程序按"
+            "有界映射计算并封顶 [0,100]，与你的方向建议无关：即使基线分数已接近满分，"
+            "若证据强度支持上调，仍应如实给出 upgrade 方向，不得因『分数已高不能再升』"
+            "而给 maintain；同理证据变弱也不得因『分数已低』而回避 downgrade；\n"
+            "7. 独立核对关键证据：对承重证据逐条给 key_evidence_checks（存在性/相关性/时效性）；\n"
+            "8. 冲突处理：conflict_result 存在冲突时，必须在 resolved_conflicts/"
+            "unresolved_conflicts 显式声明消解状态与依据（引用具体证据）；未消解的"
+            "冲突不得静默偏向任何一方；\n"
+            "9. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
+            f"{state.budgets.follow_up_rounds - state.follow_ups_used}），必须写明"
+            "expected_effect（该补查消除哪个缺口、结果如何改变研判）；已提供 "
+            "follow_up_results 时：先评估每个补查结果与所提问题的相关性——答非所问的"
+            "补查不得计入证据，补查返回更多信息本身不构成提高置信度的依据，只有当补查"
+            "实质性改变关键事实时才调整结论/置信度并在 reason 说明改变点；不要重复申请；\n"
+            "10. 给出候选修复计划 response_plan：只能使用白名单动作，必须包含回滚计划与验证条件；"
             "计划只能待审批（requires_approval=true），不得生成 shell；\n"
-            "8. 任一专家角色缺失（degraded_roles 非空）时如实声明并在 reason 中说明影响。"
+            "11. 任一专家角色缺失（degraded_roles 非空，或 semantic_ablation_masked "
+            "标注的实验性隐藏）时如实声明并在 reason 中说明影响。"
         )
         evidence_validator = _decision_evidence_validator(ctx, state)
 
@@ -866,6 +944,8 @@ def _deterministic_facts(state: UnifiedAnalysisState) -> dict[str, Any]:
         "version_compare": first.get("version_compare") or {"result": "unknown"},
         "branch_check": first.get("branch_check") or {"result": "undetermined"},
         "vendor_conflict": first.get("vendor_conflict") or {"unresolved": False},
+        "vendor_patch": first.get("vendor_patch") or {"release_status": "", "backport": False},
+        "urgency_amplifiers": first.get("urgency_amplifiers") or {"any_present": False},
         "runtime_freshness": freshness,
         "runtime_status_hint": hint,
     }
@@ -887,9 +967,15 @@ def _normalize_urgency_basis(verdict: dict[str, Any], output: dict[str, Any],
 
 def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
                               freshness: str) -> list[str]:
-    """确定性安全语义约束（M4.1 校准，全部为通用规则，无案例编号）。
+    """确定性安全语义约束（M4.1 校准 + M4.2 深化，全部为通用规则，无案例编号）。
 
     返回错误列表（非空 → 带反馈重试；仍不合规 → 审计门禁按同语义 fail-closed）。
+
+    M4.2 新增：
+    - 厂商精确公告 not_affected（含 backport）被通用候选推翻（Y1/Y2/E3 家族）；
+    - 已修复（version_compare=fixed）仍给修复类处置（X2 加固）；
+    - 静态紧迫性无确定性放大因子（E2 整改：KEV 或 公网暴露×CVSS≥9.0）；
+    - 分支排除/低于区间 与 potentially_affected 矛盾（E3a 整改：不再只拦 confirmed）。
     """
     errors: list[str] = []
     impact = verdict.get("impact_status")
@@ -897,19 +983,44 @@ def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
     branch = facts.get("branch_check") or {}
     compare = facts.get("version_compare") or {}
     conflict = facts.get("vendor_conflict") or {}
+    vendor_patch = facts.get("vendor_patch") or {}
+    amplifiers = facts.get("urgency_amplifiers") or {}
 
     if facts.get("available"):
-        if branch.get("result") == "branch_excluded" and impact == "confirmed_affected":
+        branch_excluded = branch.get("result") in {
+            "branch_excluded", "below_stated_affected_range"}
+        if branch_excluded and impact == "confirmed_affected":
             errors.append(
-                "确定性分支排除核验（branch_check=branch_excluded）与 confirmed_affected 矛盾："
-                "可信来源已显式声明装机分支不受影响，不得仅凭通用 NVD 候选匹配确认受影响；"
-                "如认为排除证据不适用于该组件，请依据具体版本证据改判 "
-                "potentially_affected/insufficient_evidence 并在 reason 说明")
+                "确定性分支排除核验（branch_check=branch_excluded/below_stated_affected_range）"
+                "与 confirmed_affected 矛盾：可信来源已显式声明装机分支不受影响或装机版本低于"
+                "受影响区间，不得仅凭通用 NVD 候选匹配确认受影响；如认为排除证据不适用于"
+                "该组件，请依据具体版本证据改判 potentially_affected/insufficient_evidence "
+                "并在 reason 说明")
+        if branch_excluded and impact == "potentially_affected":
+            errors.append(
+                "确定性分支排除核验与 potentially_affected 矛盾：装机分支已被可信来源显式"
+                "排除（或装机版本低于声明的受影响区间），「可能受影响」需要指出排除声明"
+                "不成立的具体证据；无此类证据时请改判 not_affected/insufficient_evidence"
+                "（该矛盾若维持将触发强制人工复核）")
         if compare.get("result") == "fixed" and impact in {"confirmed_affected", "potentially_affected"}:
             errors.append(
                 "确定性版本比较判定装机版本不低于修复版本（version_compare=fixed，即已修复）："
                 "KEV 收录/厂商历史受影响状态不改变已修复事实，impact 必须为 "
                 "not_affected 或 insufficient_evidence")
+        if compare.get("result") == "fixed" and action in {"immediate_fix", "scheduled_fix"}:
+            errors.append(
+                "确定性已修复判定（version_compare=fixed）下给出修复类处置"
+                f"（{action}）自相矛盾：已修复组件不存在待修复范围，请改用 "
+                "monitor/collect_more_evidence/defer 并在 reason 说明已修复事实")
+        if (vendor_patch.get("release_status") == "not_affected"
+                and impact in {"confirmed_affected", "potentially_affected"}):
+            errors.append(
+                "厂商精确公告（release 作用域）已声明本 release not_affected"
+                + ("（含 backport 修复——「装机版本<上游修复版本」不等于受影响）"
+                   if vendor_patch.get("backport") else "")
+                + "：厂商精确公告优先于 NVD 通用候选匹配，impact 必须为 not_affected/"
+                "insufficient_evidence；如坚持受影响结论，必须在 reason 给出推翻厂商"
+                "公告的具体证据（否则将触发强制人工复核）")
         if conflict.get("unresolved"):
             if impact == "confirmed_affected":
                 errors.append(
@@ -935,6 +1046,15 @@ def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
             errors.append(
                 "recommended_action=immediate_fix 必须显式声明 urgency_basis"
                 "（fresh_runtime_evidence 或 static_evidence_only），不得留空")
+        if basis == "static_evidence_only" and impact in {"confirmed_affected", "potentially_affected"} \
+                and facts.get("available") and not amplifiers.get("any_present"):
+            errors.append(
+                "静态证据独立支撑 immediate_fix（urgency_basis=static_evidence_only）"
+                "缺乏确定性放大因子（urgency_amplifiers：KEV 均为 false 且受影响组件"
+                "无公网监听×CVSS≥9.0 组合）：厂商 affected+高 CVSS+装机受影响的静态组合"
+                "本身只支撑排期处置——请降级为 scheduled_fix（或收集到放大因子证据后"
+                "重新申请）；如认为存在本清单之外的紧迫性依据，必须在 reason 显式列举"
+                "并可被审计")
 
     if impact == "insufficient_evidence" and compare.get("result") == "affected" \
             and freshness == "stale":
@@ -974,6 +1094,12 @@ def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
         cited: set[str] = set()
         for verdict in output.get("verdicts") or []:
             cited.update(verdict.get("supporting_evidence_ids") or [])
+            # M4.2：分层研判维度的支撑引用同样纳入防幻觉校验
+            for dimension_key in ("applicability_dimension", "runtime_dimension",
+                                  "exposure_dimension"):
+                dimension = verdict.get(dimension_key) or {}
+                if isinstance(dimension, dict):
+                    cited.update(dimension.get("supporting_evidence_ids") or [])
         for check in output.get("key_evidence_checks") or []:
             cited.add(check.get("evidence_id", "") or "")
         cited.discard("")
@@ -982,7 +1108,8 @@ def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
             # 反馈必须附带合法 ID 清单（实验发现：不附清单时模型会用 CVE/版本号填充）
             errors.append(
                 f"引用了材料中不存在的证据 ID（防幻觉校验失败）: {sorted(unknown)[:5]}；"
-                f"supporting_evidence_ids/key_evidence_checks.evidence_id 只能取: {sorted(known)[:20]}")
+                f"supporting_evidence_ids/key_evidence_checks/各维度 supporting_evidence_ids "
+                f"只能取: {sorted(known)[:20]}")
         return errors
     return validate
 
@@ -1008,8 +1135,11 @@ def node_execute_follow_ups(ctx: RunContext):
                 f"决策规划师请求你做一次定向补充调查（有界，仅此一轮）：\n"
                 f"问题: {request.get('question', '')}\n"
                 f"线索: {request.get('evidence_hint', '')}\n"
+                f"预期效果: {request.get('expected_effect', '（未说明）')}\n"
                 f"你此前的结论（供参考）: {json.dumps(previous, ensure_ascii=False, default=str)[:2000]}\n"
-                "请用你的专属工具查证该问题，输出完整结构化结果（与此前相同的 schema）。"
+                "请用你的专属工具查证该问题，输出完整结构化结果（与此前相同的 schema）。\n"
+                "相关性纪律：只查证所问的具体事实缺口，与本问题无关的常规信息不要展开；"
+                "若你的工具无法回答该问题，在 data_gaps 如实说明而不是给出推断。"
             )
             validator = {
                 AGENT_RUNTIME: _runtime_evidence_validator(ctx),

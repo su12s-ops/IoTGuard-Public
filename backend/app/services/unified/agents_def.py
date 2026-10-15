@@ -71,7 +71,11 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
 ASSET_INVESTIGATOR_SPEC = AgentSpec(
     name=AGENT_ASSET,
     role="资产与证据调查员（Asset & Evidence Investigator），负责识别设备类型/固件/服务/组件、"
-         "网络暴露面，以及运行时证据的存在性/新鲜度/覆盖/丢失，并如实列出缺失项",
+         "网络暴露面，以及运行时证据的存在性/新鲜度/覆盖/丢失，并如实列出缺失项。"
+         "证据质量纪律（M4.2）：输出必须区分已核实事实（verified_facts，注明来源）、"
+         "来源不明确的数据（unverified_observations，注明原因）与相互冲突的事实"
+         "（conflicting_facts，列出双方来源）——「清单里没有」不等于「不存在」，"
+         "清单不完整时必须声明",
     output_model=S.AssetEvidenceReport,
     tools=[
         AgentTool(
@@ -112,7 +116,12 @@ ASSET_INVESTIGATOR_SPEC = AgentSpec(
 VULNERABILITY_ANALYST_SPEC = AgentSpec(
     name=AGENT_VULNERABILITY,
     role="漏洞分析师（Vulnerability Analyst），负责 CVE 适用性分析：真实版本比较、"
-         "厂商公告（Canonical/NVD/KEV/EPSS 等）语义理解、补丁状态与多源情报冲突核查",
+         "厂商公告（Canonical/NVD/KEV/EPSS 等）语义理解、补丁状态与多源情报冲突核查。"
+         "适用性专业维度（M4.2）：安装版本与受影响版本区间的关系（独立于 fixed_version "
+         "单点比较）；装机发行分支与公告作用分支；厂商补丁及 backport 回移植语义"
+         "（发行版回移植后「装机<上游修复版本」不等于受影响）；NVD 通用候选匹配与"
+         "厂商精确公告的差异及冲突。适用性只有四种结论：已修复/不受影响/可能受影响/"
+         "证据不足——保守起见当受影响不是合法结论",
     output_model=S.VulnerabilityAnalysisReport,
     tools=[
         AgentTool(
@@ -167,7 +176,11 @@ RUNTIME_ANALYST_SPEC = AgentSpec(
     role="运行时分析师（Runtime Analyst），读取 eBPF/Falco/syslog 的 SecurityEvidence"
          "（进程/网络/文件/进程树）与遥测数据质量，判定行为等级与运行时状态。"
          "语义边界：运行时证据只影响紧迫度与证据强度；包活动不等于漏洞被利用；"
-         "证据过期时必须使用 stale_verified 而不是 verified",
+         "证据过期时必须使用 stale_verified 而不是 verified。"
+         "动态证据关联语义（M4.2）：逐条证据区分组件存在/服务活跃/攻击前置条件/"
+         "可疑行为/与候选 CVE 直接相关/已确认利用/无关（配真实时间与来源质量）；"
+         "报告级 exploitation_relation 总结整体关联程度——可疑但与该 CVE 无关≠CVE 相关；"
+         "监控缺失/能力受限≠漏洞不存在",
     output_model=S.RuntimeAnalysisReport,
     tools=[
         AgentTool(
@@ -227,9 +240,12 @@ DECISION_PLANNER_SPEC = AgentSpec(
     name=AGENT_DECISION,
     role="研判与处置规划师（Decision & Response Planner），综合资产/漏洞/运行时三个专家的"
          "结构化结果与确定性基线、冲突结果，给出离散裁定与待审批处置计划。"
+         "分层研判模型（M4.2）：适用性/运行时证据/暴露与利用条件/处置四个维度各自独立评估、"
+         "各自表达证据不足与不确定性；处置结论必须综合全部维度，不以单一 CVSS/KEV/公网"
+         "暴露/运行时异常字段为无条件充分依据；冲突必须显式声明消解状态。"
          "你只给出离散 risk_direction 与处置建议，不能给自由数值、不能决定自动确认、"
          "不能授予修复权限、不能生成 shell 命令；证据不足时用 follow_up_requests "
-         "申请定向补充调查（有界）",
+         "申请定向补充调查（有界）；补查返回更多信息本身不构成提高置信度的依据",
     output_model=S.DecisionResponseReport,
     tools=[],
 )

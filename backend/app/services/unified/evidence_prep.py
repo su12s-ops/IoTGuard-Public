@@ -106,10 +106,13 @@ def check_branch_applicability(source_texts: list[dict[str, str]],
     - branch_excluded：可信来源显式声明装机分支不受影响（模型不得仅凭通用
       候选匹配推翻）；
     - in_stated_affected_range：装机版本落入声明的受影响区间；
+    - below_stated_affected_range：装机版本低于声明的受影响区间下界
+      （M4.2：区间语义独立于 fixed_version 单点比较——低于下界同样不受影响）；
     - undetermined：公告没有可机读的分支声明（不得据此下确定性结论）。
     """
     excluded: list[dict[str, str]] = []
     in_range: list[dict[str, str]] = []
+    below_range: list[dict[str, str]] = []
     for item in source_texts:
         statements = extract_branch_statements(item.get("text", ""), installed_version)
         for statement in statements["negative_exclusions"]:
@@ -117,19 +120,26 @@ def check_branch_applicability(source_texts: list[dict[str, str]],
         for statement in statements["affected_ranges"]:
             match = _RANGE_RE.search(statement)
             installed_nums = _version_nums(installed_version.split("-")[0])
-            if installed_nums and is_version_less(_join_nums(_version_nums(match.group(1))),
-                                                  _join_nums(installed_nums)) and \
-                    is_version_less(_join_nums(installed_nums),
-                                    _join_nums(_version_nums(match.group(2)))):
+            if not installed_nums:
+                continue
+            lower = _version_nums(match.group(1))
+            upper = _version_nums(match.group(2))
+            if is_version_less(_join_nums(installed_nums), _join_nums(lower)):
+                below_range.append({"source": item.get("source", ""), "statement": statement})
+            elif (is_version_less(_join_nums(lower), _join_nums(installed_nums))
+                  and is_version_less(_join_nums(installed_nums), _join_nums(upper))):
                 in_range.append({"source": item.get("source", ""), "statement": statement})
     if excluded:
         result = "branch_excluded"
     elif in_range:
         result = "in_stated_affected_range"
+    elif below_range:
+        result = "below_stated_affected_range"
     else:
         result = "undetermined"
     return {"result": result, "excluded_branch_statements": excluded[:5],
-            "in_range_statements": in_range[:5]}
+            "in_range_statements": in_range[:5],
+            "below_range_statements": below_range[:5]}
 
 
 def _join_nums(nums: list[int]) -> str:
@@ -140,6 +150,9 @@ def _join_nums(nums: list[int]) -> str:
 
 _INVESTIGATION_STANCES = {"under_investigation", "needs_triage", "unknown_priority"}
 _AFFECTED_STANCES = {"affected", "operator_supplied_affected"}
+# M4.2（任务书第六部分 Y7 类）：可信源之间「肯定 vs 否定」的适用性矛盾同样
+# 属于未消解冲突——厂商 affected 与第三方 not_affected 并存时不得静默取其一。
+_NOT_AFFECTED_STANCES = {"not_affected", "not_applicable"}
 
 
 def _logical_payloads(source_bundle: dict[str, Any]) -> dict[str, dict[str, Any]]:
@@ -154,14 +167,8 @@ def _logical_payloads(source_bundle: dict[str, Any]) -> dict[str, dict[str, Any]
     return logical
 
 
-def detect_vendor_conflict(source_bundle: dict[str, Any]) -> dict[str, Any]:
-    """识别「厂商尚在调查 vs 其他来源 affected」的未消解适用性冲突。
-
-    同时接受 get_source_bundle 原始形态（{source: {status, value, evidence}}）
-    与已展平的载荷形态（{source: payload}，单元测试/复用方）。canonical 的
-    value 在 release 作用域下是**单条选中记录**（非 records 列表），两种形态
-    都要识别（实验实测缺陷：E4 的 under_investigation 曾因只读 records 漏检）。
-    """
+def collect_stances(source_bundle: dict[str, Any]) -> dict[str, str]:
+    """收集各情报源的适用性立场（canonical 记录级 / nvd cpe_status / openwrt 公告）。"""
     logical = _logical_payloads(source_bundle)
     if not logical:   # 已是展平形态：顶层条目即载荷
         logical = {str(name): entry for name, entry in (source_bundle or {}).items()
@@ -177,19 +184,133 @@ def detect_vendor_conflict(source_bundle: dict[str, Any]) -> dict[str, Any]:
     nvd = logical.get("nvd") or {}
     if str(nvd.get("cpe_status") or ""):
         stances.setdefault("nvd", str(nvd["cpe_status"]))
+    for extra_source in ("kylin", "debian", "redhat"):
+        other = logical.get(extra_source) or {}
+        if str(other.get("cpe_status") or ""):
+            stances.setdefault(extra_source, str(other["cpe_status"]))
     openwrt = source_bundle.get("openwrt_advisory") or {}
     if openwrt.get("records"):
         stances.setdefault("openwrt_advisory", "operator_supplied_affected")
+    return stances
+
+
+def detect_vendor_conflict(source_bundle: dict[str, Any]) -> dict[str, Any]:
+    """识别「厂商尚在调查 vs 其他来源 affected」的未消解适用性冲突。
+
+    同时接受 get_source_bundle 原始形态（{source: {status, value, evidence}}）
+    与已展平的载荷形态（{source: payload}，单元测试/复用方）。canonical 的
+    value 在 release 作用域下是**单条选中记录**（非 records 列表），两种形态
+    都要识别（实验实测缺陷：E4 的 under_investigation 曾因只读 records 漏检）。
+
+    M4.2 扩展：可信源之间肯定/否定立场并存（affected vs not_affected）同样
+    标记为未消解冲突——具体消解由决策端按「厂商精确公告优先级 + 证据充分性」
+    处理，程序不静默替任何一方做裁量。
+    """
+    stances = collect_stances(source_bundle)
     investigating = sorted(source for source, stance in stances.items()
-                           if stance.lower() in _INVESTIGATION_STANCES)
+                            if stance.lower() in _INVESTIGATION_STANCES)
     affected = sorted(source for source, stance in stances.items()
                       if stance.lower() in _AFFECTED_STANCES)
-    unresolved = bool(investigating and affected)
+    not_affected = sorted(source for source, stance in stances.items()
+                          if stance.lower() in _NOT_AFFECTED_STANCES)
+    unresolved = bool((investigating and affected) or (affected and not_affected))
     description = ""
-    if unresolved:
+    if investigating and affected:
         description = (f"{'/'.join(investigating)} 对适用性仍标记为调查中，"
                        f"而 {'/'.join(affected)} 判 affected；适用性冲突未消解。")
+    elif affected and not_affected:
+        description = (f"{'/'.join(affected)} 判 affected 而 {'/'.join(not_affected)} 判 "
+                       "not_affected；可信源之间的适用性矛盾未消解。")
     return {"unresolved": unresolved, "stances": stances, "description": description}
+
+
+# ── 厂商补丁与 backport 语义检测（M4.2，任务书第二部分） ──────────────────────
+
+_BACKPORT_RE = re.compile(r"backport", re.IGNORECASE)
+
+
+def detect_vendor_patch_semantics(source_bundle: dict[str, Any],
+                                  installed_version: str) -> dict[str, Any]:
+    """从厂商精确公告（canonical，release 作用域）确定性提取补丁语义。
+
+    - release_status：厂商对该 release 的适用性立场（not_affected/affected/
+      under_investigation/…），release 作用域内厂商精确公告优先于上游
+      NVD 通用候选匹配；
+    - backport：公告文本出现 backport 语义词时标记（厂商已把上游修复回移植
+      进本 release 的历史版本——此时「装机 < 上游修复版本」不等于受影响）。
+
+    同时接受 get_source_bundle 原始形态与已展平的载荷形态（与
+    collect_stances 同一归一规则）。
+    """
+    logical = _logical_payloads(source_bundle)
+    if not logical:   # 已是展平形态：顶层条目即载荷
+        logical = {str(name): entry for name, entry in (source_bundle or {}).items()
+                   if isinstance(entry, dict)}
+    canonical = logical.get("canonical") or {}
+    records = canonical.get("records")
+    if records is None and canonical.get("status"):
+        records = [canonical]
+    record = None
+    for item in (records or [])[:MAX_SOURCE_RECORDS]:
+        if isinstance(item, dict):
+            record = item
+            break
+    if record is None:
+        return {"release_status": "", "backport": False, "statement": "",
+                "note": "厂商精确公告不可用；补丁语义未定（不得据此下确定性结论）"}
+    status = str(record.get("status") or "")
+    text = " ".join(str(record.get(key) or "") for key in
+                    ("note", "description", "status_comment"))
+    backport = bool(_BACKPORT_RE.search(text))
+    return {
+        "release_status": status,
+        "backport": backport,
+        "statement": text[:300],
+        "note": ("厂商精确公告（release 作用域）为确定性事实；通用 NVD 候选匹配"
+                 "不得推翻其 not_affected/受影响声明" if status else ""),
+    }
+
+
+# ── 处置紧迫度放大因子（M4.2，E2 遗留整改的确定性前提） ────────────────────────
+
+def compute_urgency_amplifiers(intel_summary: dict[str, Any],
+                               public_services: list[dict[str, Any]],
+                               package_name: str) -> dict[str, Any]:
+    """静态证据独立支撑 immediate_fix（urgency_basis=static_evidence_only）
+    所需的确定性放大因子（M4.1 校准报告 §9-1 整改）：
+
+    - kev：CISA KEV 收录（野外已知利用——最强静态紧迫信号）；
+    - critical_public_component：受影响组件自身公网监听（is_public_exposed）
+      且 CVSS ≥ 9.0（Critical）——直接可达的严重攻击面；
+    - 无任一放大因子时，静态证据只能支撑 scheduled_fix 及以下。
+
+    组件公网匹配为保守规则：服务名或进程名与包名一致/前缀匹配才算该组件
+    自身的暴露（客户端库/被动库不算——如 curl/libxml2 无监听服务）。
+    """
+    cvss = float(intel_summary.get("cvss_score") or 0)
+    kev = bool(intel_summary.get("kev"))
+    matched_public = []
+    package = (package_name or "").strip().lower()
+    if package:
+        for service in public_services:
+            service_name = str(service.get("service_name") or "").strip().lower()
+            process = str(service.get("process_name") or "").strip().lower()
+            if package == service_name or package == process or \
+                    (process and process.startswith(package)):
+                matched_public.append(service)
+    critical_public = bool(matched_public and cvss >= 9.0)
+    present = kev or critical_public
+    return {
+        "kev": kev,
+        "critical_public_component": critical_public,
+        "matched_public_services": [
+            {key: service.get(key) for key in ("port", "service_name", "process_name")}
+            for service in matched_public[:3]],
+        "cvss_score": cvss,
+        "any_present": present,
+        "rule": "immediate_fix + static_evidence_only 需要 kev=true 或 "
+                "(受影响组件公网监听 且 cvss>=9.0)；否则紧迫度上限为 scheduled_fix",
+    }
 
 
 # ── 预取包 Schema（与 Agent 输出同为「state 中的 dict」形态） ──────────────────
@@ -203,6 +324,9 @@ class CandidateFacts(BaseModel):
     version_compare: dict[str, Any] = Field(default_factory=dict)
     branch_check: dict[str, Any] = Field(default_factory=dict)
     vendor_conflict: dict[str, Any] = Field(default_factory=dict)
+    # M4.2：厂商补丁/backport 语义 + 静态紧迫度放大因子（确定性事实）
+    vendor_patch: dict[str, Any] = Field(default_factory=dict)
+    urgency_amplifiers: dict[str, Any] = Field(default_factory=dict)
     intel_summary: dict[str, Any] = Field(default_factory=dict)
     source_bundle: dict[str, Any] = Field(default_factory=dict)
     matched_rows: int = 0
@@ -240,6 +364,8 @@ class EvidencePrepPacket(BaseModel):
             "version_compare": first.version_compare or {"result": "unknown"},
             "branch_check": first.branch_check or {"result": "undetermined"},
             "vendor_conflict": first.vendor_conflict or {"unresolved": False},
+            "vendor_patch": first.vendor_patch or {"release_status": "", "backport": False},
+            "urgency_amplifiers": first.urgency_amplifiers or {"any_present": False},
             "runtime_freshness": freshness,
             "runtime_status_hint": runtime_status_hint,
         }
@@ -295,6 +421,24 @@ def _intel_summary(db: Session, cve_id: str) -> dict[str, Any]:
     }
 
 
+def _public_services(db: Session, target_ref: str) -> list[dict[str, Any]]:
+    """目标资产的公网监听服务（确定性暴露面事实，紧迫度放大因子输入）。
+
+    只读查询 AssetService；is_public_exposed=True 且非回环监听才算公网暴露。
+    """
+    asset = db.query(models.LinuxAsset).filter(
+        (models.LinuxAsset.hostname == target_ref)
+        | (models.LinuxAsset.ip_address == target_ref)).first() if target_ref else None
+    if asset is None:
+        return []
+    rows = db.query(models.AssetService).filter(
+        models.AssetService.asset_id == asset.id,
+        models.AssetService.is_public_exposed.is_(True)).all()
+    return [{"port": row.port, "service_name": row.service_name,
+             "process_name": row.process_name,
+             "listen_address": row.listen_address} for row in rows]
+
+
 def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
                                candidates: list[dict[str, Any]]) -> EvidencePrepPacket:
     """一次性前置查询：资产画像/暴露面、运行时数据质量与证据清单、逐候选确定性事实。
@@ -304,15 +448,18 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
     as_of = datetime.now(timezone.utc).isoformat()
     asset_facts: dict[str, Any] = {}
     runtime_facts: dict[str, Any] = {}
+    public_services: list[dict[str, Any]] = []
     if target_ref:
         profile = T.tool_query_device_profile(db, host=target_ref)
         if profile.get("found"):
+            public_services = _public_services(db, target_ref)
             asset_facts = {
                 "profile": {key: profile.get(key) for key in
                             ("device_id", "device_type", "vendor", "model",
                              "firmware_version", "os", "ip")},
                 "services": (profile.get("services") or [])[:MAX_COMPONENTS],
                 "open_ports": profile.get("open_ports") or [],
+                "public_services": public_services,
                 "components_truncated": len(profile.get("components") or []) > MAX_COMPONENTS,
                 "components": (profile.get("components") or [])[:MAX_COMPONENTS],
             }
@@ -355,6 +502,7 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
                                           package_name=str(candidate.get("package_name") or ""))
         branch_check = (check_branch_applicability(texts, installed)
                         if (texts and installed) else {"result": "undetermined"})
+        intel_summary = _intel_summary(db, cve_id) if cve_id else {}
         matched_rows = db.query(models.VulnerabilityMatch).filter(
             models.VulnerabilityMatch.cve_id.like(f"{cve_id}%")).count() if cve_id else 0
         # 有界源状态包：{source: {status, source_updated_at, value}}（value 为
@@ -365,12 +513,24 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
                    "value": entry.get("value")}
             for name, entry in (bundle or {}).items() if isinstance(entry, dict)
         }
+        vendor_patch = detect_vendor_patch_semantics(bundle or {}, installed)
+        if (vendor_patch.get("release_status") == "not_affected"
+                and version_compare.get("result") == "affected"):
+            # backport 场景：上游口径的版本比较与厂商 release 口径声明相左——
+            # 两者都如实保留，交由决策约束按厂商精确公告优先处理
+            version_compare["caveat"] = (
+                "上游版本口径比较结果；厂商精确公告声明本 release not_affected"
+                + ("（含 backport 修复）" if vendor_patch.get("backport") else "")
+                + "，厂商口径优先，不得据此判受影响")
         candidate_facts.append(CandidateFacts(
             cve_id=cve_id, package_name=str(candidate.get("package_name") or ""),
             installed_version=installed, fixed_version=fixed,
             version_compare=version_compare, branch_check=branch_check,
             vendor_conflict=detect_vendor_conflict(bundle or {}),
-            intel_summary=_intel_summary(db, cve_id) if cve_id else {},
+            vendor_patch=vendor_patch,
+            urgency_amplifiers=compute_urgency_amplifiers(
+                intel_summary, public_services, str(candidate.get("package_name") or "")),
+            intel_summary=intel_summary,
             source_bundle=source_bundle,
             matched_rows=matched_rows))
 

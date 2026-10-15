@@ -894,9 +894,18 @@ class TestRunner:
         monkeypatch.setattr(runner_mod, "SessionLocal", session_factory)
         db = session_factory()
         asset = make_asset(db)
+        # M4.2：simple 层要求证据充分——无 match 行（装机版本未知）的候选按
+        # 证据不足升全量评审，因此本测试必须带生产形态的 match 行
+        match = models.VulnerabilityMatch(
+            asset_id=asset.id, cve_id="CVE-2026-81099", package_name="curl",
+            installed_version="7.81.0", fixed_version="7.81.1", affected=True,
+            match_status="potentially_affected")
+        db.add(match)
+        db.flush()
         risk = models.RiskAssessment(asset_id=asset.id, cve_id="CVE-2026-81099",
                                      package_name="curl", preliminary_score=45,
-                                     preliminary_level="Medium", active=True)
+                                     preliminary_level="Medium", active=True,
+                                     match_id=match.id)
         db.add(risk)
         db.commit()
         run_row = models.UnifiedAnalysisRun(

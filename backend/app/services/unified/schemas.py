@@ -72,6 +72,34 @@ class EvidenceInventory(BaseModel):
     sources: list[str] = Field(default_factory=list)
 
 
+# M4.2 深化（任务书第二部分）：资产结论必须区分证据等级——已核实事实 /
+# 来源不明确数据 / 冲突事实，不得把三者混同陈述。
+class VerifiedFact(BaseModel):
+    """已核实事实：来自当前运行内真实工具返回且来源明确。"""
+
+    model_config = ConfigDict(extra="ignore")
+    fact: str
+    source: str = ""
+    as_of: str = ""
+
+
+class UnverifiedObservation(BaseModel):
+    """来源不明确或未经交叉核实的数据（如实标注，不得当作已核实事实使用）。"""
+
+    model_config = ConfigDict(extra="ignore")
+    item: str
+    reason: Literal["source_unclear", "single_source", "stale", "unconfirmed", "other"] = "unconfirmed"
+    note: str = ""
+
+
+class ConflictingFact(BaseModel):
+    """不同来源互相矛盾的事实（列出双方来源，交由决策端冲突处理）。"""
+
+    model_config = ConfigDict(extra="ignore")
+    description: str
+    sources: list[str] = Field(default_factory=list)
+
+
 class AssetEvidenceReport(UnifiedAgentOutput):
     device_id: str
     device_type: str = "unknown"
@@ -86,6 +114,9 @@ class AssetEvidenceReport(UnifiedAgentOutput):
     evidence_quality: Literal["sufficient", "partial", "insufficient", "conflicting"] = "insufficient"
     missing_evidence: list[str] = Field(default_factory=list)
     exposure_summary: str = ""
+    verified_facts: list[VerifiedFact] = Field(default_factory=list)
+    unverified_observations: list[UnverifiedObservation] = Field(default_factory=list)
+    conflicting_facts: list[ConflictingFact] = Field(default_factory=list)
 
 
 # ── Agent 2：Vulnerability Analyst ───────────────────────────────────────────
@@ -110,6 +141,24 @@ class VulnerabilityFinding(BaseModel):
     applicability: Literal[
         "confirmed_affected", "potentially_affected", "not_affected", "insufficient_evidence"
     ] = "insufficient_evidence"
+    # M4.2 深化（任务书第二部分）：CVE 适用性研判的专业维度——
+    # 安装版本与受影响版本区间的关系（独立于 fixed_version 单点比较）；
+    # 装机分支与公告作用分支的关系；厂商补丁及 backport 语义；
+    # 情报源精确度（厂商精确公告 vs NVD 通用候选匹配）。
+    version_range_relation: Literal[
+        "in_affected_range", "below_affected_range", "at_or_above_fixed_version",
+        "outside_affected_range", "no_stated_range", "unknown"
+    ] = "unknown"
+    branch_relation: Literal[
+        "vendor_branch_matches_advisory", "different_distribution_branch", "unknown"
+    ] = "unknown"
+    patch_semantics: Literal[
+        "vendor_fixed_in_release", "vendor_backport_applied", "backport_available_not_installed",
+        "upstream_fix_only", "no_fix_available", "unknown"
+    ] = "unknown"
+    advisory_specificity: Literal[
+        "vendor_precise_match", "nvd_candidate_only", "sources_conflict", "no_advisory"
+    ] = "unknown"
     confidence: float = Field(ge=0, le=1, default=0.5)
     supporting_evidence_ids: list[str] = Field(default_factory=list)
     rationale: str = ""
@@ -141,11 +190,31 @@ class VulnerabilityAnalysisReport(UnifiedAgentOutput):
 
 # ── Agent 3：Runtime Analyst ─────────────────────────────────────────────────
 
+# M4.2 深化（任务书第二部分）：单条运行时证据与候选漏洞的关系语义——
+# 组件存在/服务活跃/攻击前置条件/可疑行为/CVE 相关动态证据/已确认利用/无关。
+# 「可疑」不等于「与该 CVE 相关」，「无关活跃」不得作为该 CVE 的紧迫依据。
+EvidenceRelation = Literal[
+    "component_present", "service_active", "attack_precondition", "suspicious_behavior",
+    "cve_related_evidence", "confirmed_exploitation", "unrelated",
+]
+
+
 class RuntimeFinding(BaseModel):
     model_config = ConfigDict(extra="ignore")
     aspect: Literal["process", "network", "file"]
     evidence_id: str
     description: str
+    relation: EvidenceRelation = "unrelated"
+    observed_at: str = Field(default="", description="证据真实发生时间（来自工具返回，不得编造）")
+    source_quality: Literal["sensor_verified", "single_source", "aggregated", "unknown"] = "unknown"
+
+
+# 报告级总结：动态证据整体与候选 CVE 的关联程度（禁止把异常直接等同已利用）
+ExploitationRelation = Literal[
+    "confirmed_exploitation", "cve_related_evidence", "suspicious_unlinked",
+    "service_active_only", "component_present_only", "not_observed",
+    "monitoring_unavailable", "monitoring_missing",
+]
 
 
 class RuntimeAnalysisReport(UnifiedAgentOutput):
@@ -163,10 +232,13 @@ class RuntimeAnalysisReport(UnifiedAgentOutput):
     contradictions: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     scope: str = ""
+    exploitation_relation: ExploitationRelation = "not_observed"
+    exploitation_relation_rationale: str = Field(
+        default="", description="关联程度判定的依据（引用真实证据 ID 与时间；缺失≠不存在，异常≠已利用）")
 
     @model_validator(mode="after")
     def evidence_and_freshness_semantics(self):
-        """继承 System A 证据纪律 + F6 新鲜度语义（保守方向）。"""
+        """继承 System A 证据纪律 + F6 新鲜度语义（保守方向）+ M4.2 关联语义纪律。"""
         if self.behavior_level in {"SUSPICIOUS", "ACTIVE", "BLOCKED"}:
             if not self.evidence_ids or not self.findings:
                 raise ValueError(
@@ -188,6 +260,15 @@ class RuntimeAnalysisReport(UnifiedAgentOutput):
                 f"runtime_status=stale_verified 要求 freshness 为 stale/mixed（当前 {self.evidence_freshness}）")
         if self.evidence_ids and self.behavior_level == "NORMAL" and not self.findings:
             raise ValueError("引用了证据却没有任何 finding，请补充观察说明")
+        # 已确认利用必须由明确标注 confirmed_exploitation 的真实证据支撑（防跳级）
+        if self.exploitation_relation == "confirmed_exploitation":
+            supporting = [f for f in self.findings
+                          if f.relation in {"confirmed_exploitation", "cve_related_evidence"}]
+            if not supporting:
+                raise ValueError(
+                    "exploitation_relation=confirmed_exploitation 必须由 relation="
+                    "confirmed_exploitation/cve_related_evidence 的具体证据条目支撑；"
+                    "仅有可疑或无关行为时不得宣称已确认利用")
         return self
 
 
@@ -210,6 +291,8 @@ class FollowUpRequest(BaseModel):
     target_agent: Literal["asset_investigator", "vulnerability_analyst", "runtime_analyst"]
     question: str = Field(min_length=1)
     evidence_hint: str = ""
+    expected_effect: str = Field(default="", description="该补查预期消除哪个具体证据缺口、"
+                                                         "以及结果会如何改变研判（防止无边界索证）")
 
 
 class KeyEvidenceCheck(BaseModel):
@@ -217,6 +300,29 @@ class KeyEvidenceCheck(BaseModel):
     evidence_id: str
     check: str
     passed: bool
+
+
+# M4.2 分层研判模型（任务书第三部分）：四个研判维度（非新增 Agent）——
+# 适用性 / 运行时证据 / 暴露与利用条件各自独立表达结论、置信与证据不足，
+# 处置维度由 VerdictItem 的 action/priority/urgency_basis 承载。
+DimensionStatus = Literal[
+    "established", "partial", "absent", "insufficient_evidence", "unknown"
+]
+
+
+class DimensionAssessment(BaseModel):
+    """单个研判维度的独立评估：结论状态、置信、支撑证据与缺口。
+
+    纪律：运行时维度 absent/insufficient 不得反推适用性不存在；
+    适用性维度结论不得由运行时异常单独支撑。
+    """
+
+    model_config = ConfigDict(extra="ignore")
+    status: DimensionStatus = "unknown"
+    conclusion: str = ""
+    confidence: float = Field(ge=0, le=1, default=0.5)
+    supporting_evidence_ids: list[str] = Field(default_factory=list)
+    gaps: list[str] = Field(default_factory=list)
 
 
 class VerdictItem(BaseModel):
@@ -237,6 +343,12 @@ class VerdictItem(BaseModel):
     urgency_basis: Literal[
         "fresh_runtime_evidence", "static_evidence_only", "no_urgency_evidence", "unknown"
     ] = "unknown"
+    # M4.2 分层研判：各维度独立表达（证据不足与不确定性逐维度声明）。
+    applicability_dimension: DimensionAssessment = Field(default_factory=DimensionAssessment)
+    runtime_dimension: DimensionAssessment = Field(default_factory=DimensionAssessment)
+    exposure_dimension: DimensionAssessment = Field(default_factory=DimensionAssessment)
+    # 处置前置条件中仍不满足的项（如：冲突未消解、补丁不可用、触发条件不满足）
+    unsatisfied_conditions: list[str] = Field(default_factory=list)
     supporting_evidence_ids: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     reason: str = ""
@@ -264,6 +376,9 @@ class DecisionResponseReport(UnifiedAgentOutput):
     follow_up_requests: list[FollowUpRequest] = Field(default_factory=list, max_length=2)
     response_plan: ResponsePlan = Field(default_factory=ResponsePlan)
     degraded_roles: list[str] = Field(default_factory=list)
+    # M4.2 协作深化：冲突消解状态显式声明（哪些已消解及依据、哪些仍存在）。
+    resolved_conflicts: list[str] = Field(default_factory=list)
+    unresolved_conflicts: list[str] = Field(default_factory=list)
     reason: str = ""
 
     @model_validator(mode="after")
