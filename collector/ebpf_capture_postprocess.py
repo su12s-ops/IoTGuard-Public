@@ -272,18 +272,30 @@ def convert_lines(lines: Iterable[str], hostname: str, boot_id: str = "",
     return events
 
 
+def _validated_cli_path(value: str) -> Path:
+    """CWE-22 缓解：本工具常随探针以 root 运行，CLI 路径含穿越分量（..）即拒绝
+    （fail-closed）；仅接受净化后的 Path 供 open 使用。"""
+    path = Path(value)
+    if ".." in path.parts:
+        print(f"[LinuxGuard] 拒绝可疑路径（含 .. 穿越分量）: {value}", file=sys.stderr)
+        raise SystemExit(2)
+    return path
+
+
 def main(argv: list[str] | None = None) -> int:
     args = argv if argv is not None else sys.argv[1:]
     if len(args) < 3:
         print(f"用法: {Path(sys.argv[0]).name} <raw文件> <输出.jsonl> <hostname>", file=sys.stderr)
         return 2
-    raw_path, out_path, hostname = args[0], args[1], args[2]
-    with open(raw_path, encoding="utf-8", errors="replace") as fh:
+    raw_file = _validated_cli_path(args[0])
+    out_file = _validated_cli_path(args[1])
+    hostname = args[2]
+    with raw_file.open(encoding="utf-8", errors="replace") as fh:
         events = convert_lines(fh, hostname)
-    with open(out_path, "w", encoding="utf-8") as out:
+    with out_file.open("w", encoding="utf-8") as out:
         for event in events:
             out.write(json.dumps(event, ensure_ascii=False) + "\n")
-    print(f"[LinuxGuard] 归一化完成：{len(events)} 条事件 -> {out_path}")
+    print(f"[LinuxGuard] 归一化完成：{len(events)} 条事件 -> {out_file}")
     return 0
 
 

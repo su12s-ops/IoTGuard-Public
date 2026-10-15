@@ -1,6 +1,17 @@
 # 当前任务
 
-> 每完成一个任务更新本文件。最后更新：2026-10-14
+> 每完成一个任务更新本文件。最后更新：2026-10-15
+
+## 最近完成
+
+**eBPF 2.0 P2-1：性能评测落地**（2026-10-15，报告 IOT_EBPF2_P21_REPORT.md，证据 reports/ebpf-p21-final/ 本地留存）
+- [x] 五种评测形态全部真实执行并统一汇总（吞吐/CPU/内存/延迟 P50/P95/P99/事件计数/丢失/重复/spool；0 与 unavailable 严格区分）：synthetic×2（后端摄取）、replay（断网 21.6s 中断恢复+幂等）、real-wsl×2（WSL2 bpftrace 真实内核，4.1 万事件/次，两次独立运行归因对账 0 丢失）、real-vm-falco（VM 常驻 Falco journalctl 拉取，14910 事件，0.021% 丢失如实记录）、bounded-spool（容量不变量+数据保全）
+- [x] 实测发现并修复 SQLite 判重全表扫描缺陷（P0 部分唯一索引不被查询计划蕴含推理）：全量索引+旧库幂等补建；EXPLAIN 前后证据 SCAN→COVERING INDEX；后端摄取 115→379 EPS、批 RTT P50 4.3s→1.3s（synthetic 口径，明确不表述为内核采集提升）
+- [x] 评测过程暴露并修复 8 项缺陷（含生产脚本缺陷）：wsl 内联转义 EOF、资产登记非幂等、伪造 boot_id 被身份防线正确拒绝、探针健康文件 grep -c 双 0/set -e 中止（collector/ebpf_trace_capture.sh）、falco 消息本地时区（+8h）伪零延迟、对账口径错配、固定 sensor_id 跨运行污染；三次失败尝试完整留档不删除
+- [x] bpftrace 成为受支持采集源（心跳 Literal/转发器 choices/观察模式归类 ebpf，真实内核采集不误标 runtime）
+- [x] 测试：新增专项 41 项；相关域发现 init_db 幂等契约回归 1 处→根因修复；全量 **476 passed / 0 failed**（435 基线 + 41 新增，零回归）
+- [x] VM 连接参数改环境变量注入（私网地址/用户名不写入跟踪文件）
+- [x] Mimosa 深度扫描首次成功运行：首轮 4 项高危（SSRF×2/路径穿越/SQL 注入临时文件）→ 全部修复（环回白名单/穿越分量拒绝+输出等价验证/删除遗留临时文件）→ 复扫 0 findings（封印 sha256:430b93f2…ed9c）
 
 ## 最近完成
 
@@ -121,9 +132,10 @@
 
 ## 下一步（等待审阅，不自动开始）
 
-- eBPF 2.0 P2 剩余：P2-1 性能评测落地、P2-2 OpenWrt 降级采集（syslog 尾随）
+- eBPF 2.0 P2 剩余：P2-2 OpenWrt 降级采集（syslog 尾随）
 - 第九阶段待用户指令（未开始）
 - Private 仓库删除申请：本仓库独立 Clone/构建/运行验证与归档核验已通过，可向用户提交删除申请
+- P2-1 遗留（低优先）：后端摄取上限 ~380 EPS（SQLite 单进程）扩展评估；falco 引擎级 drops/CPU 采样待 sudo 授权窗口；bounded-spool 告警触发路径的真实触界复现（当前由单元测试覆盖）
 
 ## 已知事项
 

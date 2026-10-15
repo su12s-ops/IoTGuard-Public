@@ -192,8 +192,13 @@ if [ -n "$LOST" ] && [ "$LOST" -ge 0 ] 2>/dev/null; then
 else
   DROPPED_JSON="null"
 fi
+# grep -c 无匹配时输出 0 但退出码非零：必须 || true 兜底，否则 set -e 在此
+# 中止脚本（健康文件不写、尾部回显丢失——attempt4 实测）；无匹配的双 0
+# 缺陷（非法 JSON）与脚本中止缺陷同源于此，一并由 || true 修复
+DETAIL_LOST=$(grep -Ec '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null || true)
+DETAIL_LOST=${DETAIL_LOST:-0}
 cat > "$HEALTH_FILE" <<HEALTH
-{"status": "running", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "bpftrace", "lost_source": "bpftrace_stderr", "probe_profile": "${PROBE_PROFILE}", "argv": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false ), "start_time": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false )}, "detail": "events lost: $(grep -Ec '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null || echo 0) 条 stderr 丢失报告；null=本次运行未报告丢失计数（unavailable，非零丢失）；probe_profile=${PROBE_PROFILE}"}
+{"status": "running", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "bpftrace", "lost_source": "bpftrace_stderr", "probe_profile": "${PROBE_PROFILE}", "argv": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false ), "start_time": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false )}, "detail": "events lost: ${DETAIL_LOST} 条 stderr 丢失报告；null=本次运行未报告丢失计数（unavailable，非零丢失）；probe_profile=${PROBE_PROFILE}"}
 HEALTH
 echo "[LinuxGuard] 探针健康文件: ${HEALTH_FILE}（供转发器 --health-file 消费）"
 

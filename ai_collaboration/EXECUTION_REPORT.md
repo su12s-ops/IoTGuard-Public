@@ -1,6 +1,16 @@
 # 最近一次开发结果
 
-> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-14（单一仓库制落地，双仓同步取消）
+> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（eBPF 2.0 P2-1 性能评测落地）
+
+## 2026-10-15（eBPF 2.0 P2-1）：五形态性能评测完成（真实内核采集 0 丢失 + 判重索引缺陷修复 115→379 EPS）
+
+- **五形态实测**：synthetic 后端摄取 379 EPS（修复后）/批 RTT P50 1.3s；replay 断网 21.6s→5 次重试全成功/spool 清零/幂等收敛 40 唯一；real-wsl 真实 bpftrace 内核两次独立运行 41446/41322 事件、归因对账 0 丢失、探针 CPU ≈2% 单核；real-vm-falco 常驻 Falco journalctl 拉取 14910 事件、0.021% 丢失（1 条如实记录）；bounded-spool 容量不变量与数据保全成立（告警路径未触发，如实记录）
+- **判重索引缺陷（实测发现→修复→回归锁定）**：P0 部分唯一索引 WHERE != '' 不被 SQLite 查询计划蕴含推理，判重全表扫描（7500 行批 RTT P50 4.3s）→ 全量索引+幂等补建 → EXPLAIN SCAN→COVERING INDEX；后端摄取 115→379 EPS（synthetic 口径，不表述为内核采集提升）
+- **8 项评测链缺陷修复**（3 次失败尝试留档 reports/ebpf-p21-final/*attempt*.json）：wsl 内联转义 EOF / 资产登记非幂等 / 伪造 boot_id 被身份防线正确拒绝（去注入改真实身份）/ ebpf_trace_capture.sh 健康文件 grep -c 双 0+set -e 中止（生产脚本缺陷）/ falco 消息本地时区 +8h 伪零延迟（journal UTC 基准+tz_mismatch 计数）/ 对账口径错配虚报 25% / 固定 sensor_id 跨运行污染
+- **诚实边界**：不可测项全部 unavailable（bpftrace 丢失计数未报告→null、falco 引擎 drops/CPU 无 sudo、replay 延迟无实时语义）；/etc/passwd 读取噪声不进丢失结论；VM 文件写项 no_perm 如实降级
+- **回归**：新增专项 41 项；相关域发现 init_db 幂等契约回归（_ensure_query_indexes 首版二次运行仍报告变更）→ 根因修复（只在真创建时报告）；全量 **476 passed / 0 failed**（435 基线 + 41 新增，零新增回归）
+- **安全**：VM 连接参数改环境变量注入，私网地址/用户名不写入跟踪文件；reports/ 证据本地留存不入库
+- **边界**：未进入 P2-2 与第九阶段；未删改任何既有测试；对 VM/WSL 零持久化改动
 
 ## 2026-10-14（eBPF 2.0 P1 稳定性收尾轮）：常驻化与可靠性验收（直连方案 + spool 精确对账 + 32 分钟连续运行 + 3 处真实缺陷修复）
 

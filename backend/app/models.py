@@ -192,7 +192,9 @@ class RuntimeEvent(Base):
     sensor_id = Column(String(128), default="")
     executable = Column(Text, default="")
     container_id = Column(String(128), default="")
-    event_fingerprint = Column(String(64), default="")
+    # P2-1：幂等判重按此列逐事件查询，必须走索引（P0 部分唯一索引的谓词
+    # 不被 SQLite 查询计划蕴含推理，实测判重仍全表扫描——见 database.py 注释）
+    event_fingerprint = Column(String(64), default="", index=True)
     created_at = Column(DateTime, default=utcnow)
 
 

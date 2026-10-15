@@ -514,7 +514,7 @@ def main() -> int:
     parser.add_argument("--hostname", default="", help="Registered hostname; never silently overwrite upstream identity")
     parser.add_argument("--sensor-id", default="", help="Stable identifier of this device's probe")
     parser.add_argument("--boot-id", default="", help="Explicit boot ID; historical files never inherit the current boot ID")
-    parser.add_argument("--source", choices=["falco", "tetragon", "runtime_probe"], default="runtime_probe")
+    parser.add_argument("--source", choices=["falco", "tetragon", "bpftrace", "runtime_probe"], default="runtime_probe")
     parser.add_argument("--heartbeat", action="store_true", help="Publish coverage heartbeats for a live stdin stream")
     parser.add_argument("--heartbeat-seconds", type=int, default=30)
     parser.add_argument("--health-file", help="Fresh JSON status published by a probe supervisor (not by this uploader)")

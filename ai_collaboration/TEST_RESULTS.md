@@ -1,6 +1,18 @@
 # 测试结果
 
-> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-14
+> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
+
+## eBPF 2.0 P2-1 性能评测轮（2026-10-15，证据 reports/ebpf-p21-final/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 新增专项 test_ebpf_p21_perf.py（百分位/延迟/丢失对账/CPU/归因/journal tz 语义/bpftrace 源标识/判重索引 EXPLAIN/summarize） | **41/41 passed** |
+| 相关域联跑（-k "ebpf or agent or harness or trace"） | 首轮 211 passed / 1 failed——`test_ebpf_p0::test_migration_on_legacy_database`：本轮 `_ensure_query_indexes` 首版破坏 init_db 二次运行返回 [] 的幂等契约（如实记录，未跳过未放宽） |
+| 幂等契约根因修复复验 | 只在索引真创建时报告变更；P0+P2-1 联跑 59/59 passed |
+| 全量回归（修复后重跑） | **476 passed / 0 failed**（435 基线全保持 + 41 新增专项，零新增回归；6m25s） |
+| Shell 语法（ebpf_trace_capture.sh / 编排器生成的 WSL 脚本） | bash -n 通过（wsl 实机校验） |
+| 真实评测验收 | replay：exit 0/spool 清零/幂等收敛 ✔；real-wsl 两次独立 0 丢失 ✔；real-vm-falco 0.021% 如实 ✔；bounded-spool 容量不变量 ✔ |
+| Mimosa 深度扫描 | **首次成功运行**（normal 深度，显式 MCP 触发）：首轮 4 项高危静态发现→全部修复→复扫 **0 findings**（封印 sha256:430b93f2…ed9c，scan-2026-10-15T02-11-11）。修复：编排器 HTTP 客户端加环回白名单（CWE-918 fail-closed）；ebpf_capture_postprocess.py CLI 路径穿越分量拒绝（CWE-22，41322 条输出与修复前逐行等价验证）；reports/ 下调试遗留临时文件删除。依赖离线通告 2 条（1 包匹配，待评估）。**如实记录**：commit 钩子的内联扫描当时未得到完整结论（python_ast_unavailable，兼容策略放行）——完整结论以上述两次封印扫描为准，不宣称项目全局安全 |
 
 ## eBPF 2.0 P1 稳定性收尾轮（2026-10-14，证据 reports/ebpf-p1-deploy-20261014/stability-* 本地留存）
 
@@ -44,7 +56,7 @@
 ## 口径说明
 
 - **常规回归（CI 口径）**：`python -m pytest -q --ignore=tests/test_iot_device_upgrade.py --ignore=tests/test_scan_runs.py --ignore=tests/test_scan_targets.py --ignore=tests/test_mqtt_remediation_workflow.py`（交付回归同口径；被排除的 4 个文件需要真实本机监听器 + 独立 profile，见 CURRENT_TASK 已知事项）
-- **全量**：`python -m pytest -q`（在 conftest 审计钩子下，19 项真实套接字用例预期失败——历史已知，非回归）
+- **全量**：`python -m pytest -q`（当前基线 **476 passed / 0 failed**——2026-10-14 C6 环回放行修复后 435/0，2026-10-15 P2-1 新增专项 41 项后 476/0）
 
 ## 最近结果（2026-10-13，Commit 6f4724b）
 

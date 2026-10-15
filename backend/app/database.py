@@ -240,7 +240,37 @@ def init_db():
     Base.metadata.create_all(bind=engine)
     added = _migrate_sqlite_schema()
     added.extend(_migrate_ebpf_p0())
+    added.extend(_ensure_query_indexes())
     return added
+
+
+def _ensure_query_indexes() -> list[str]:
+    """P2-1 性能缺陷修复：幂等判重查询索引（旧库增量补建，幂等）。
+
+    根因（P2-1 实测发现）：P0 建的部分唯一索引
+    ``ON runtime_event(event_fingerprint) WHERE event_fingerprint != ''``
+    只能作并发上传防线——SQLite 查询计划器不做 "col = '字面量' ⇒ col != ''"
+    的谓词蕴含推理，_persist_events 的逐事件判重查询
+    （filter_by(event_fingerprint=...)）实测 EXPLAIN QUERY PLAN 仍为
+    SCAN runtime_event，入库吞吐随表规模线性劣化（7500 行时批 RTT
+    P50≈4.3s）。补建全量索引后判重稳定走索引（SEARCH ... USING INDEX）。
+    新库由 create_all 直接建出（models.event_fingerprint index=True，
+    同名）；本函数只为旧库补齐。
+    """
+    if engine.dialect.name != "sqlite":
+        return []
+    with engine.begin() as conn:
+        if not _sqlite_table_exists(conn, "runtime_event"):
+            return []
+        # 幂等语义与 init_db 契约一致：只在真创建时报告（二次运行返回 []）
+        already = conn.execute(text(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name = :name"),
+            {"name": "ix_runtime_event_event_fingerprint"}).scalar()
+        if already:
+            return []
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_runtime_event_event_fingerprint "
+                          "ON runtime_event(event_fingerprint)"))
+    return ["index: ix_runtime_event_event_fingerprint"]
 
 
 EBPF_P0_MARKER = "ebpf_p0_stable_fingerprint_v2"

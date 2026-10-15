@@ -2,6 +2,14 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — eBPF 2.0 P2-1：性能评测落地（五形态实测 + 判重索引缺陷修复）
+
+- 五种评测形态全部真实执行（synthetic×2 / replay 断网恢复 / real-wsl×2 真实内核 / real-vm-falco / bounded-spool），统一汇总吞吐/CPU/内存/延迟/丢失/重复/spool，0 与 unavailable 严格区分；synthetic 优化明确不表述为内核采集提升（报告 IOT_EBPF2_P21_REPORT.md，证据 reports/ebpf-p21-final/ 本地留存）
+- 修复实测发现的 SQLite 判重全表扫描：P0 部分唯一索引不被查询计划蕴含推理 → 补全量索引（models index=True + 旧库幂等补建，EXPLAIN SCAN→COVERING INDEX 回归锁定）；后端摄取 115→379 EPS、批 RTT P50 4.3s→1.3s
+- 修复 8 项评测链缺陷（3 次失败尝试留档）：wsl 内联转义、资产非幂等、伪造 boot_id 注入（身份防线正确拒绝）、ebpf_trace_capture.sh 健康文件 grep -c 双 0 + set -e 中止（生产脚本）、falco 消息本地时区 +8h 伪零延迟、对账口径错配、固定 sensor_id 污染；bpftrace 采集源标识补全（心跳/转发器/观察模式）
+- VM 连接参数改环境变量（LINUXGUARD_PERF_VM_HOST/USER/API），私网地址与用户名不再写入跟踪文件
+- 测试：新增专项 41 项；全量 476 passed / 0 failed（435 基线 + 41 新增，零回归；期间发现并根因修复 init_db 幂等契约回归 1 处）
+
 ## 2026-10-14 — 单一仓库制落地（Public 为唯一正式开发仓库）
 
 - 决策：所有开发/测试/Commit/Push 在本仓库进行；双仓同步机制取消，`scripts/sync_public.py` 删除
