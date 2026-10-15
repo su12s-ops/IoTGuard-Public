@@ -559,6 +559,73 @@ class TestGraphTopology:
         assert STAGE_TOPOLOGY["analyze_vulnerability"] == ["detect_conflicts"]
         assert STAGE_TOPOLOGY["analyze_runtime"] == ["detect_conflicts"]
 
+    def test_parallel_error_writes_merge_not_crash(self, session_factory):
+        """最终验收实验修复：并行节点并发写 error 必须 merge，不得 InvalidUpdateError。
+
+        实验实测（E3 网络中断窗口）：state.py 中 error 字段被定义两次，
+        普通注解覆盖了 Annotated reducer，A2∥A3 并发记录错误时整图崩溃
+        （InvalidUpdateError: Can receive only one value per step）。
+        """
+        def reducer_of(field_name):
+            metadata = UnifiedAnalysisState.model_fields[field_name].metadata
+            callables = [item for item in metadata if callable(item)]
+            assert callables, f"{field_name} 注解丢失 Annotated reducer（重复定义回归）"
+            return callables[0]
+
+        merge_error = reducer_of("error")
+        assert merge_error("APIConnectionError: node A2", "APIConnectionError: node A3") == \
+            "APIConnectionError: node A2; APIConnectionError: node A3"
+        reducer_of("degraded_roles")    # merge_unique
+        reducer_of("stage_status")      # merge_dict
+
+    def test_decision_empty_verdicts_get_feedback_retry(self, session_factory):
+        """最终验收实验修复：空 verdicts 不得静默计为成功（完备性反馈重试）。
+
+        实验实测：规划师一次运行输出 verdicts=[]，旧路径通过校验，只能靠
+        门禁 structured_result_incomplete 兜底转人工；现在必须先反馈重试。
+        """
+        db = session_factory()
+        make_asset(db)
+        make_evidence(db)
+        db.close()
+        client = ScriptedClient({
+            "资产与证据调查员": [json_response(GOOD_ASSET)],
+            "漏洞分析师": [json_response(GOOD_VULN)],
+            "运行时分析师": [json_response(GOOD_RUNTIME)],
+            "研判与处置规划师": [
+                json_response({"verdicts": [], "confidence": 0.5,
+                               "reason": "未给出裁定"}),
+                json_response(GOOD_DECISION),   # 反馈重试后给出合法裁定
+            ],
+        })
+        state = base_state()
+        final, _ctx = run_graph(session_factory, state, client)
+        assert final.decision and final.decision.get("verdicts")
+        assert final.stage_status["decide"] == "succeeded"
+
+    def test_decision_persistent_empty_verdicts_falls_back(self, session_factory):
+        """持续输出空 verdicts → 程序兜底裁定 + 决策降级 + 门禁转人工。"""
+        db = session_factory()
+        make_asset(db)
+        make_evidence(db)
+        db.close()
+        client = ScriptedClient({
+            "资产与证据调查员": [json_response(GOOD_ASSET)],
+            "漏洞分析师": [json_response(GOOD_VULN)],
+            "运行时分析师": [json_response(GOOD_RUNTIME)],
+            "研判与处置规划师": [
+                json_response({"verdicts": [], "confidence": 0.5}),
+                json_response({"verdicts": [], "confidence": 0.5}),
+            ],
+        })
+        state = base_state()
+        final, _ctx = run_graph(session_factory, state, client)
+        fallback_verdicts = (final.decision or {}).get("verdicts") or []
+        assert fallback_verdicts, "程序兜底必须给出保底裁定"
+        assert fallback_verdicts[0]["recommended_action"] == "collect_more_evidence"
+        assert final.stage_status["decide"] == "failed"
+        assert final.final["policy"]["status"] == "pending_human_review"
+
     def test_happy_path_parallel_and_followup(self, session_factory):
         db = session_factory()
         make_asset(db)

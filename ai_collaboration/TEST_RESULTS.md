@@ -2,6 +2,20 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
 
+## Stage 9B M4 最终验收实验轮（2026-10-15；实验证据 backend/reports/stage9b-unified-final/ 及归档×3 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归 | **554 passed / 0 failed**（8m13s；551 基线 + 3 新增专项：决策空 verdicts 完备性×2、并行 error reducer 在位性；simple routing_json 断言扩展；零回归） |
+| 统一链专项 | test_unified_pipeline + test_unified_adapter + test_json_extraction = 61 项全过 |
+| 真实 LLM 最终验收（backend/scripts/stage9b_unified_compare.py，deepseek-v4-flash/temperature 0.1） | 10 事件 20 运行全 completed：14 全链 + 3 API 故障程序兜底 + 1 屏蔽消融 + 2 simple 直通；1,357,234 tokens / 258 调用 / 58min；断点续跑与去重机制真实使用 |
+| 统一链 vs System B（11 事件对照） | 影响 88% vs 100%；方向 76.5% vs 72.7%；处置 65% vs 91%；人工路由 6/6 vs 4/4；引用幻觉 0 vs 不可比；成本 ≈3.2× token、≈27× 墙钟——**未达切换门槛，flag=off** |
+| 重复实验 | E1×3 完全一致真值全对；E3×6 impact 三值分布 5/6 真值内；E5×3 impact 3/3、处置 1/3 |
+| 重复口径 | E3 = 双事件实例（E3a=edge-02 有背景事件/E3b=edge-03 无证据）各自独立重复 3 次 |
+| 智能体价值审计 | asset 90 / vulnerability 72 / runtime 77 次真实工具调用全 ok；decision_planner 0 工具（综合者）；follow_up 补查 34 结果 14 次确认回灌；门禁 auto_confirmed 仅 1/19 |
+| Mimosa 深度扫描 | 0 findings（scan-2026-10-15T14-43-14.902Z-512f1a628440，seal sha256:448f342c…2394） |
+| 敏感信息/shadow 隔离 | 干净（无凭据字面量/私网/用户路径）；shadow sink=None 零触碰正式字段（专项锁定）；flag=off 保持 |
+
 ## 四智能体有效性审计轮（2026-10-15，零生产代码改动；实验证据 backend/reports/stage9-agent-audit/ 本地留存）
 
 | 项 | 结果 |

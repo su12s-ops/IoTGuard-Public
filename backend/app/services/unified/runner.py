@@ -113,6 +113,10 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         if probe is not None:
             state = probe
             state = _simple_tier_state(state)
+            # 与 LLM 路径字段对齐：simple 直通也必须留痕 routing/decision，
+            # 否则消费方（API/实验分级）只能从 state_json 反推分层结论
+            run_row.decision_json = json.dumps(state.decision or {}, ensure_ascii=False, default=str)
+            run_row.routing_json = state.routing.model_dump_json()
             persist_snapshot(state)
             if sink is not None:
                 sink(db, run_row, state)

@@ -2,6 +2,16 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — Stage 9B M4：统一四智能体最终验收实验完成（全部 10 事件；未达切换门槛，维持 flag=off）
+
+- 充值恢复后完成全部真实 LLM 对照实验：10 事件（E1/E2/E3a/E3b/E4a/E4b/E5/X1/X2/X3）20 次运行全 completed（14 全链 + 3 次 API 故障程序兜底 + 1 屏蔽消融 + 2 simple 直通），1,357,234 tokens / 258 调用 / 58min；X2 案例（KEV+装机已修复）为本轮按架构 §9 补齐的 Fixture
+- 安全面全部达标：人工路由 6/6、引用幻觉 0/20（评分器对齐 runner known_evidence_ids 后复评）、无依据升级 0、E1 重复 3/3 完全一致且真值全对、F7 屏蔽消融通过、fail-safe 兜底 3/3 落真值
+- 质量/成本/稳定性未达切换门槛：影响判定 88%（System B 100%）、处置适当 65%（91%）、单事件 token ≈3.2×、墙钟 ≈27×、E3/E5 重复呈 2–3 值方差；退化逐案例定位根因（处置校准/纯 NVD 单次方差/已修复语义保守化），整改清单见验收报告 §9；**LINUXGUARD_UNIFIED_PIPELINE 保持 off，等待用户确认后再议迁移**
+- 实验暴露并修复 5 项真实缺陷（全部回归锁定）：脚手架 target_ref 保真度（"fixture"→资产 hostname）、脚手架传感器心跳 120s 竞态、生产·决策空 verdicts 伪成功（完备性反馈重试，2 测试）、生产·simple 路由不落 routing_json/decision_json（对齐+测试）、生产·state.error 重复定义致并行错误合并 reducer 丢失（InvalidUpdateError 崩溃，测试锁定）
+- 实验基建：断点续跑/已完成去重/Token 硬预算（2.5M 上限，本轮未触界）/逐运行落盘；3 个归档目录留存缺陷期运行（targetref-defect / heartbeat-race / network-outage），不混入验收样本
+- 回归与扫描：全量 **554 passed / 0 failed**（551 + 3 新增）；Mimosa 深度扫描 0 findings（seal sha256:448f342c…2394）；敏感信息扫描干净；shadow 零副作用测试锁定
+- 交付 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md（10 章验收 + 切换/回滚方案 + 诚实性声明）；System B 上一轮全量对照经代码版本核查保留，X2 由本轮同配置补充（23,142 tokens）
+
 ## 2026-10-15 — Stage 9B：统一四智能体架构重建（M0-M4 部分，LangGraph 唯一编排器）
 
 - M0（f6bd0ef）：IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md——LangGraph 选型实测论证（Python 3.14 + 1.2.15 冒烟）、四 Agent Schema/路由/预算/影子-切换-退役/验收设计；对比否决 OpenAI Agents SDK 与 MS Agent Framework

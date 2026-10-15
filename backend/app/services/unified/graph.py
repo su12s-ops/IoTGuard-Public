@@ -636,8 +636,20 @@ def node_decide(ctx: RunContext):
             "计划只能待审批（requires_approval=true），不得生成 shell；\n"
             "5. 任一专家角色缺失（degraded_roles 非空）时如实声明并在 reason 中说明影响。"
         )
+        evidence_validator = _decision_evidence_validator(ctx, state)
+
+        def combined_validator(output: dict[str, Any]) -> list[str]:
+            # 完备性（实验发现：规划师曾输出空 verdicts 仍通过校验，只能靠
+            # 门禁 structured_result_incomplete 兜底）+ 防幻觉，一起反馈重试
+            errors = list(evidence_validator(output))
+            if state.task_type == TASK_RISK_REVIEW and not (output.get("verdicts") or []):
+                errors.append(
+                    "verdicts 为空：risk_review 任务必须给出至少一条裁定；"
+                    "无法研判时输出 impact_status=insufficient_evidence 并在 reason 说明")
+            return errors
+
         output, degraded = _run_specialist(ctx, DECISION_PLANNER_SPEC, context_text,
-                                           validate_fn=_decision_evidence_validator(ctx, state))
+                                           validate_fn=combined_validator)
         update: dict[str, Any] = {"stage_status": state.record_stage("decide", "succeeded")}
         if output is not None:
             update["decision"] = output

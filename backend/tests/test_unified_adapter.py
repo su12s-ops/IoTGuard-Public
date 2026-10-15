@@ -194,6 +194,12 @@ class TestBatchAdapter:
         assert final["rule_tier_simple"] is True
         assert final["policy"]["status"] == "pending_human_review"
         assert "high_impact_operation_requires_human" in final["policy"]["reasons"]
+        # simple 直通路径与 LLM 路径字段对齐：routing/decision 也要落库留痕
+        # （最终验收实验实测：曾只写 state_json，行级字段无法识别分层）
+        routing = json.loads(row.routing_json or "{}")
+        assert routing.get("tier") == "simple"
+        decision = json.loads(row.decision_json or "{}")
+        assert decision.get("verdicts"), "simple 直通必须留痕 verdict"
         db.close()
 
     def test_run_review_analysis_unified_shape_and_effects(self, session_factory, monkeypatch):

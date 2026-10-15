@@ -1,6 +1,6 @@
 # IoTGuard 项目长期背景与系统架构
 
-> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（第九阶段前置专项：四智能体有效性审计）。
+> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（Stage 9B M4 最终验收实验）。
 
 ## 项目定位
 
@@ -25,7 +25,7 @@ backend/   FastAPI + SQLAlchemy + SQLite（30+ 表）
     │   ├─ agent_harness.py        修复 Harness（审批哈希/锁/预算/回滚；执行 coordinator
     │   │                          requested_tools 真实补采并复评）
     │   └─ ebpf_event_collector.py eBPF/Falco 证据层
-    └─ tests/ 499 项 pytest（全量绿：499 passed / 0 failed，2026-10-15）
+    └─ tests/ 554 项 pytest（全量绿：554 passed / 0 failed，2026-10-15）
 collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性能评测负载发生器、logread 降级采集
 simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 ```
@@ -35,7 +35,7 @@ simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 - **统一编排器（services/unified/，唯一正式架构，pipeline_version=unified-four-agent-v1）**：LangGraph 1.2 单图——prepare(路由分层)→asset_investigator→(vulnerability_analyst ∥ runtime_analyst)→detect_conflicts(7 确定性规则)→[定向复议≤1]→decision_planner([补查≤1])→finalize(审计门禁/F5 聚合/强制待审批计划)。能力来源：System A 的 14 只读工具与工具循环基座 + System B 的证据包/冲突/门禁/有界方向映射；F1/F3/F5/F6/F7/F9 与 §7 八问题已修复并有测试锁定。
 - **开关**：`LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on`（默认 off=System B 原链路零变化；shadow=影子对照只写 unified_analysis_run；on=/api/analysis 经 adapter 切换统一编排器）。影子隔离由逐字段快照测试锁定。
 - **旧体系现状（能力来源与历史兼容，非正式入口）**：System A（services/agents/）与 System B（event_review_pipeline.py）在开关 off 时仍是正式链路（System B）；on 切换稳定后按 IOT_STAGE9B_MIGRATION_NOTES.md §5 清单退役。
-- 真实 LLM 对照实验部分完成（余额耗尽待续跑，见 IOT_STAGE9B_EXPERIMENT_REPORT.md）；样本量不足以判定优劣，不以部分数据下结论。
+- 真实 LLM 最终验收实验已完成（2026-10-15，见 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）：全部 10 事件 20 次运行完成（1.357M tokens）；安全防线全达标（人工路由 6/6、引用幻觉 0、无依据升级 0、fail-safe 兜底 3/3 保真值）；**质量/成本/稳定性未达切换门槛（影响判定 88% vs 旧 100%、处置 65% vs 91%、成本 ≈3.2×），维持 flag=off**；整改清单见验收报告 §9。
 
 ## 关键安全边界（不可回退）
 

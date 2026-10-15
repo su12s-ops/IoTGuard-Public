@@ -5,11 +5,15 @@
   真值表先验独立定义）与计量包装（客户端真实 usage，不编造）；
 - 同一 Fixture 上运行：规则基线 A / System B 原链路 / 统一四智能体（影子，
   不触碰正式字段）；
-- 新增独立案例：X1 低复杂度候选（成本分层直通）、X2 设备巡检任务（F5 聚合
-  + 计划产出）、X3 仅过期运行时证据+直接命中（F6 新鲜度语义）；
-- 重复运行：E1/E3/E5 各 N 次（默认 3）观察运行间方差；
+- 新增独立案例：X1 低复杂度候选（成本分层直通）、X2 KEV+厂商 affected 但装机
+  已高于修复版本（版本事实优先，不因 KEV 虚高）、X3 仅过期运行时证据+直接命中
+  （F6 新鲜度语义）；
+- 重复运行：E1/E3/E5 各 N 次（默认 3；E3 含两个事件实例，按实例独立重复）
+  观察运行间方差；
 - 失败恢复：屏蔽统一链 runtime_analyst（E1）——部分失败不全丢（F7）、
   门禁强制人工；
+- 断点续跑：逐运行 JSON 落盘（--out/runs/），重跑时对已完成运行去重跳过；
+  --max-total-tokens 硬预算触界后剩余运行标记 skipped、续跑补齐；
 - 产物：聚合指标 JSON + 逐案例明细写入 --out（reports/ 已 gitignore）。
 
 用法：
@@ -22,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -50,6 +55,14 @@ UNIFIED_TRUTH = {
         "actions": {"monitor", "defer", "collect_more_evidence"},
         "needs_human": None,
     },
+    # X2：KEV+厂商 affected，但装机已高于厂商修复版本——不得因 KEV 判实际受影响
+    "CVE-2026-81008": {
+        "label": "X2 KEV+厂商affected但装机已修复（版本事实优先，不因KEV虚高）",
+        "impact": {"not_affected", "insufficient_evidence"},   # confirmed_affected 即失败
+        "directions": {"maintain", "downgrade_minor", "downgrade_major"},  # 不得升级
+        "actions": {"monitor", "defer", "collect_more_evidence"},
+        "needs_human": None,
+    },
     # X3：证据全部过期但采集器在线——不得判 verified，不得据此立即修复
     "CVE-2026-81007": {
         "label": "X3 仅过期运行时证据+直接命中（freshness 语义）",
@@ -59,7 +72,7 @@ UNIFIED_TRUTH = {
         "needs_human": True,   # stale 门禁/冲突 → 必须人工
     },
 }
-CASE_ORDER_X = ["CVE-2026-81006", "CVE-2026-81007"]
+CASE_ORDER_X = ["CVE-2026-81006", "CVE-2026-81008", "CVE-2026-81007"]
 
 
 def extend_fixture_for_x_cases(db) -> None:
@@ -115,6 +128,54 @@ def extend_fixture_for_x_cases(db) -> None:
     db.add(models.ThreatIntelSource(cve_id="CVE-2026-81007:jammy", is_kev=False,
                                     epss_score=0.4, epss_percentile=0.8,
                                     exploit_status="none"))
+    db.flush()
+
+    # X2：KEV 标记 + 厂商 canonical 状态 affected（权威、压制上游），
+    # 但装机版本已高于厂商修复版本——漏洞分析师必须依据版本事实给出
+    # fixed/not_affected，不得因 KEV 虚高（架构 §9 X2 定义）。
+    edge06 = models.LinuxAsset(
+        hostname="edge-06", ip_address="192.0.2.16", distribution="ubuntu",
+        os_version="22.04", os_name="Ubuntu", exposure_level="internal",
+        business_level="normal", device_type="server", inventory_complete=True,
+    )
+    db.add(edge06)
+    db.flush()
+    db.add(models.AssetPackage(asset_id=edge06.id, package_name="libxml2",
+                               package_version="2.9.13-2ubuntu0.4", package_manager="apt"))
+    db.add(models.AssetService(asset_id=edge06.id, service_name="ssh", port=22, protocol="tcp",
+                               listen_address="192.0.2.16", is_public_exposed=False,
+                               process_name="sshd"))
+    db.add(models.VulnerabilityInfo(
+        cve_id="CVE-2026-81008:jammy", title="libxml2 xpath use-after-free (fixture)",
+        description="Fixture synthetic advisory: use-after-free in xpath processing.",
+        cvss_score=7.5, cvss_severity="High", affected_package="libxml2",
+        fixed_version="2.9.13-2ubuntu0.3", source="fixture",
+        published_date="2026-09-25", last_modified_date="2026-10-01"))
+    db.flush()
+    db.add(models.ThreatIntelSource(cve_id="CVE-2026-81008:jammy", is_kev=True,
+                                    epss_score=0.6, epss_percentile=0.9,
+                                    exploit_status="known-exploited"))
+    db.flush()
+    from app.services.vulnerability_intelligence.service import upsert_source_record
+    upsert_source_record(db, "CVE-2026-81008", "canonical",
+                         {"records": [{"release": "jammy", "package": "libxml2",
+                                       "status": "affected",
+                                       "fixed_version": "2.9.13-2ubuntu0.3",
+                                       "priority": "medium"}]},
+                         source_updated_at="2026-10-01T00:00:00Z")
+    upsert_source_record(db, "CVE-2026-81008", "nvd",
+                         {"cvss": {"score": 7.5, "severity": "High",
+                                   "vector": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:N/A:N"},
+                          "description": "Use-after-free in xpath processing (fixture).",
+                          "cwe": ["CWE-416"], "cpe_status": "affected"},
+                         source_updated_at="2026-10-01T00:00:00Z")
+    upsert_source_record(db, "CVE-2026-81008", "cisa_kev",
+                         {"is_kev": True, "date_added": "2026-10-03",
+                          "due_date": "2026-10-24"},
+                         source_updated_at="2026-10-03T00:00:00Z")
+    upsert_source_record(db, "CVE-2026-81008", "epss",
+                         {"score": 0.6, "percentile": 0.9},
+                         source_updated_at="2026-10-02T00:00:00Z")
     db.flush()
 
     # X3：直接命中 sudo 的运行时证据——但全部是 72 小时前的旧事件；采集器心跳在线
@@ -199,12 +260,38 @@ def _make_unified_client_factory(counter: UsageCounter, mask_agent: str = ""):
     return factory
 
 
+def _refresh_fresh_sensor_heartbeats(db) -> None:
+    """消除脚手架时序竞态：覆盖阈值 120s（runtime_telemetry.coverage）。
+
+    Fixture 只在构建时写一次心跳，而 19 连跑中绝大多数运行距构建远超 120s，
+    "设计为在线"的传感器会被如实判为 stale 覆盖 → freshness mixed → 偏离案例
+    设计前提。仅刷新设计语义为「在线」的传感器；wrt-node（-72h，E5）与
+    X3 的事件时间戳保持不变。
+    """
+    import app.services.unified.runner as runner_mod
+    from app import models
+
+    fresh_sensor_ids = ["sensor-edge-01", "sensor-edge-05"]
+    (db.query(models.RuntimeSensor)
+       .filter(models.RuntimeSensor.sensor_id.in_(fresh_sensor_ids))
+       .update({models.RuntimeSensor.last_heartbeat_at: datetime.now(timezone.utc)},
+               synchronize_session=False))
+    db.commit()
+
+
 def run_unified_case(db, risk, factory, run_id: str) -> dict:
     """对单个风险事件执行统一编排（影子模式：sink=None，不触碰正式字段）。"""
     import app.services.unified.runner as runner_mod
     from app import models
     from sqlalchemy.orm import sessionmaker
 
+    # 与生产 adapter 同语义：target_ref=资产 hostname（第一轮实测教训——
+    # 用占位符 "fixture" 会被决策规划师如实判为「资产身份未核实」而保守降级，
+    # 那是脚手架保真度缺陷，不是管线缺陷）
+    asset = db.get(models.LinuxAsset, risk.asset_id) if risk.asset_id else None
+    target_ref = asset.hostname if asset else ""
+    # 每次运行前刷新在线传感器心跳（消除 120s 覆盖阈值的脚手架时序竞态）
+    _refresh_fresh_sensor_heartbeats(db)
     # runner 的节点会话必须来自同一实验库（与单测同模式：临时覆盖，用后恢复）
     fixture_factory = sessionmaker(bind=db.get_bind(), autoflush=False, autocommit=False)
     original = runner_mod.SessionLocal
@@ -212,7 +299,7 @@ def run_unified_case(db, risk, factory, run_id: str) -> dict:
     try:
         row = models.UnifiedAnalysisRun(
             run_id=run_id, task_type="risk_review", target_type="linux_host",
-            target_ref="fixture", mode="shadow", status="running", risk_id=risk.id)
+            target_ref=target_ref, mode="shadow", status="running", risk_id=risk.id)
         db.add(row)
         db.commit()
         started = time.monotonic()
@@ -224,7 +311,17 @@ def run_unified_case(db, risk, factory, run_id: str) -> dict:
     final = state.get("final") or {}
     decision = json.loads(row.decision_json or "{}") or state.get("decision") or {}
     verdicts = decision.get("verdicts") or []
-    usage = json.loads(row.usage_json or "{}")
+    # 逐运行真实 usage：runner 级 UsageMeter 落库形态为
+    # {"llm_calls": N, "usage": {"prompt_tokens": …, …}, "budget_exceeded": bool}
+    meter_usage = json.loads(row.usage_json or "{}") or {}
+    nested = meter_usage.get("usage") or {}
+    agents_log = json.loads(row.agents_json or "{}") or {}
+    verdict = verdicts[0] if verdicts else None
+    follow_requests = (decision.get("follow_up_requests") or [])
+    follow_results = state.get("follow_up_results", [])
+    # 补查回灌审计：execute_follow_ups 之后 decide 是否再次执行且产出结论
+    stage_status = state.get("stage_status", {})
+    follow_reentered = bool(follow_results) and stage_status.get("decide") == "succeeded" and bool(verdict)
     return {
         "case": risk.cve_id.split(":")[0],
         "risk_id": risk.id,
@@ -233,19 +330,32 @@ def run_unified_case(db, risk, factory, run_id: str) -> dict:
         "error": row.error[:400],
         "wall_seconds": wall_s,
         "routing": json.loads(row.routing_json or "{}"),
-        "stage_status": state.get("stage_status", {}),
+        "stage_status": stage_status,
         "degraded_roles": state.get("degraded_roles", []),
         "tier": (json.loads(row.routing_json or "{}") or {}).get("tier"),
         "policy": final.get("policy"),
         "aggregate": final.get("aggregate"),
-        "verdict": verdicts[0] if verdicts else None,
+        "verdict": verdict,
         "decision_full": decision,
         "conflict": (state.get("conflict_result") or {}),
         "vulnerability": state.get("vulnerability"),
         "runtime": state.get("runtime") or state.get("runtime_program_fallback"),
         "investigation": state.get("investigation"),
-        "follow_ups": state.get("follow_up_results", []),
-        "usage": usage,
+        "agents_log": agents_log,
+        "follow_up_audit": {
+            "requested": len(follow_requests),
+            "requests": follow_requests,
+            "executed_results": len(follow_results),
+            "results": follow_results,
+            "reentered_decision": follow_reentered,
+        },
+        "usage": {
+            "llm_calls": meter_usage.get("llm_calls"),
+            "prompt_tokens": nested.get("prompt_tokens"),
+            "completion_tokens": nested.get("completion_tokens"),
+            "total_tokens": nested.get("total_tokens"),
+            "budget_exceeded": meter_usage.get("budget_exceeded"),
+        },
     }
 
 
@@ -255,7 +365,10 @@ def grade_unified(event: dict, truth: dict) -> dict:
     policy = event.get("policy") or {}
     runtime = event.get("runtime") or {}
     problems: list[str] = []
-    is_simple = event.get("tier") == "simple"
+    # 分层判定双通道：routing_json 的 tier + final 留痕的 rule_tier_simple
+    # （simple 直通路径此前不落 routing_json，历史运行仅能从 policy 原因识别）
+    is_simple = (event.get("tier") == "simple"
+                 or "rule_tier_simple" in (policy.get("reasons") or []))
 
     impact_ok = None
     if not is_simple and truth.get("impact"):
@@ -282,10 +395,28 @@ def grade_unified(event: dict, truth: dict) -> dict:
         problems.append("真值要求人工复核但未转人工")
     human_ok = None if not truth.get("needs_human") else human
 
-    # 引用完整性：裁定引用的证据必须真实存在于统一链已知证据集合
-    runtime_ids = set(runtime.get("evidence_ids") or [])
+    # 引用完整性：裁定引用的证据必须真实存在于统一链已知证据集合。
+    # 全集与 runner 的 known_evidence_ids 对齐：事件证据包（EV-{risk_id}-*，
+    # 由证据包构建器按 risk 确定性生成）+ 运行时证据 + 资产盘点源 + 漏洞
+    # 分析师 finding 引用（含情报源名）。此前仅对照 runtime 集合产生假阳性。
+    known = set(runtime.get("evidence_ids") or [])
+    investigation = event.get("investigation") or {}
+    inventory = investigation.get("evidence_inventory") or {}
+    for source in inventory.get("sources") or []:
+        if isinstance(source, str):
+            known.add(source)
+    vulnerability = event.get("vulnerability") or {}
+    for finding in vulnerability.get("findings") or []:
+        if isinstance(finding, dict):
+            known.update(finding.get("supporting_evidence_ids") or [])
+            if finding.get("evidence_id"):
+                known.add(str(finding["evidence_id"]))
     cited = set(verdict.get("supporting_evidence_ids") or [])
-    unknown = sorted(cited - runtime_ids - {f"EV-*"})   # packet ids 事件级各异，此处以运行时为准
+    packet_pattern = re.compile(rf"^EV-{event.get('risk_id')}-[A-Za-z0-9._\-]+$")
+    for item in cited:
+        if isinstance(item, str) and packet_pattern.match(item):
+            known.add(item)
+    unknown = sorted(str(item) for item in cited if item not in known)
     citation_ok = not unknown
 
     # F6 语义：过期证据不得被判 verified
@@ -353,6 +484,60 @@ def grade_old(event: dict, truth: dict) -> dict:
             "problems": problems}
 
 
+def _counter_snapshot(counter: UsageCounter) -> dict:
+    data = counter.as_dict()
+    return {key: value for key, value in data.items()
+            if isinstance(value, (int, float))}
+
+
+def _counter_diff(before: dict, after: dict) -> dict:
+    return {key: after.get(key, 0) - before.get(key, 0) for key in sorted(after)}
+
+
+def _runs_dir(out_dir: Path) -> Path:
+    runs_dir = out_dir / "runs"
+    runs_dir.mkdir(parents=True, exist_ok=True)
+    return runs_dir
+
+
+def _run_file(runs_dir: Path, run_id: str) -> Path:
+    return runs_dir / f"run-{run_id}.json"
+
+
+def _save_run(runs_dir: Path, event: dict) -> None:
+    """逐案例落盘：每个 run 一个 JSON 文件，崩溃/中断后可续跑去重。"""
+    path = _run_file(runs_dir, event["run_id"])
+    path.write_text(json.dumps(event, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8")
+
+
+def _load_completed_runs(runs_dir: Path) -> dict[str, dict]:
+    """加载历史已完成运行（断点续跑；失败运行不加载、将被重跑）。"""
+    done: dict[str, dict] = {}
+    if not runs_dir.exists():
+        return done
+    for path in sorted(runs_dir.glob("run-*.json")):
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+        if data.get("status") == "completed" and data.get("run_id"):
+            done[data["run_id"]] = data
+    return done
+
+
+def _sum_run_usage(runs: list[dict]) -> dict:
+    """跨调用聚合逐运行真实 usage（断点续跑时汇总不丢历史）。"""
+    totals = {"llm_calls": 0, "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    for run in runs:
+        usage = run.get("usage") or {}
+        for key in totals:
+            value = usage.get(key)
+            if isinstance(value, (int, float)):
+                totals[key] += int(value)
+    return totals
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--out", default="reports/stage9b-unified")
@@ -362,14 +547,21 @@ def main():
     parser.add_argument("--skip-old", action="store_true", help="跳过 System B 对照运行")
     parser.add_argument("--unified-only", action="store_true",
                         help="续跑模式：只运行统一链（历史 System B 结果已在上一轮 JSON 中）")
+    parser.add_argument("--old-cases", default="",
+                        help="补充运行 System B 的案例过滤（如 CVE-2026-81008）；空=不补充")
     parser.add_argument("--cases", default="",
                         help="逗号分隔的案例过滤（如 CVE-2026-81004,CVE-2026-81005）；空=全部")
+    parser.add_argument("--fresh", action="store_true",
+                        help="忽略历史逐运行文件，全部重跑（默认对已完成运行去重跳过）")
+    parser.add_argument("--max-total-tokens", type=int, default=1_500_000,
+                        help="本轮统一链 LLM Token 硬上限；超出后剩余运行标记 skipped 并可续跑")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
     work_root = out_dir / "work"
     work_root.mkdir(parents=True, exist_ok=True)
+    runs_dir = _runs_dir(out_dir)
     os.environ.setdefault("LINUXGUARD_DATA_DIR", str(work_root / "data"))
     os.environ["LINUXGUARD_ARCHIVE_ON_STARTUP"] = "0"
     os.environ["PYTHON_DOTENV_DISABLED"] = "0"   # 允许读取本地 .env 的 DEEPSEEK 配置
@@ -391,7 +583,7 @@ def main():
     for case in CASE_ORDER + CASE_ORDER_X:
         for risk in risks_by_case.get(case, []):
             key = risk.cve_id.split(":")[0]
-            info = baseline.get(risk.cve_id) or baseline.get(key, {})
+            info = baseline.get(key, {})
             print(f"  {key} risk#{risk.id}: score={info.get('preliminary_score')} "
                   f"level={info.get('preliminary_level')} decision={info.get('preliminary_decision')}")
     if args.dry:
@@ -402,13 +594,13 @@ def main():
         "meta": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
             "repeats": args.repeats,
-            "fixture": "stage9 E1-E5 + X1/X3（合成 CVE / TEST-NET）",
+            "fixture": "stage9 E1-E5 + X1/X2/X3（合成 CVE / TEST-NET）",
         },
-        "baseline": {case: [baseline.get(r.cve_id) for r in rows]
+        "baseline": {case: [baseline.get(r.cve_id.split(":")[0]) for r in rows]
                      for case, rows in risks_by_case.items()},
     }
 
-    # ── 对照组 1：System B 原链路（全量 5+2 案例 1 次） ──
+    # ── 对照组 1：System B 原链路（全量；最终验收沿用上一轮全量结果时用 --unified-only） ──
     if not args.skip_old and not args.unified_only:
         import app.services.event_review_pipeline as erp
         counter_old = UsageCounter()
@@ -457,10 +649,67 @@ def main():
         db.commit()
         print(f"== System B 完成：{wall_old}s, {counter_old.as_dict()} ==")
 
-    # ── 对照组 2：统一四智能体（逐案例影子运行） ──
+    # ── 对照组 1a：System B 补充运行（如新案例 X2；历史全量结果沿用上一轮 JSON） ──
+    old_case_filter = {item.strip() for item in args.old_cases.split(",") if item.strip()}
+    if old_case_filter:
+        import app.services.event_review_pipeline as erp
+        counter_old = UsageCounter()
+
+        def counted_old_factory():
+            from autogen_ext.models.openai import OpenAIChatCompletionClient
+            from autogen_core.models import ModelInfo
+            inner = OpenAIChatCompletionClient(
+                model=erp.DEEPSEEK_MODEL, api_key=erp.DEEPSEEK_API_KEY,
+                base_url=erp.DEEPSEEK_BASE_URL.rstrip("/"), temperature=0.1,
+                model_info=ModelInfo(vision=False, function_calling=True, json_output=True,
+                                     structured_output=True, family="deepseek"))
+            return CountedReviewClientShim(inner, counter_old)
+
+        real_factory = erp._create_model_client
+        erp._create_model_client = counted_old_factory
+        selected = [r for r in db.query(models.RiskAssessment).filter_by(active=True).all()
+                    if r.review_status in erp.REVIEWABLE_STATUSES
+                    and r.cve_id.split(":")[0] in old_case_filter]
+        started = time.monotonic()
+        try:
+            old_result = erp.run_review_analysis(db, run_id="old-supplement",
+                                                 selected_risks=selected)
+        finally:
+            erp._create_model_client = real_factory
+        wall_old = round(time.monotonic() - started, 1)
+        old_events = [e for e in old_system_event_rows(db)
+                      if e["case"] in old_case_filter]
+        old_graded = []
+        for event in old_events:
+            truth = TRUTH.get(event["case"]) or UNIFIED_TRUTH.get(event["case"])
+            if truth:
+                old_graded.append(grade_old(event, truth))
+        results["old_system_b_supplement"] = {
+            "cases": sorted(old_case_filter),
+            "status": old_result.get("status"),
+            "wall_seconds": wall_old,
+            "usage": counter_old.as_dict(),
+            "events": old_events,
+            "graded": old_graded,
+        }
+        db.rollback()   # 旧系统已写正式字段；统一链需要 candidate 状态重新可选
+        for risk in db.query(models.RiskAssessment).filter_by(active=True).all():
+            risk.review_status = "candidate"
+            risk.human_review_required = False
+            risk.final_score = None
+            risk.risk_level = None
+            risk.decision = None
+        db.commit()
+        print(f"== System B 补充运行完成：{wall_old}s, {counter_old.as_dict()} ==")
+
+    # ── 对照组 2：统一四智能体（逐案例影子运行；断点续跑 + 已完成去重 + Token 预算） ──
     unified_counter = UsageCounter()
     unified_factory = _make_unified_client_factory(unified_counter)
     unified_runs: list[dict] = []
+    skipped_runs: list[dict] = []
+    completed_before = {} if args.fresh else _load_completed_runs(runs_dir)
+    if completed_before:
+        print(f"== 断点续跑：发现 {len(completed_before)} 个已完成运行，将去重跳过 ==")
     repeat_cases = ["CVE-2026-81001", "CVE-2026-81003", "CVE-2026-81005"]
     case_filter = {item.strip() for item in args.cases.split(",") if item.strip()}
     plan: list[tuple[str, any, int]] = []
@@ -471,24 +720,49 @@ def main():
             repeats = args.repeats if case in repeat_cases else 1
             for index in range(repeats):
                 plan.append((case, risk, index))
+    budget_exhausted = False
     for index, (case, risk, repeat) in enumerate(plan):
         run_id = f"uni-{case}-{repeat}-{risk.id}"
+        if run_id in completed_before:
+            print(f"== 去重跳过 [{index + 1}/{len(plan)}] {run_id}（已完成） ==")
+            unified_runs.append(completed_before[run_id])
+            continue
+        spent_so_far = _sum_run_usage(unified_runs)["total_tokens"]
+        if spent_so_far >= args.max_total_tokens:
+            print(f"== 预算触界 [{index + 1}/{len(plan)}] {run_id} 标记 skipped（可续跑） ==")
+            budget_exhausted = True
+            skipped_runs.append({"run_id": run_id, "case": case, "repeat": repeat,
+                                 "status": "skipped_budget_exhausted"})
+            continue
         print(f"== 统一链 [{index + 1}/{len(plan)}] {case} #{repeat} ==")
+        snapshot_before = _counter_snapshot(unified_counter)
         event = run_unified_case(db, risk, unified_factory, run_id)
+        event["usage_delta_vs_counter"] = _counter_diff(
+            snapshot_before, _counter_snapshot(unified_counter))
         truth = TRUTH.get(case) or UNIFIED_TRUTH.get(case)
         event["graded"] = grade_unified(event, truth) if truth else None
+        _save_run(runs_dir, event)
         unified_runs.append(event)
-    results["unified"] = {"usage": unified_counter.as_dict(), "runs": unified_runs}
+    results["unified"] = {
+        "usage": _sum_run_usage(unified_runs) or unified_counter.as_dict(),
+        "usage_this_invocation": unified_counter.as_dict(),
+        "runs": unified_runs,
+        "skipped_budget": skipped_runs,
+        "budget_exhausted": budget_exhausted,
+        "max_total_tokens": args.max_total_tokens,
+        "dedup_loaded": len(completed_before),
+    }
 
-    # ── 对照组 3：失败恢复（屏蔽 runtime_analyst，E1） ──
+    # ── 对照组 3：失败恢复（屏蔽 runtime_analyst，E1；同样参与断点续跑去重） ──
     results.setdefault("unified_mask_runtime", {"event": None, "expectation": {}})
-    if not case_filter or "CVE-2026-81001" in case_filter:
-        mask_counter = UsageCounter()
+    mask_counter = UsageCounter()
+    if (not case_filter or "CVE-2026-81001" in case_filter) and not budget_exhausted:
         mask_factory = _make_unified_client_factory(mask_counter, mask_agent="runtime")
         risk_e1 = risks_by_case["CVE-2026-81001"][0]
         print("== 统一链·失败恢复（屏蔽 runtime_analyst，E1） ==")
         masked = run_unified_case(db, risk_e1, mask_factory, "uni-mask-runtime-e1")
         masked["graded"] = grade_unified(masked, TRUTH["CVE-2026-81001"])
+        _save_run(runs_dir, masked)
         results["unified_mask_runtime"] = {
             "usage": mask_counter.as_dict(),
             "event": masked,
@@ -497,6 +771,11 @@ def main():
                 "human_review": (masked.get("policy") or {}).get("status") == "pending_human_review",
                 "verdict_still_produced": bool(masked.get("verdict")),
             },
+        }
+    elif "uni-mask-runtime-e1" in completed_before:
+        results["unified_mask_runtime"] = {
+            "event": completed_before["uni-mask-runtime-e1"],
+            "expectation": {},   # 断点续跑：期望断言以历史留档为准
         }
 
     # ── 汇总 ──
@@ -507,6 +786,9 @@ def main():
                       encoding="utf-8")
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     print(f"\n完整结果已写入 {output}")
+    if budget_exhausted:
+        print("!! Token 预算触界：本轮有运行被标记 skipped_budget_exhausted；"
+              "充值/额度恢复后以相同命令续跑（已完成运行自动去重）。")
 
 
 def summarize(results: dict) -> dict:

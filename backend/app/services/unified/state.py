@@ -108,11 +108,12 @@ class UnifiedAnalysisState(BaseModel):
     follow_ups_used: int = 0
     rereview_used: int = 0
     # 以下三键会被并行分支（Agent 2 ∥ Agent 3）并发写入，必须用 reducer 合并
+    # （注意：error 只能定义一次；重复定义会让普通注解覆盖 Annotated reducer，
+    #  并行写错误时触发 LangGraph InvalidUpdateError——最终验收实验实测）
     degraded_roles: Annotated[list[str], merge_unique] = Field(default_factory=list)
     stage_status: Annotated[dict[str, str], merge_dict] = Field(default_factory=dict)
     error: Annotated[str, lambda left, right: "; ".join(x for x in (left, right) if x)] = ""
     final: dict[str, Any] = Field(default_factory=dict)           # finalize 产物（policy/aggregate/plan）
-    error: str = ""
     budgets: BudgetState = Field(default_factory=BudgetState)
 
     def record_stage(self, stage: str, status: str) -> dict[str, str]:

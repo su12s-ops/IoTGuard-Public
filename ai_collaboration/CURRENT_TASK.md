@@ -4,6 +4,19 @@
 
 ## 最近完成
 
+**Stage 9B M4：统一四智能体最终验收实验（全部 10 事件真实 LLM 完成；未达切换门槛，维持 flag=off）**（2026-10-15，报告 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）
+- [x] 充值验证：最小真实调用通过（deepseek-v4-flash / temperature 0.1 与上轮一致 / 真实 usage 67 tokens / 无 402）；System B 上一轮全量对照经代码版本核查保留（event_review_pipeline 自 d14f354 未改），X2 由本轮同配置补充
+- [x] 补齐 X2 案例（架构 §9 定义，此前未落地）：KEV + 厂商 affected 但装机已高于修复版本（CVE-2026-81008 / libxml2 / edge-06）进 Fixture 与真值表；10 事件 = E1×1 + E2×1 + E3×2 + E4×2 + E5×1 + X1×2 + X2×1 + X3×1
+- [x] 全部 20 次运行 completed：14 全链四智能体 + 3 次 API 连接错误程序兜底（判定全部落真值）+ 1 屏蔽消融（F7 通过）+ 2 simple 直通；1,357,234 tokens / 258 调用 / 58min；E1×3 / E3×6（每实例独立重复 3 次）/ E5×3
+- [x] 安全面全达标：人工路由 6/6、引用幻觉 0/20、无依据升级 0、E1 重复完全一致、X2 未因 KEV 虚判（核心验收）、X3 stale_verified 语义与门禁正确
+- [x] 未达切换门槛（如实）：影响判定 88% vs 旧 100%、处置适当 65% vs 91%、成本 ≈3.2×/事件、墙钟 ≈27×、E3/E5 重复方差；退化逐案例根因 + 整改清单（验收报告 §9）；**不切换生产入口，等待用户确认**
+- [x] 实验暴露并修复 5 项真实缺陷（全部回归锁定）：脚手架 target_ref 保真度 / 脚手架传感器心跳 120s 竞态 / 生产·决策空 verdicts 伪成功（完备性反馈重试）/ 生产·simple 路径 routing_json 缺失 / 生产·state.error 重复定义致并行 reducer 丢失（InvalidUpdateError 崩溃）
+- [x] 实验基建：逐案例保存/断点续跑/已完成去重/Token 硬预算 2.5M；3 个归档目录留存缺陷期运行不混入验收
+- [x] 回归与安全：全量 **554 passed / 0 failed**（551+3）；Mimosa 深度扫描 0 findings；敏感信息干净；shadow 零副作用
+- [ ] 待办：整改复测（验收报告 §9 五项）→ 达标后经用户确认 flag=on → M5 退役清单
+
+## 最近完成
+
 **Stage 9B：统一四智能体架构重建（唯一编排器落地 + 真实 LLM 对照实验部分完成）**（2026-10-15，设计 IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md、迁移说明 IOT_STAGE9B_MIGRATION_NOTES.md、实验报告 IOT_STAGE9B_EXPERIMENT_REPORT.md）
 - [x] 技术选型（实测论证）：**LangGraph 1.2.15**（Python 3.14 实装冒烟通过）为唯一编排器底座——有状态图/条件路由/并行/任务恢复语义与本项目"程序门禁+LLM 分析"形态直译；不选 OpenAI Agents SDK（自由 handoff 与固定管线+程序门禁形态相反）；不选 MS Agent Framework（与 LangGraph 重叠且本仓对 AutoGen 仅有单次 JSON 调用面，无可继承资产）
 - [x] 唯一四智能体落地（`backend/app/services/unified/`，11 模块）：asset_investigator（资产与证据调查）/ vulnerability_analyst（漏洞分析，新增只读多源情报包工具含 OpenWrt 公告）/ runtime_analyst（运行时，F6 新鲜度语义）/ decision_planner（研判与处置规划，F4 全上下文+有界补查+白名单待审批计划）；A2∥A3 并行、冲突定向复议≤1、补查≤1、run 级 40 次调用预算、真实 usage 计量、统一 Trace
@@ -12,7 +25,7 @@
 - [x] 测试：新增 52 项专项（schema 语义/重试反馈/预算/路由分层/冲突 7 规则/门禁/图拓扑/降级/影子隔离/适配层）；全量回归 **549 passed / 0 failed**（499 基线，零回归）
 - [x] 真实 LLM 对照实验（deepseek-v4-flash）：System B 全量 10 事件 44 调用 242,108 tokens 76.0s 完成；统一链 7 次运行（E1×3/E2/E3#0/X1×2）后**账户余额耗尽（402）**，其余运行待充值续跑（脚本已支持 --unified-only/--cases 断点续跑）；人工路由 6/6、引用幻觉 0、E1#1 全链成功且与真值一致
 - [x] 实验暴露并修复 5 个统一链真实缺陷（执行基座异常保护回归/解析器 Extra data 容错/决策者误用 CVE 作证据 ID（上下文下发合法 ID 清单）/情报冲突规则过敏收紧/API 限流退化 max_retries=1），全部加回归锁定
-- [ ] 待办：充值后续跑完整对照实验（E3 剩余/E4/E5/X3/屏蔽消融）→ 达标后 flag=on 正式切换 → 按退役清单摘除旧编排器
+- [x] 待办（已于同日完成）：充值后续跑完整对照实验 → 最终验收未达切换门槛，flag=off 维持（见顶部最新完成）
 
 ## 最近完成
 
@@ -168,7 +181,7 @@
 
 ## 下一步（等待审阅，不自动开始）
 
-- eBPF 2.0 P2 全部完成（P2-1 性能评测 + P2-2 OpenWrt 降级采集）；第九阶段待用户指令（未开始）
+- **Stage 9B M4 后续（等待用户指令）**：按 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md §9 五项整改 → 以同一 Fixture/真值表/脚本复测 → 达标后经用户确认 flag=on 正式切换 → M5 按退役清单摘除旧编排器；**当前 flag=off，旧链路（System B）仍为正式入口**
 - Private 仓库删除申请：本仓库独立 Clone/构建/运行验证与归档核验已通过，可向用户提交删除申请
 - P2-1 遗留（低优先）：后端摄取上限 ~380 EPS（SQLite 单进程）扩展评估；falco 引擎级 drops/CPU 采样待 sudo 授权窗口；bounded-spool 告警触发路径的真实触界复现（当前由单元测试覆盖）
 - P2-2 遗留（低优先）：logread 拉取式采集无常驻增量（设备只读不留状态，设计边界）；真实设备重启演练未执行（避免干预，语义由专项测试锁定）
