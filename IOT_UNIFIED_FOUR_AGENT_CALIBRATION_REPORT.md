@@ -333,7 +333,7 @@ direction 7/9 vs 6/8；human 4/4 vs 3/3。
 |---|---|
 | 全量回归 | **589 passed / 0 failed**（554 M4 基线 + 35 项校准专项，零回归；缺陷修复后再跑一次确认） |
 | 统一链专项 | test_unified_pipeline(50) + test_unified_adapter + test_json_extraction + test_four_agent_pipeline + **test_evidence_prep(35，新增)** |
-| Mimosa 深度扫描 | **0 findings**（scan-2026-10-15T17-10-38.086Z-25c64eb52112，seal sha256:edb186b2…529f1b，123 依赖包，focus=本轮全部改动文件） |
+| Mimosa 深度扫描 | **0 findings**×2：编码态 scan-2026-10-15T17-10-38.086Z-25c64eb52112（seal sha256:edb186b2…529f1b）+ **提交态 scan-2026-10-15T17-19-32.331Z-f2b90d909a17（seal sha256:e9998410…7496，123 依赖包，focus=本轮全部改动文件，与 d232999 提交内容一致）**。注：git pre-commit 钩子的快速检查因 python_ast 工具不可用未出完整结论（如实留痕），以上两次完整深度扫描为权威记录 |
 | 敏感信息 | 全部改动扫描：无凭据字面量（API Key 仅环境变量引用）；Fixture 全程 TEST-NET/RFC5737；无用户路径 |
 | shadow 隔离 | 实验全程 shadow（sink=None）；正式 RiskAssessment/修复授权/设备状态零变化（专项测试锁定）；`LINUXGUARD_UNIFIED_PIPELINE` 保持默认 off |
 
@@ -374,6 +374,7 @@ direction 7/9 vs 6/8；human 4/4 vs 3/3。
 
 | 交付物 | 位置 |
 |---|---|
+| **本轮代码提交 Hash** | **`d232999`**（基线 `7972af3` = M4 最终验收；d232999 含全部代码/测试/脚本/报告，随后为本补录说明提交） |
 | 统计口径核查与配对统计脚本（离线，零 LLM） | `backend/scripts/stage9b_calibration_stats.py` |
 | 确定性证据预取节点 | `backend/app/services/unified/evidence_prep.py` + `graph.py` 接入 |
 | 决策语义约束与 fail-closed 门禁扩展 | `graph.py`（decide）/`audit_policy.py`/`schemas.py` |
