@@ -30,6 +30,8 @@ Base = declarative_base()
 
 RISK_ASSESSMENT_COLUMN_MIGRATIONS = {
     "match_id": "INTEGER REFERENCES vulnerability_match(id)",
+    # Stage 9B F2/R1：统一编排器设备级结论对账写回（只读附加，不参与既有门禁）
+    "device_context_json": "TEXT DEFAULT '{}'",
     "package_name": "VARCHAR(128) DEFAULT ''",
     "candidate_fingerprint": "VARCHAR(64) DEFAULT ''",
     "active": "BOOLEAN DEFAULT 1",

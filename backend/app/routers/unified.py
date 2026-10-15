@@ -1,0 +1,169 @@
+"""统一四智能体 API：规格、发起运行、状态与影子对照查询。
+
+- `POST /api/unified/analyze`：按 LINUXGUARD_UNIFIED_PIPELINE 开关运行；
+  off → 503；shadow → 影子运行（不触碰正式字段）；on → 正式入口（M4 起）。
+- 影子结果只写 unified_analysis_run 表（mode=shadow），供对照与实验。
+"""
+from __future__ import annotations
+
+import json
+
+from fastapi import APIRouter, Depends, HTTPException
+from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy.orm import Session
+
+from app import config, models
+from app.database import get_db
+from app.services.unified import runner
+from app.services.unified.agents_def import specs_summary
+from app.services.unified.graph import PIPELINE_VERSION, STAGE_TOPOLOGY
+from app.services.unified.schemas import ALL_AGENT_IDS
+from app.services.unified.state import TASK_TYPES
+
+router = APIRouter(prefix="/unified", tags=["Unified four-agent orchestration"])
+
+
+class UnifiedAnalyzeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_id: str = Field(default="", max_length=128)
+    hostname: str = Field(default="", max_length=128)
+    risk_id: int = Field(default=0, ge=0)
+    task_type: str = Field(default="risk_review")
+
+    def resolved(self) -> tuple[str, str]:
+        if self.device_id:
+            return self.device_id, "device"
+        if self.hostname:
+            return self.hostname, "linux_host"
+        raise ValueError("必须提供 device_id 或 hostname 之一")
+
+
+@router.get("/specs")
+def unified_specs():
+    """唯一四智能体的职责/工具/输出模型与图拓扑（可核验）。"""
+    return {
+        "pipeline_version": PIPELINE_VERSION,
+        "mode": config.UNIFIED_PIPELINE_MODE,
+        "agents": specs_summary(),
+        "topology": STAGE_TOPOLOGY,
+        "task_types": list(TASK_TYPES),
+        "note": "唯一正式编排器；System A/B 仅作能力来源与历史兼容。",
+    }
+
+
+@router.post("/analyze", status_code=202)
+def analyze(payload: UnifiedAnalyzeInput, db: Session = Depends(get_db)):
+    if config.UNIFIED_PIPELINE_MODE == "off":
+        raise HTTPException(503, "统一编排器未启用（LINUXGUARD_UNIFIED_PIPELINE=off）")
+    try:
+        target_ref, target_type = payload.resolved()
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    task_type = payload.task_type
+    if task_type not in TASK_TYPES:
+        raise HTTPException(422, f"task_type 必须是 {sorted(TASK_TYPES)} 之一")
+    risk_id = None
+    if task_type == "risk_review":
+        if not payload.risk_id:
+            raise HTTPException(422, "risk_review 必须提供 risk_id")
+        risk = db.get(models.RiskAssessment, payload.risk_id)
+        if risk is None:
+            raise HTTPException(404, "风险事件不存在")
+        risk_id = risk.id
+    elif payload.risk_id:
+        raise HTTPException(422, "只有 risk_review 任务可以指定 risk_id")
+    if target_type == "device":
+        if not db.query(models.IotDevice).filter_by(device_id=target_ref).first():
+            raise HTTPException(404, "设备不存在，请先在设备中心完成发现")
+    elif not db.query(models.LinuxAsset).filter_by(hostname=target_ref).first():
+        raise HTTPException(404, "主机资产不存在")
+    try:
+        run = runner.start_unified_run(
+            task_type=task_type, target_ref=target_ref, target_type=target_type,
+            risk_id=risk_id, mode=config.UNIFIED_PIPELINE_MODE)
+    except RuntimeError as exc:
+        raise HTTPException(503, str(exc)) from exc
+    return {"run_id": run.run_id, "trace_id": run.trace_id, "status": run.status,
+            "mode": run.mode, "task_type": run.task_type, "target": target_ref}
+
+
+def _serialize_run(row: models.UnifiedAnalysisRun, include_state: bool = True) -> dict:
+    state = json.loads(row.state_json or "{}")
+    payload = {
+        "run_id": row.run_id, "task_type": row.task_type,
+        "target_type": row.target_type, "target_ref": row.target_ref,
+        "mode": row.mode, "status": row.status,
+        "pipeline_version": row.pipeline_version,
+        "risk_id": row.risk_id, "error": row.error,
+        "routing": json.loads(row.routing_json or "{}"),
+        "agents": json.loads(row.agents_json or "{}"),
+        "usage": json.loads(row.usage_json or "{}"),
+        "created_at": row.created_at, "completed_at": row.completed_at,
+    }
+    if include_state:
+        payload.update({
+            "stage_status": state.get("stage_status", {}),
+            "degraded_roles": state.get("degraded_roles", []),
+            "final": state.get("final", {}),
+            "decision": json.loads(row.decision_json or "{}"),
+            "plan": json.loads(row.plan_json or "{}"),
+            "conflict_result": state.get("conflict_result", {}),
+            "investigation": state.get("investigation"),
+            "vulnerability": state.get("vulnerability"),
+            "runtime": state.get("runtime"),
+            "runtime_program_fallback": state.get("runtime_program_fallback"),
+            "follow_up_results": state.get("follow_up_results", []),
+        })
+    return payload
+
+
+@router.get("/runs")
+def list_runs(limit: int = 20, mode: str = "", db: Session = Depends(get_db)):
+    query = db.query(models.UnifiedAnalysisRun).order_by(models.UnifiedAnalysisRun.id.desc())
+    if mode in {"shadow", "formal"}:
+        query = query.filter(models.UnifiedAnalysisRun.mode == mode)
+    rows = query.limit(max(1, min(limit, 100))).all()
+    return [{"run_id": row.run_id, "task_type": row.task_type, "target_ref": row.target_ref,
+             "mode": row.mode, "status": row.status, "risk_id": row.risk_id,
+             "created_at": row.created_at, "completed_at": row.completed_at}
+            for row in rows]
+
+
+@router.get("/runs/{run_id}")
+def get_run(run_id: str, db: Session = Depends(get_db)):
+    row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id).one_or_none()
+    if row is None:
+        raise HTTPException(404, "运行不存在")
+    return _serialize_run(row)
+
+
+@router.get("/runs/{run_id}/comparison")
+def compare_run(run_id: str, db: Session = Depends(get_db)):
+    """影子运行与同事件正式链路结论的对照（影子只读，不改正式字段）。"""
+    row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id).one_or_none()
+    if row is None:
+        raise HTTPException(404, "运行不存在")
+    if row.mode != "shadow" or not row.risk_id:
+        return {"run_id": run_id, "comparable": False,
+                "reason": "仅影子模式的 risk_review 运行可对照"}
+    state = json.loads(row.state_json or "{}")
+    formal = db.get(models.RiskAssessment, row.risk_id)
+    unified_policy = (state.get("final") or {}).get("policy") or {}
+    return {
+        "run_id": run_id,
+        "comparable": True,
+        "risk_id": row.risk_id,
+        "unified": {
+            "policy": unified_policy,
+            "decision": json.loads(row.decision_json or "{}"),
+            "degraded_roles": state.get("degraded_roles", []),
+        },
+        "formal_snapshot": {
+            "review_status": formal.review_status if formal else None,
+            "final_score": formal.final_score if formal else None,
+            "risk_level": formal.risk_level if formal else None,
+            "decision": formal.decision if formal else None,
+            "recommended_action": formal.recommended_action if formal else None,
+            "note": "正式字段仅由正式链路写入；影子结果只读对照。",
+        },
+    }

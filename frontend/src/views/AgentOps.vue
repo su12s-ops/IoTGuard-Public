@@ -4,7 +4,7 @@
       <div>
         <span class="eyebrow">AGENT OPERATIONS</span>
         <h1>智能体分析与修复工作流</h1>
-        <p>四智能体按 DEVICE→VULNERABILITY→RUNTIME→RISK→REMEDIATION→VERIFY 编排分析；修复工作流记录真实的 Before / Action / After / Verification。</p>
+        <p>统一四智能体（资产与证据调查 → 漏洞分析 ∥ 运行时分析 → 研判与处置规划）；确定性聚合与审计门禁由程序完成，修复动作须经审批后由 Harness 执行。</p>
       </div>
       <div class="header-actions"><el-button @click="load">刷新</el-button></div>
     </header>

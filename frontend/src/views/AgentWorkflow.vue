@@ -70,8 +70,8 @@ const steps = [
   { key: "evidence", label: "证据准备" }, { key: "analysis", label: "专业分析" }, { key: "conflict", label: "冲突复议" },
   { key: "decision", label: "最终裁决" }, { key: "audit", label: "审计检查" }, { key: "done", label: "完成" }
 ];
-const stageMap = { candidate_preflight: 0, evidence_preparing: 0, agent_reviewing: 1, evidence_audit_agent: 1, impact_assessment_agent: 1, exposure_runtime_agent: 1, conflict_review: 2, coordinator_review: 3, decision_coordinator_agent: 3, audit_policy: 4, completed: 5 };
-const roleNames = { evidence_audit_agent: "数据质量分析", impact_assessment_agent: "漏洞影响分析", exposure_runtime_agent: "运行时归因", decision_coordinator_agent: "最终裁决" };
+const stageMap = { candidate_preflight: 0, evidence_preparing: 0, prepare: 0, agent_reviewing: 1, investigate_asset: 1, analyze_vulnerability: 1, analyze_runtime: 1, evidence_audit_agent: 1, impact_assessment_agent: 1, exposure_runtime_agent: 1, conflict_review: 2, directed_rereview: 2, coordinator_review: 3, decide: 3, execute_follow_ups: 3, decision_coordinator_agent: 3, audit_policy: 4, finalize: 4, completed: 5 };
+const roleNames = { evidence_audit_agent: "数据质量分析", impact_assessment_agent: "漏洞影响分析", exposure_runtime_agent: "运行时归因", decision_coordinator_agent: "最终裁决", asset_investigator: "资产与证据调查", vulnerability_analyst: "漏洞适用性分析", runtime_analyst: "运行时行为分析", decision_planner: "综合研判与处置规划" };
 const activeEvent = computed(() => events.value.find((row) => Number(row.risk_id) === Number(activeRiskId.value)) || events.value[0] || null);
 const stageIndex = computed(() => {
   if (running.value) return stageMap[review.value?.current_stage] ?? 0;

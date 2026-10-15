@@ -292,6 +292,8 @@ class RiskAssessment(Base):
     recommended_action = Column(String(64), default="")
     risk_direction = Column(String(32), default="maintain")
     reanalysis_count = Column(Integer, default=0)
+    # Stage 9B F2/R1 对账：统一编排器设备级结论只读附加（不参与既有门禁）
+    device_context_json = Column(Text, default="{}")
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
     created_at = Column(DateTime, default=utcnow)
@@ -732,6 +734,37 @@ class DeviceVulnerabilityMatch(Base):
 
 
 # ── 四智能体编排记录（阶段三：程序负责流程/状态/超时/重试/校验） ───────────────
+
+
+class UnifiedAnalysisRun(Base):
+    """统一四智能体编排（Stage 9B）：唯一正式编排器的运行记录。
+
+    mode=shadow 时本表是影子结果（不影响正式链路）；mode=formal 时经
+    兼容适配层接入正式入口。历史实验数据保留原 pipeline_version 标识。
+    """
+
+    __tablename__ = "unified_analysis_run"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(String(48), unique=True, index=True, nullable=False)
+    task_type = Column(String(32), default="risk_review")     # risk_review / device_surface / focused_review
+    target_type = Column(String(32), default="linux_host")
+    target_ref = Column(String(128), default="", index=True)
+    mode = Column(String(16), default="shadow")               # shadow / formal
+    status = Column(String(32), default="running")            # running/completed/failed
+    pipeline_version = Column(String(48), default="unified-four-agent-v1")
+    routing_json = Column(Text, default="{}")                 # 路由决策（分层/跳过角色/理由）
+    state_json = Column(Text, default="{}")                   # 有状态工作流快照（节点边界）
+    agents_json = Column(Text, default="{}")                  # 每智能体执行摘要（工具/重试/反馈）
+    decision_json = Column(Text, default="{}")                # 决策规划师结构化输出
+    plan_json = Column(Text, default="{}")                    # 候选修复计划（恒 requires_approval）
+    usage_json = Column(Text, default="{}")                   # 真实 LLM 调用/Token 计量
+    risk_id = Column(Integer, index=True, nullable=True)      # risk_review 的事件 ID
+    error = Column(Text, default="")
+    trace_id = Column(String(48), default="", index=True)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+    completed_at = Column(DateTime, nullable=True)
 
 
 class AgentOrchestrationRun(Base):

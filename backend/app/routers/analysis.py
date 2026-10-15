@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app import models, schemas
+from app import config, models, schemas
 from app.database import get_db, recover_stale_running
 from app.services.device_access import require_control
 from app.services.agent_group_chat import (
@@ -18,6 +18,19 @@ from app.services.agent_group_chat import (
     _explain_candidate_selection,
     apply_human_review,
 )
+
+
+def _review_entrypoint(db: Session, run_id: str, background: bool = True) -> dict:
+    """正式研判入口（Stage 9B 切换点）。
+
+    LINUXGUARD_UNIFIED_PIPELINE=on → 统一四智能体编排器（兼容响应契约）；
+    off/shadow → System B 原链路（零行为变化）。
+    """
+    if getattr(config, "UNIFIED_PIPELINE_MODE", "off") == "on":
+        from app.services.unified.adapter import generate_and_save_report_unified
+        return generate_and_save_report_unified(db, run_id=run_id, background=background)
+    return generate_and_save_report(db, run_id=run_id, background=background)
+
 
 router = APIRouter(prefix="/analysis", tags=["Multi-Agent Review"])
 
@@ -154,6 +167,10 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
         )
 
     if selection["selected_object_count"] == 0:
+        active_version = PIPELINE_VERSION
+        if getattr(config, "UNIFIED_PIPELINE_MODE", "off") == "on":
+            from app.services.unified.adapter import UNIFIED_ADAPTER_VERSION
+            active_version = UNIFIED_ADAPTER_VERSION
         return {
             "run_id": "",
             "status": "no_candidates",
@@ -162,7 +179,7 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
             "total_risks_in_db": selection["total_risks_in_db"],
             "skipped_objects": selection["skipped_objects"],
             "selected_object_ids": [],
-            "pipeline_version": PIPELINE_VERSION,
+            "pipeline_version": active_version,
             "model_called": False,
             "message": "当前没有可进入智能研判的候选对象",
             "retry_reset_count": retry_reset_count,
@@ -172,7 +189,7 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
     # 启动后台研判
     import uuid as _uuid
     run_id = _uuid.uuid4().hex[:12]
-    result = generate_and_save_report(db, run_id=run_id, background=True)
+    result = _review_entrypoint(db, run_id, background=True)
 
     return {
         "run_id": result.get("run_id", run_id),
@@ -183,7 +200,8 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
         "total_risks_in_db": result.get("total_risks_in_db", 0),
         "skipped_objects": result.get("skipped_objects", []),
         "selected_object_ids": result.get("selected_object_ids", []),
-        "pipeline_version": PIPELINE_VERSION,
+        # 回显实际执行的管线版本（统一编排器或 System B 原链路）
+        "pipeline_version": result.get("pipeline_version", PIPELINE_VERSION),
         "current_stage": result.get("current_stage", "candidate_preflight"),
         "model_called": True,
         "created_at": result.get("created_at", ""),
@@ -272,11 +290,13 @@ def human_review(risk_id: int, payload: schemas.HumanReviewRequest, db: Session 
 def run_analysis(db: Session = Depends(get_db)):
     """【向后兼容】启动一次四智能体联合研判（同步等待完成）。
 
-    与 POST /runs 调用同一个核心函数 generate_and_save_report。
+    与 POST /runs 调用同一个核心入口（Stage 9B 起经 _review_entrypoint
+    按开关选择统一编排器或 System B 原链路）。
     新代码请使用 POST /runs + GET /runs/{run_id} 任务式接口。
     """
     try:
-        result = generate_and_save_report(db, background=False)
+        import uuid as _uuid
+        result = _review_entrypoint(db, _uuid.uuid4().hex[:12], background=False)
         if result["status"] == "no_candidates":
             return result
         if result["status"] == "running":

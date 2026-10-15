@@ -145,11 +145,34 @@ def markdown_report(db: Session) -> str:
             "impact_assessment_agent": "漏洞影响研判",
             "runtime_attribution_agent": "运行时归因验证",
             "decision_coordinator_agent": "处置决策协调",
+            "evidence_audit_agent": "证据审计",
+            "exposure_runtime_agent": "暴露与运行时",
         }
-        if opinions:
-            for agent_id, content in opinions.items():
-                label = agent_labels.get(agent_id, agent_id)
-                lines.append(f"- **{label}**: {str(content).strip()[:400]}")
+        # v3 管线把逐事件结果列表（list）存入 opinions_json；旧管线为 dict。
+        # F1 修复：两种形态都渲染，list 形态按事件展示协调裁定摘要。
+        if isinstance(opinions, list):
+            if opinions:
+                lines.append(f"- （v3 逐事件结果共 {len(opinions)} 条，摘要如下）")
+                for event in opinions[:10]:
+                    if not isinstance(event, dict):
+                        continue
+                    object_id = event.get("object_id", "?")
+                    coordinator = event.get("coordinator") or {}
+                    policy = event.get("audit_policy") or {}
+                    action = coordinator.get("recommended_action", "") if isinstance(coordinator, dict) else ""
+                    status = policy.get("status", "") if isinstance(policy, dict) else ""
+                    lines.append(
+                        f"- **{object_id}**: 建议={action or '无'}, 审计状态={status or '无'}"
+                        f"{('，置信度=' + str(coordinator.get('confidence'))) if isinstance(coordinator, dict) and coordinator.get('confidence') is not None else ''}")
+            else:
+                lines.append("- （无智能体意见记录）")
+        elif isinstance(opinions, dict):
+            if opinions:
+                for agent_id, content in opinions.items():
+                    label = agent_labels.get(agent_id, agent_id)
+                    lines.append(f"- **{label}**: {str(content).strip()[:400]}")
+            else:
+                lines.append("- （无智能体意见记录）")
         else:
             lines.append("- （无智能体意见记录）")
         lines.extend(

@@ -11,3 +11,4 @@ autogen-ext[openai]>=0.7
 openai>=1.0
 tiktoken>=0.8
 python-dotenv>=1.0
+langgraph>=1.2
