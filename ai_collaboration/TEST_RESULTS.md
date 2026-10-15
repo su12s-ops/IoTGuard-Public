@@ -2,6 +2,22 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
 
+## Stage 9B M4.1 校准轮（2026-10-15；实验证据 backend/reports/stage9b-unified-calibration{,-supplement}/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归 | **589 passed / 0 failed**（7m03s；554 M4 基线 + 35 项新增校准专项 tests/test_evidence_prep.py：分支声明提取/版本分支前缀/冲突判定含 release 作用域单记录回归/预取包构建/节点失败降级/上下文携带/六类决策约束反馈重试/门禁 7 类矛盾理由/program_fallback 标记；缺陷修复后复跑确认，零回归） |
+| 离线口径核查（backend/scripts/stage9b_calibration_stats.py，零 LLM） | M4 全部 20 运行五类分类：全链 14 / 兜底 3（E3a×2+E3b×1，修正原报告"E3a 三次"误记）/ 消融 1 / simple 2；LLM-only vs 混合口径：影响 85.7% vs 88.2%、处置 57.1% vs 64.7%；耗时口径修正（7.6s=76.0s/10 全量口径；104.1s 合并=9.46s/事件）；调用双口径（meter 258=237+21；client 246） |
+| 真实 LLM 复测矩阵（stage9b_unified_compare.py --unified-only，deepseek-v4-flash/0.1，Fixture/真值零改动） | 20 运行全 completed：17 全链 + 2 simple + 1 屏蔽消融；**0 失败 / 0 程序兜底 / 0 预算触界**；1,505,184 tokens（评审）/ 240 调用 / 3,045.7s；evidence_prep 17/17 可用 |
+| E4 缺陷修复补充运行（最终代码） | 2 运行全 completed：potentially_affected+mitigate+人工 ×2 完全一致，5/5 真值全中，144,966 tokens |
+| 统一链 vs System B（严格配对，9 个 LLM 案例；System B 复用 M4 已核查留档，零新增调用） | **影响 9/9 vs 7/7（首次达标）**；处置 8/9（88.9%，差 1 例 E2）vs 8/8；方向 7/9 vs 6/8；人工路由 4/4 vs 3/3；引用幻觉 0（2 例评分器假阳性已对齐，真实幻觉 0/20） |
+| 案例级改善（vs M4 LLM-only） | X2 not_affected+monitor 零超集（上轮 insufficient+scheduled 超集）；X3 potentially+scheduled 全对（上轮双超集）；E5 处置 3/3 零方差（上轮 immediate×2 超集）；E3b 3/3 识破误匹配（上轮同实例 1/2）；E4 5/5（上轮处置超集） |
+| 退化点（如实） | E2 处置 immediate_fix 超集（static_evidence_only 路径，门禁人工截住）；E1 方向 maintain×2、E5 方向 downgrade_minor×3（保守超集）；E3a 残余 1/6 方差 |
+| 逐 Agent 成本（前→后，19 评审运行） | 资产工具 90→76（-15.6%）、漏洞 72→81、运行时 77→93；专家延迟 -17%~-27%、决策 +3.6%；墙钟/评审运行 **-7.8%**；全链口径 token **-4.8%**（93.0k→88.5k）；评审运行口径 +15.6%——**成本"实质改善"未达 ✗** |
+| 稳定性 | E1 impact/action/human ×3 完全一致；E5 处置 ×3 完全一致；E3 5/6；0 兜底（上轮 3 次 API 故障） |
+| Mimosa 深度扫描 | 0 findings（scan-2026-10-15T17-10-38.086Z-25c64eb52112，seal sha256:edb186b2…529f1b，123 依赖包） |
+| 敏感信息/shadow 隔离 | 干净；shadow sink=None 零触碰正式字段；**flag=off 保持** |
+
 ## Stage 9B M4 最终验收实验轮（2026-10-15；实验证据 backend/reports/stage9b-unified-final/ 及归档×3 本地留存）
 
 | 项 | 结果 |

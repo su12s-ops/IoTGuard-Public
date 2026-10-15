@@ -32,6 +32,7 @@ TASK_TYPES = (TASK_RISK_REVIEW, TASK_DEVICE_SURFACE, TASK_FOCUSED_REVIEW)
 
 PIPELINE_STAGE_ORDER = [
     "prepare",
+    "prepare_evidence",
     "investigate_asset",
     "analyze_vulnerability",
     "analyze_runtime",
@@ -96,6 +97,8 @@ class UnifiedAnalysisState(BaseModel):
     baseline: dict[str, Any] = Field(default_factory=dict)       # 规则基线（只读引用）
     object_id: str = ""                                           # risk_review 的事件标识
     candidate_context: list[dict[str, Any]] = Field(default_factory=list)
+    # M4.1：确定性证据预取包（非 Agent 产物；无 LLM；运行内只读复用）
+    evidence_prep: dict[str, Any] | None = None
 
     investigation: dict[str, Any] | None = None                   # Agent 1 输出
     vulnerability: dict[str, Any] | None = None                   # Agent 2 输出

@@ -341,6 +341,21 @@ def run_unified_case(db, risk, factory, run_id: str) -> dict:
         "vulnerability": state.get("vulnerability"),
         "runtime": state.get("runtime") or state.get("runtime_program_fallback"),
         "investigation": state.get("investigation"),
+        "evidence_prep": {
+            "available": bool(state.get("evidence_prep")),
+            "as_of": (state.get("evidence_prep") or {}).get("as_of", ""),
+            "candidates": len(((state.get("evidence_prep") or {}).get("candidates") or [])),
+            "branch_check": (((state.get("evidence_prep") or {}).get("candidates") or [{}])[0]
+                             .get("branch_check") or {}).get("result", ""),
+            "version_compare": (((state.get("evidence_prep") or {}).get("candidates") or [{}])[0]
+                                .get("version_compare") or {}).get("result", ""),
+            "vendor_conflict_unresolved": bool((((state.get("evidence_prep") or {})
+                                                 .get("candidates") or [{}])[0]
+                                                .get("vendor_conflict") or {}).get("unresolved")),
+            # 评分器对齐：决策可引用全集包含预取证据清单（离线 regrade 用）
+            "runtime_evidence_ids": (state.get("evidence_prep") or {}).get(
+                "runtime_facts", {}).get("evidence_ids") or [],
+        },
         "agents_log": agents_log,
         "follow_up_audit": {
             "requested": len(follow_requests),
@@ -357,6 +372,28 @@ def run_unified_case(db, risk, factory, run_id: str) -> dict:
             "budget_exceeded": meter_usage.get("budget_exceeded"),
         },
     }
+
+
+def classify_run(event: dict) -> str:
+    """运行五分类（M4.1 校准：口径不得混合计算 LLM 研判准确率）。
+
+    - mask_ablation：单智能体屏蔽消融（F7 失败恢复验证）；
+    - simple_passthrough：simple 直通（0 次 LLM，成本分层）；
+    - program_fallback：决策降级后的程序兜底（判定非 LLM 产出）；
+    - llm_full_chain：全链四智能体 LLM 评审（准确率统计的唯一口径）。
+    """
+    run_id = str(event.get("run_id") or "")
+    if run_id.startswith("uni-mask-"):
+        return "mask_ablation"
+    if event.get("tier") == "simple" or not (event.get("usage") or {}).get("llm_calls"):
+        return "simple_passthrough"
+    verdict = event.get("verdict") or {}
+    if verdict.get("program_fallback"):
+        return "program_fallback"
+    if "decision_planner" in (event.get("degraded_roles") or []):
+        # 旧运行无显式标记时的兼容推断（新运行以 program_fallback 标记为准）
+        return "program_fallback"
+    return "llm_full_chain"
 
 
 def grade_unified(event: dict, truth: dict) -> dict:
@@ -397,9 +434,12 @@ def grade_unified(event: dict, truth: dict) -> dict:
 
     # 引用完整性：裁定引用的证据必须真实存在于统一链已知证据集合。
     # 全集与 runner 的 known_evidence_ids 对齐：事件证据包（EV-{risk_id}-*，
-    # 由证据包构建器按 risk 确定性生成）+ 运行时证据 + 资产盘点源 + 漏洞
-    # 分析师 finding 引用（含情报源名）。此前仅对照 runtime 集合产生假阳性。
+    # 由证据包构建器按 risk 确定性生成）+ 运行时证据 + 预取证据清单 + 资产
+    # 盘点源 + 漏洞分析师 finding 引用（含情报源名）。此前仅对照 runtime
+    # 集合产生假阳性。
     known = set(runtime.get("evidence_ids") or [])
+    prep = event.get("evidence_prep") or {}
+    known.update(((prep.get("runtime_facts") or {}).get("evidence_ids") or []))
     investigation = event.get("investigation") or {}
     inventory = investigation.get("evidence_inventory") or {}
     for source in inventory.get("sources") or []:
@@ -428,6 +468,8 @@ def grade_unified(event: dict, truth: dict) -> dict:
 
     return {
         "case": event["case"],
+        "run_id": event.get("run_id", ""),
+        "category": classify_run(event),
         "tier": event.get("tier"),
         "impact_ok": impact_ok, "direction_ok": direction_ok, "action_ok": action_ok,
         "human_ok": human_ok, "human": human, "citation_ok": citation_ok,
@@ -798,11 +840,23 @@ def summarize(results: dict) -> dict:
 
     unified_runs = [run for run in results["unified"]["runs"] if run.get("graded")]
     unified_graded = [run["graded"] for run in unified_runs]
+    # M4.1 校准：五类口径分离——LLM 研判准确率只统计 llm_full_chain
+    by_category: dict[str, list[dict]] = {}
+    for run in unified_runs:
+        category = run["graded"].get("category") or classify_run(run)
+        by_category.setdefault(category, []).append(run)
+    llm_graded = [run["graded"] for run in by_category.get("llm_full_chain", [])]
     first_pass: dict[str, dict] = {}
     for run in unified_runs:
         first_pass.setdefault(run["case"], run)
     summary = {
         "unified_repeats": len(unified_runs),
+        "unified_categories": {category: {
+            "runs": len(runs),
+            "cases": sorted({run["case"] for run in runs}),
+        } for category, runs in sorted(by_category.items())},
+        "unified_llm_only_rates": {key: rate(llm_graded, key)
+                                   for key in ("impact_ok", "direction_ok", "action_ok", "human_ok")},
         "unified_first_pass": {
             case: run["graded"] for case, run in sorted(first_pass.items())
         },
@@ -821,6 +875,9 @@ def summarize(results: dict) -> dict:
         "unified_total_tokens": results["unified"]["usage"]["total_tokens"],
         "unified_total_wall_seconds": round(
             sum(run["wall_seconds"] for run in unified_runs), 1),
+        "unified_per_agent_cost": per_agent_cost_rollup(unified_runs),
+        "evidence_prep_runs": sum(
+            1 for run in unified_runs if (run.get("evidence_prep") or {}).get("available")),
         "mask_recovery": results.get("unified_mask_runtime", {}).get("expectation", {}),
     }
     if "old_system_b" in results:
@@ -832,6 +889,40 @@ def summarize(results: dict) -> dict:
         summary["old_system_b_wall_seconds"] = results["old_system_b"]["wall_seconds"]
         summary["old_system_b_llm_calls"] = results["old_system_b"]["usage"]["llm_calls"]
     return summary
+
+
+def per_agent_cost_rollup(runs: list[dict]) -> dict:
+    """逐 Agent 成本汇总（M4.1 校准：修改前后逐 Agent 调用/token/工具数可比）。
+
+    数据来自 agents_log 的逐 Agent 真实计量（llm_calls/llm_usage/latency_ms）。
+    旧运行无 llm_calls 字段时如实记 unavailable。
+    """
+    rollup: dict[str, dict] = {}
+    for run in runs:
+        for name, log in (run.get("agents_log") or {}).items():
+            if not isinstance(log, dict):
+                continue
+            entry = rollup.setdefault(name, {
+                "runs": 0, "llm_calls": 0, "llm_calls_known": True,
+                "prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0,
+                "tool_calls": 0, "tool_calls_ok": 0, "latency_ms": 0,
+            })
+            entry["runs"] += 1
+            calls = log.get("llm_calls")
+            if isinstance(calls, (int, float)):
+                entry["llm_calls"] += int(calls)
+            else:
+                entry["llm_calls_known"] = False
+            usage = log.get("llm_usage") or {}
+            for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                value = usage.get(key)
+                if isinstance(value, (int, float)):
+                    entry[key] += int(value)
+            calls_log = log.get("tool_calls") or []
+            entry["tool_calls"] += len(calls_log)
+            entry["tool_calls_ok"] += sum(1 for c in calls_log if c.get("ok"))
+            entry["latency_ms"] += int(log.get("latency_ms") or 0)
+    return rollup
 
 
 class CountedReviewClientShim:

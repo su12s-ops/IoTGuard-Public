@@ -2,13 +2,16 @@
 
 图结构（IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md §4.1）：
 
-    START → prepare → investigate_asset → {analyze_vulnerability ∥ analyze_runtime}
+    START → prepare → prepare_evidence → investigate_asset
+          → {analyze_vulnerability ∥ analyze_runtime}
           → detect_conflicts → [route: directed_rereview?] → decide
           → [route: execute_follow_ups?] → finalize → END
 
 纪律：
-- 节点是普通函数：确定性程序步骤（冲突检测/审计门禁/聚合）与 LLM 步骤同为
-  一等节点；LLM 永不写最终分数/授权/执行权限；
+- 节点是普通函数：确定性程序步骤（证据预取/冲突检测/审计门禁/聚合）与
+  LLM 步骤同为节点；LLM 永不写最终分数/授权/执行权限；
+- prepare_evidence 是确定性预取节点（非第五个 Agent）：一次性事实查询前置，
+  Agent 只对歧义/冲突/缺口深查（M4.1 校准）；
 - 路由跳过的角色由程序填充降级语义（unavailable/基线维持），不虚增风险；
 - 并行分支各自持有线程独立 DB 会话（SQLite 会话不跨线程共享）；
 - run 级预算（LLM 调用数/时限/补查轮数）由 UsageMeter 与 deadline 统一强制。
@@ -34,6 +37,7 @@ from app.services.unified import (
     aggregator,
     audit_policy,
     conflicts as conflicts_mod,
+    evidence_prep,
     routing as routing_mod,
 )
 from app.services.unified.agent_base import (
@@ -68,7 +72,8 @@ ClientFactory = Callable[[], ChatClient]
 FRESHNESS_HOURS = {"process": 24, "network": 24, "file": 168}
 
 STAGE_TOPOLOGY = {
-    "prepare": ["investigate_asset"],
+    "prepare": ["prepare_evidence"],
+    "prepare_evidence": ["investigate_asset"],
     "investigate_asset": ["analyze_vulnerability", "analyze_runtime"],
     "analyze_vulnerability": ["detect_conflicts"],
     "analyze_runtime": ["detect_conflicts"],
@@ -172,6 +177,8 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
             "attempts": result.attempts,
             "latency_ms": elapsed_ms,
             "error": (degraded_reason or result.error or "")[:800],
+            "llm_calls": result.llm_calls,
+            "llm_usage": result.llm_usage,
             "tool_calls": [{"name": call["name"], "ok": call.get("ok", False)}
                            for call in result.tool_calls],
             "feedback_history": result.feedback_history[:4],
@@ -294,6 +301,133 @@ def node_prepare(ctx: RunContext):
     return prepare
 
 
+def node_prepare_evidence(ctx: RunContext):
+    """确定性证据预取节点（M4.1）：一次性事实查询前置，无 LLM、无裁量。
+
+    失败不击穿图：预取失败时证据包置空，各角色退回自主工具查询（原行为），
+    仅记录 stage_status=failed 与 error 留痕。
+    """
+    def prepare_evidence(state: UnifiedAnalysisState) -> dict[str, Any]:
+        db = ctx.session()
+        try:
+            packet = evidence_prep.build_evidence_prep_packet(
+                db, state.target_ref, state.target_type, state.candidate_context)
+            ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
+                     payload={"stage": "prepare_evidence",
+                              "as_of": packet.as_of,
+                              "candidates": len(packet.candidates),
+                              "runtime_freshness": (packet.runtime_facts or {}).get("freshness")})
+            return {
+                "evidence_prep": packet.model_dump(),
+                "stage_status": state.record_stage("prepare_evidence", "succeeded"),
+            }
+        except Exception as exc:   # 预取是优化不是安全依赖：失败退回自主查询
+            ctx.emit(db, "stage_finished", actor="orchestrator", status="failed",
+                     payload={"stage": "prepare_evidence", "error": str(exc)[:300]})
+            return {
+                "evidence_prep": None,
+                "error": f"evidence_prep failed (退回自主工具查询): {type(exc).__name__}: {exc}"[:400],
+                "stage_status": state.record_stage("prepare_evidence", "failed"),
+            }
+        finally:
+            db.close()
+    return prepare_evidence
+
+
+def _prep(state: UnifiedAnalysisState) -> dict[str, Any]:
+    return state.evidence_prep or {}
+
+
+def _prep_header(state: UnifiedAnalysisState) -> str:
+    packet = _prep(state)
+    if not packet:
+        return ""
+    notes = "；".join(packet.get("reuse_note") or [])
+    return (f"\n【确定性预取事实（程序节点 {packet.get('as_of', '')} 取得，"
+            f"运行内只读复用）】{notes}\n")
+
+
+def _asset_prep_context(state: UnifiedAnalysisState) -> str:
+    packet = _prep(state)
+    facts = packet.get("asset_facts") or {}
+    runtime = packet.get("runtime_facts") or {}
+    if not facts and not runtime:
+        return ""
+    # 预取已含画像/暴露面/数据质量；角色只需对缺口与歧义深查
+    return (
+        f"{_prep_header(state)}"
+        f"资产画像: {json.dumps(facts.get('profile') or {}, ensure_ascii=False)}\n"
+        f"服务暴露面: {json.dumps(facts.get('services') or [], ensure_ascii=False)}\n"
+        f"组件清单(截断={facts.get('components_truncated')}): "
+        f"{json.dumps((facts.get('components') or [])[:20], ensure_ascii=False)}\n"
+        f"运行时数据质量(as_of={runtime.get('as_of', '')}): "
+        f"{json.dumps({'coverage': runtime.get('coverage'), 'freshness': runtime.get('freshness')}, ensure_ascii=False)}\n"
+        "以上基础事实已由程序核实；只有当事实存在缺口、歧义或与你需要核验的细节"
+        "（如逐条证据内容、进程树、具体端口行为）相关时才调用专属工具深查，"
+        "不要重复查询已提供的基础事实。evidence_inventory 可直接引用上述数据质量事实。"
+    )
+
+
+def _vulnerability_prep_context(state: UnifiedAnalysisState) -> str:
+    packet = _prep(state)
+    candidates = packet.get("candidates") or []
+    if not candidates:
+        return ""
+    lines = [_prep_header(state)]
+    for item in candidates:
+        lines.append(json.dumps({
+            "cve_id": item.get("cve_id"),
+            "package_name": item.get("package_name"),
+            "installed_version": item.get("installed_version"),
+            "fixed_version": item.get("fixed_version"),
+            "version_compare": item.get("version_compare"),
+            "branch_check": item.get("branch_check"),
+            "vendor_conflict": item.get("vendor_conflict"),
+            "intel_summary": item.get("intel_summary"),
+            "source_bundle": item.get("source_bundle"),
+        }, ensure_ascii=False))
+    lines.append(
+        "以上版本比较/分支声明/多源状态均为程序确定性核验结果："
+        "分支排除声明（branch_check=branch_excluded）与已修复判定"
+        "（version_compare=fixed）不得被通用候选匹配推翻；"
+        "厂商适用性冲突（vendor_conflict.unresolved）在消解前不得判 confirmed_affected。"
+        "只有对上述事实存在疑问或需要补齐缺口时才调用专属工具深查。"
+    )
+    return "\n".join(lines)
+
+
+def _runtime_prep_context(state: UnifiedAnalysisState) -> str:
+    packet = _prep(state)
+    runtime = packet.get("runtime_facts") or {}
+    if not runtime:
+        return ""
+    quality_view = json.dumps({"coverage": runtime.get("coverage"),
+                               "freshness": runtime.get("freshness"),
+                               "data_gaps": runtime.get("data_gaps")}, ensure_ascii=False)
+    return (
+        f"{_prep_header(state)}"
+        f"运行时数据质量(as_of={runtime.get('as_of', '')}): {quality_view}\n"
+        "新鲜度/覆盖/心跳事实已按当前时间由程序重算；你仍需用专属工具深查具体行为"
+        "证据（进程/网络/文件/进程树）后才能给出行为等级，不得仅凭本摘要下 ACTIVE/SUSPICIOUS 结论。"
+    )
+
+
+def _runtime_freshness_of(state: UnifiedAnalysisState) -> str:
+    """运行时证据新鲜度：优先运行时分析师结论，缺省回退预取事实。"""
+    runtime = state.runtime or {}
+    freshness = str(runtime.get("evidence_freshness") or "")
+    if freshness:
+        return freshness
+    packet_freshness = ((_prep(state).get("runtime_facts") or {}).get("freshness") or {})
+    buckets = {view.get("freshness") for view in packet_freshness.values()
+               if isinstance(view, dict)}
+    if "fresh" in buckets:
+        return "fresh"
+    if buckets and buckets != {"no_evidence"}:
+        return "stale"
+    return "none" if not buckets else "no_evidence"
+
+
 def _candidate_context(db: Session, state: UnifiedAnalysisState,
                        risk: models.RiskAssessment | None) -> list[dict[str, Any]]:
     """漏洞分析师的候选清单（规则命中，只读；不含规则分数——防锚定）。"""
@@ -370,6 +504,7 @@ def node_investigate_asset(ctx: RunContext):
             "请先调用工具获取真实画像、暴露面与运行时数据质量，再输出结构化结论。\n"
             "evidence_inventory 必须来自 query_runtime_data_quality 的真实返回；"
             "evidence_quality 按覆盖/新鲜度/缺口如实评级。"
+            + _asset_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, ASSET_INVESTIGATOR_SPEC, context_text)
         update: dict[str, Any] = {"stage_status": state.record_stage(
@@ -444,6 +579,7 @@ def node_analyze_vulnerability(ctx: RunContext):
             "要求：用 query_version_impact 做真实版本比较；用 query_intelligence_sources 核对"
             "厂商/NVD/KEV/EPSS 各源状态是否互相矛盾；输入故意不包含规则分数，不要猜测基线结论；"
             "适用分支与装机版本不符时明确判 not_affected 并说明理由（E3 类假阳性识别）。"
+            + _vulnerability_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, VULNERABILITY_ANALYST_SPEC, context_text,
                                            validate_fn=_vulnerability_evidence_validator(ctx))
@@ -491,6 +627,7 @@ def node_analyze_runtime(ctx: RunContext):
             "要求：用多标识键查询（device_id/IP/主机名均可）；引用 evidence_id 必须来自工具真实返回；"
             "先看 query_runtime_data_quality 再判定——证据全部过期时用 stale_verified，"
             "能力不支持用 unavailable；包活动不等于漏洞被利用。"
+            + _runtime_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, RUNTIME_ANALYST_SPEC, context_text,
                                            validate_fn=_runtime_evidence_validator(ctx))
@@ -605,6 +742,7 @@ def _route_after_decide(state: UnifiedAnalysisState) -> str:
 
 def node_decide(ctx: RunContext):
     def decide(state: UnifiedAnalysisState) -> dict[str, Any]:
+        facts = _deterministic_facts(state)
         decision_context = {
             "object_id": state.object_id,
             "task_type": state.task_type,
@@ -617,6 +755,9 @@ def node_decide(ctx: RunContext):
             "conflict_result": state.conflict_result.model_dump(),
             "degraded_roles": state.degraded_roles,
             "capability_marks": state.capability_marks,
+            # M4.1：确定性核验事实（分支适用性/版本比较/厂商冲突/运行时新鲜度）。
+            # 这些是程序核验结果，模型不得凭一般性推理推翻（约束见下方要求）。
+            "deterministic_facts": facts,
             "follow_up_results": state.follow_up_results or None,
             "follow_up_round_used": state.follow_ups_used,
             # 防幻觉：可引用的证据 ID 全集（引用之外一律视为编造）
@@ -629,23 +770,42 @@ def node_decide(ctx: RunContext):
             "1. impact_status/risk_direction/recommended_action 只能取 schema 枚举；"
             "supporting_evidence_ids 只能引用 available_evidence_ids 中列出的证据 ID"
             "（CVE 编号、版本号、主机名都不是证据 ID，禁止填入）；\n"
-            "2. 独立核对关键证据：对承重证据逐条给 key_evidence_checks（存在性/相关性/时效性）；\n"
-            "3. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
+            "2. 字段语义必须分离：impact_status 只回答「漏洞是否适用于该组件"
+            "（静态版本/情报证据）」；runtime_evidence_validity 只回答「运行时证据现在的"
+            "有效性」；recommended_action/urgency_basis 回答处置与紧迫度。"
+            "运行时证据过期（stale_verified/stale）不得推导为适用性不足，也不得作为"
+            "当前活跃利用的充分依据；\n"
+            "3. deterministic_facts 是程序确定性核验结果：分支排除"
+            "（branch_check=branch_excluded）与已修复（version_compare=fixed）不得被"
+            "通用候选匹配或 KEV 状态推翻；厂商适用性冲突未消解（vendor_conflict."
+            "unresolved）时「组件已安装」不等于「CVE 适用已确认」，impact 不得为 "
+            "confirmed_affected，处置只能取 monitor/collect_more_evidence/mitigate/defer；\n"
+            "4. recommended_action=immediate_fix 必须声明 urgency_basis："
+            "fresh_runtime_evidence（有新鲜运行时证据）或 static_evidence_only"
+            "（静态证据独立支撑紧迫性，在 reason 说明依据；该路径会被强制人工复核）；"
+            "不得引用过期运行时证据作为紧迫依据；\n"
+            "5. 独立核对关键证据：对承重证据逐条给 key_evidence_checks（存在性/相关性/时效性）；\n"
+            "6. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
             f"{state.budgets.follow_up_rounds - state.follow_ups_used}）；已提供 follow_up_results 时优先使用，不要重复申请；\n"
-            "4. 给出候选修复计划 response_plan：只能使用白名单动作，必须包含回滚计划与验证条件；"
+            "7. 给出候选修复计划 response_plan：只能使用白名单动作，必须包含回滚计划与验证条件；"
             "计划只能待审批（requires_approval=true），不得生成 shell；\n"
-            "5. 任一专家角色缺失（degraded_roles 非空）时如实声明并在 reason 中说明影响。"
+            "8. 任一专家角色缺失（degraded_roles 非空）时如实声明并在 reason 中说明影响。"
         )
         evidence_validator = _decision_evidence_validator(ctx, state)
 
         def combined_validator(output: dict[str, Any]) -> list[str]:
-            # 完备性（实验发现：规划师曾输出空 verdicts 仍通过校验，只能靠
-            # 门禁 structured_result_incomplete 兜底）+ 防幻觉，一起反馈重试
+            # 完备性（空 verdicts 伪成功）+ 防幻觉 + 确定性安全语义约束，
+            # 一起反馈重试（反馈信息即约束语义，模型必须修正而非重复）
             errors = list(evidence_validator(output))
             if state.task_type == TASK_RISK_REVIEW and not (output.get("verdicts") or []):
                 errors.append(
                     "verdicts 为空：risk_review 任务必须给出至少一条裁定；"
                     "无法研判时输出 impact_status=insufficient_evidence 并在 reason 说明")
+            verdict = (output.get("verdicts") or [{}])[0]
+            if isinstance(verdict, dict):
+                _normalize_urgency_basis(verdict, output, _runtime_freshness_of(state))
+                errors.extend(_decision_semantic_errors(verdict, facts,
+                                                        _runtime_freshness_of(state)))
             return errors
 
         output, degraded = _run_specialist(ctx, DECISION_PLANNER_SPEC, context_text,
@@ -654,7 +814,9 @@ def node_decide(ctx: RunContext):
         if output is not None:
             update["decision"] = output
         else:
-            # 程序兜底（继承 System B fail-safe）：保留角色降级信息，不虚构裁定
+            # 程序兜底（继承 System B fail-safe）：保留角色降级信息，不虚构裁定。
+            # program_fallback 显式标记：实验统计/消费方据此把兜底口径与 LLM 判定
+            # 分离（M4.1 校准：不得混入 LLM 研判准确率）
             fallback = DecisionResponseReport(
                 verdicts=[{
                     "object_id": state.object_id,
@@ -669,6 +831,10 @@ def node_decide(ctx: RunContext):
                 data_gaps=["决策智能体失败；以上为程序兜底结论，必须人工复核"],
                 reason="程序兜底：决策智能体输出未通过校验",
             ).model_dump()
+            # program_fallback 标记在 schema 外补写（VerdictItem extra=ignore 会
+            # 丢弃未知键；该标记供实验统计/消费方分离「程序兜底」与「LLM 判定」口径）
+            for fallback_verdict in fallback.get("verdicts") or []:
+                fallback_verdict["program_fallback"] = True
             update["decision"] = fallback
             if degraded:
                 update["degraded_roles"] = list(dict.fromkeys(
@@ -678,9 +844,114 @@ def node_decide(ctx: RunContext):
     return decide
 
 
+def _deterministic_facts(state: UnifiedAnalysisState) -> dict[str, Any]:
+    """预取包 → 决策约束事实视图（无预取包时给显式空语义，不编造）。"""
+    packet = _prep(state)
+    if not packet:
+        return {"available": False,
+                "note": "证据预取包不可用；版本比较/分支核验请用 query_version_impact 自查"}
+    candidates = packet.get("candidates") or []
+    first = candidates[0] if candidates else {}
+    freshness = (packet.get("runtime_facts") or {}).get("freshness") or {}
+    buckets = {view.get("freshness") for view in freshness.values() if isinstance(view, dict)}
+    if "fresh" in buckets:
+        hint = "fresh_available"
+    elif buckets and buckets != {"no_evidence"}:
+        hint = "stale_only"
+    else:
+        hint = "not_observed"
+    return {
+        "available": True,
+        "as_of": packet.get("as_of", ""),
+        "version_compare": first.get("version_compare") or {"result": "unknown"},
+        "branch_check": first.get("branch_check") or {"result": "undetermined"},
+        "vendor_conflict": first.get("vendor_conflict") or {"unresolved": False},
+        "runtime_freshness": freshness,
+        "runtime_status_hint": hint,
+    }
+
+
+def _normalize_urgency_basis(verdict: dict[str, Any], output: dict[str, Any],
+                             freshness: str) -> None:
+    """immediate_fix 未声明紧迫依据时的程序归一：新鲜运行时证据可自动归因，
+    其余交由模型显式声明（校验失败反馈）——不替模型做裁量决定。"""
+    if verdict.get("recommended_action") != "immediate_fix":
+        return
+    if verdict.get("urgency_basis") not in {None, "", "unknown"}:
+        return
+    if freshness == "fresh":
+        verdict["urgency_basis"] = "fresh_runtime_evidence"
+        output["notes"] = list(output.get("notes") or []) + [
+            "urgency_basis 由程序归一为 fresh_runtime_evidence（运行时证据新鲜且模型未另行声明）"]
+
+
+def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
+                              freshness: str) -> list[str]:
+    """确定性安全语义约束（M4.1 校准，全部为通用规则，无案例编号）。
+
+    返回错误列表（非空 → 带反馈重试；仍不合规 → 审计门禁按同语义 fail-closed）。
+    """
+    errors: list[str] = []
+    impact = verdict.get("impact_status")
+    action = verdict.get("recommended_action")
+    branch = facts.get("branch_check") or {}
+    compare = facts.get("version_compare") or {}
+    conflict = facts.get("vendor_conflict") or {}
+
+    if facts.get("available"):
+        if branch.get("result") == "branch_excluded" and impact == "confirmed_affected":
+            errors.append(
+                "确定性分支排除核验（branch_check=branch_excluded）与 confirmed_affected 矛盾："
+                "可信来源已显式声明装机分支不受影响，不得仅凭通用 NVD 候选匹配确认受影响；"
+                "如认为排除证据不适用于该组件，请依据具体版本证据改判 "
+                "potentially_affected/insufficient_evidence 并在 reason 说明")
+        if compare.get("result") == "fixed" and impact in {"confirmed_affected", "potentially_affected"}:
+            errors.append(
+                "确定性版本比较判定装机版本不低于修复版本（version_compare=fixed，即已修复）："
+                "KEV 收录/厂商历史受影响状态不改变已修复事实，impact 必须为 "
+                "not_affected 或 insufficient_evidence")
+        if conflict.get("unresolved"):
+            if impact == "confirmed_affected":
+                errors.append(
+                    "厂商适用性冲突未消解（vendor_conflict.unresolved）：组件已安装不等于 "
+                    "CVE 适用已确认，impact 不得为 confirmed_affected；"
+                    "请改判 potentially_affected/insufficient_evidence 并在 missing_evidence "
+                    "列出消解冲突所需证据")
+            if action in {"scheduled_fix", "immediate_fix"}:
+                errors.append(
+                    "厂商适用性冲突未消解时不得直接进入修复处置：请改用 "
+                    "monitor/collect_more_evidence/mitigate/defer（冲突消解前修复范围未定，"
+                    "该事件将被强制人工复核）")
+
+    if action == "immediate_fix":
+        basis = verdict.get("urgency_basis") or "unknown"
+        if basis == "fresh_runtime_evidence" and freshness not in {"fresh"}:
+            errors.append(
+                "urgency_basis=fresh_runtime_evidence 但运行时证据并非新鲜"
+                f"（freshness={freshness}）：stale_verified 不得作为当前活跃利用的充分依据；"
+                "请降级处置或改判 urgency_basis=static_evidence_only 并在 reason 给出"
+                "独立支撑紧迫性的静态证据（如预认证可达+厂商确认+KEV）")
+        if basis == "unknown":
+            errors.append(
+                "recommended_action=immediate_fix 必须显式声明 urgency_basis"
+                "（fresh_runtime_evidence 或 static_evidence_only），不得留空")
+
+    if impact == "insufficient_evidence" and compare.get("result") == "affected" \
+            and freshness == "stale":
+        errors.append(
+            "运行时证据过期不得直接推导为漏洞适用性不足：静态版本核验已判定适用"
+            "（version_compare=affected）。请区分 applicability（impact_status，"
+            "由静态证据决定）与 runtime_status（证据有效性）——如无其他静态证据缺口，"
+            "impact 应为 potentially_affected/confirmed_affected，并在 "
+            "runtime_evidence_validity=stale_verified 下选择相应处置紧迫度")
+    return errors
+
+
 def _decision_known_ids(state: UnifiedAnalysisState) -> set[str]:
-    """决策者可引用的证据全集：事件证据包 + 运行时证据 + 各专家报告已引用项。"""
+    """决策者可引用的证据全集：事件证据包 + 运行时证据 + 预取证据清单 +
+    各专家报告已引用项。"""
     known: set[str] = set(state.baseline.get("packet_evidence_ids") or [])
+    known.update((_prep(state).get("runtime_facts") or {}).get("evidence_ids") or [])
     runtime = state.runtime or state.runtime_program_fallback or {}
     known.update(runtime.get("evidence_ids") or [])
     for finding in runtime.get("findings") or []:
@@ -797,6 +1068,7 @@ def node_finalize(ctx: RunContext):
 def build_graph(ctx: RunContext):
     graph = StateGraph(UnifiedAnalysisState)
     graph.add_node("prepare", node_prepare(ctx))
+    graph.add_node("prepare_evidence", node_prepare_evidence(ctx))
     graph.add_node("investigate_asset", node_investigate_asset(ctx))
     graph.add_node("analyze_vulnerability", node_analyze_vulnerability(ctx))
     graph.add_node("analyze_runtime", node_analyze_runtime(ctx))
@@ -807,7 +1079,8 @@ def build_graph(ctx: RunContext):
     graph.add_node("finalize", node_finalize(ctx))
 
     graph.add_edge(START, "prepare")
-    graph.add_edge("prepare", "investigate_asset")
+    graph.add_edge("prepare", "prepare_evidence")
+    graph.add_edge("prepare_evidence", "investigate_asset")
     # Agent 2 ∥ Agent 3 并行（共同仅依赖 Agent 1）
     graph.add_edge("investigate_asset", "analyze_vulnerability")
     graph.add_edge("investigate_asset", "analyze_runtime")

@@ -227,6 +227,16 @@ class VerdictItem(BaseModel):
     recommended_action: RecommendedAction = "monitor"
     recommended_priority: Literal["critical", "high", "medium", "low"] = "medium"
     confidence: float = Field(ge=0, le=1, default=0.5)
+    # M4.1 校准（E5/X3）：适用性、运行时证据有效性、处置紧迫度三类字段强制分离。
+    # runtime_evidence_validity 只描述「运行时证据现在的有效性」；
+    # urgency_basis 说明紧迫度结论的证据来源（stale_verified 不得作为当前活跃
+    # 利用的充分依据；静态证据独立支撑的紧急建议必须显式声明并转人工）。
+    runtime_evidence_validity: Literal[
+        "fresh_verified", "stale_verified", "unavailable", "not_observed", "unknown"
+    ] = "unknown"
+    urgency_basis: Literal[
+        "fresh_runtime_evidence", "static_evidence_only", "no_urgency_evidence", "unknown"
+    ] = "unknown"
     supporting_evidence_ids: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     reason: str = ""

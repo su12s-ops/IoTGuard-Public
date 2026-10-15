@@ -2,6 +2,18 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — Stage 9B M4.1：统一四智能体研判校准与成本治理（影响判定首次达标；成本/处置差一步，维持 flag=off）
+
+- **第一部分 统计口径修正（离线零 LLM，新脚本 backend/scripts/stage9b_calibration_stats.py）**：M4 全部 20 次运行重建五类口径——全链 LLM 14 / 程序兜底 3（**实为 E3a×2+E3b×1，修正 M4 报告"E3a 三次"误记**）/ 消融 1 / simple 2；LLM-only 修正口径：影响 85.7%（原混合 88.2%）、处置 57.1%（原 64.7%）——兜底判定不得混入 LLM 准确率；耗时口径澄清（7.6s=76.0s/10 事件全量口径；104.1s 合并口径=9.46s/事件）；调用双口径如实（meter 258=237 评审+21 消融；client 246）；原始存档与真值零改动
+- **第二部分 五类决策缺陷通用语义修复（零 case_id 硬编码；确定性事实+程序校验+fail-closed 门禁三层）**：E3 分支排除声明确定性提取比对（branch_excluded 不得被通用 NVD 匹配推翻）/ E4 厂商冲突预检（装机≠适用确认；冲突未消解禁 confirmed 与修复处置）/ E5 verdict 新增 runtime_evidence_validity+urgency_basis 分离字段（stale_verified 不作活跃利用依据；静态证据独立支撑的紧急建议不一刀切禁止但强制人工）/ X2 确定性 fixed 语义（KEV 不改变已修复）/ X3 过期证据≠适用性不足；门禁新增 7 类确定性矛盾理由；程序兜底裁定显式 program_fallback 标记
+- **第三部分 Evidence Preparation（非第五个 Agent）**：LangGraph 新增 prepare_evidence 确定性节点（backend/app/services/unified/evidence_prep.py）——复用只读工具/多源情报包（get_source_bundle 含 OpenWrt 公告）/SecurityEvidence/版本比较；运行内只读复用、新鲜度按当前时间重算、有界（组件≤60/证据 ID≤30/记录≤12）、失败退回自主查询；逐 Agent 前后对照：资产工具 90→76（-15.6%）、专家延迟 -17%~-27%、墙钟/评审运行 -7.8%、全链口径 token 93.0k→88.5k（-4.8%）——评审运行口径 +15.6%，成本"实质改善"未达（✗ 如实判定）
+- **第四部分 稳定性**：异常重试 1s 退避；人工门禁 fail-closed 扩展；预算/时限/降级/消融路径全保持；本轮 0 次 API 故障、0 兜底
+- **第五部分 真实 LLM 复测（Fixture/真值零改动，22 次运行全 completed，0 失败 0 触界）**：矩阵 17 全链+2 simple+1 消融 + E4 缺陷修复补充 2；**影响判定（配对）9/9 vs System B 7/7 首次达标**；X2 not_affected+monitor 零超集、X3 回到真值、E5 处置 3/3 零方差、E4 修复后 5/5 全对、E3b 三跑全部识破误匹配；处置（配对）8/9 仍差 1 例（E2 静态紧迫性超集）；引用幻觉 0/20（2 例评分器假阳性已对齐）；稳定性达标（E1×3/E5×3 全一致、0 兜底）
+- **本轮暴露并修复 1 项真实缺陷（回归锁定+真实复测）**：E4 厂商冲突漏检——get_source_bundle release 作用域 canonical value 为单记录形态，detect_vendor_conflict 只读 records 漏检；兼容两种形态后 E4a/E4b 真实复测 5/5 全对且两跑一致
+- 回归与扫描：全量 **589 passed / 0 failed**（554 基线 + 35 项校准专项 tests/test_evidence_prep.py）；Mimosa 深度扫描 0 findings（seal sha256:edb186b2…529f1b）；shadow 零副作用
+- 门槛判定：影响 ✓ / 稳定性 ✓ / 安全面 ✓ / 处置 ✗（差 1 例）/ 成本 ✗（非实质）→ **维持 LINUXGUARD_UNIFIED_PIPELINE=off**；遗留四项（static_evidence_only 放大因子前提 / E3a 残余方差 / 方向口径对齐 / 预取切片瘦身 ≤60k/评审运行）见校准报告 §9
+- 交付 IOT_UNIFIED_FOUR_AGENT_CALIBRATION_REPORT.md（12 章校准 + 诚实性声明）；System B 对照零新增调用（复用 M4 已核查留档）；本轮结束即停止
+
 ## 2026-10-15 — Stage 9B M4：统一四智能体最终验收实验完成（全部 10 事件；未达切换门槛，维持 flag=off）
 
 - 充值恢复后完成全部真实 LLM 对照实验：10 事件（E1/E2/E3a/E3b/E4a/E4b/E5/X1/X2/X3）20 次运行全 completed（14 全链 + 3 次 API 故障程序兜底 + 1 屏蔽消融 + 2 simple 直通），1,357,234 tokens / 258 调用 / 58min；X2 案例（KEV+装机已修复）为本轮按架构 §9 补齐的 Fixture

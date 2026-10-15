@@ -1,6 +1,6 @@
 # IoTGuard 项目长期背景与系统架构
 
-> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（Stage 9B M4 最终验收实验）。
+> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（Stage 9B M4.1 校准）。
 
 ## 项目定位
 
@@ -22,20 +22,23 @@ backend/   FastAPI + SQLAlchemy + SQLite（30+ 表）
     │   │                          DEVICE→VULN→RUNTIME→RISK(程序)→REMEDIATION→VERIFY(程序)）
     │   ├─ event_review_pipeline.py System B：主机逐风险四智能体研判（单次类型化 LLM
     │   │                          + 确定性证据包/冲突检测/审计门禁；输出驱动排序/复核/授权）
+    │   ├─ unified/                统一编排器（Stage 9B）：LangGraph 单图四智能体
+    │   │                          + evidence_prep 确定性证据预取节点（M4.1，非 Agent）
     │   ├─ agent_harness.py        修复 Harness（审批哈希/锁/预算/回滚；执行 coordinator
     │   │                          requested_tools 真实补采并复评）
     │   └─ ebpf_event_collector.py eBPF/Falco 证据层
-    └─ tests/ 554 项 pytest（全量绿：554 passed / 0 failed，2026-10-15）
+    └─ tests/ 589 项 pytest（全量绿：589 passed / 0 failed，2026-10-15）
 collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性能评测负载发生器、logread 降级采集
 simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 ```
 
 ### 统一四智能体（Stage 9B 起，2026-10-15 落地；演进自 Stage 9 审计的双体系）
 
-- **统一编排器（services/unified/，唯一正式架构，pipeline_version=unified-four-agent-v1）**：LangGraph 1.2 单图——prepare(路由分层)→asset_investigator→(vulnerability_analyst ∥ runtime_analyst)→detect_conflicts(7 确定性规则)→[定向复议≤1]→decision_planner([补查≤1])→finalize(审计门禁/F5 聚合/强制待审批计划)。能力来源：System A 的 14 只读工具与工具循环基座 + System B 的证据包/冲突/门禁/有界方向映射；F1/F3/F5/F6/F7/F9 与 §7 八问题已修复并有测试锁定。
+- **统一编排器（services/unified/，唯一正式架构，pipeline_version=unified-four-agent-v1）**：LangGraph 1.2 单图——prepare(路由分层)→**prepare_evidence(确定性证据预取，M4.1：无 LLM、复用只读工具/多源情报包/SecurityEvidence、运行内只读复用、新鲜度按当前时间重算、失败退回自主查询)**→asset_investigator→(vulnerability_analyst ∥ runtime_analyst)→detect_conflicts(7 确定性规则)→[定向复议≤1]→decision_planner([补查≤1])→finalize(审计门禁/F5 聚合/强制待审批计划)。能力来源：System A 的 14 只读工具与工具循环基座 + System B 的证据包/冲突/门禁/有界方向映射；F1/F3/F5/F6/F7/F9、§7 八问题与 M4.1 五类决策语义约束（分支排除/厂商冲突/紧迫度分离字段 runtime_evidence_validity+urgency_basis/已修复确定性/过期≠不适用）已修复并有测试锁定；门禁 fail-closed 新增 7 类确定性矛盾理由；程序兜底裁定带 program_fallback 显式标记（统计口径与 LLM 判定分离）。
 - **开关**：`LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on`（默认 off=System B 原链路零变化；shadow=影子对照只写 unified_analysis_run；on=/api/analysis 经 adapter 切换统一编排器）。影子隔离由逐字段快照测试锁定。
 - **旧体系现状（能力来源与历史兼容，非正式入口）**：System A（services/agents/）与 System B（event_review_pipeline.py）在开关 off 时仍是正式链路（System B）；on 切换稳定后按 IOT_STAGE9B_MIGRATION_NOTES.md §5 清单退役。
-- 真实 LLM 最终验收实验已完成（2026-10-15，见 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）：全部 10 事件 20 次运行完成（1.357M tokens）；安全防线全达标（人工路由 6/6、引用幻觉 0、无依据升级 0、fail-safe 兜底 3/3 保真值）；**质量/成本/稳定性未达切换门槛（影响判定 88% vs 旧 100%、处置 65% vs 91%、成本 ≈3.2×），维持 flag=off**；整改清单见验收报告 §9。
+- **M4 最终验收（2026-10-15，IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）**：全部 10 事件 20 次运行完成（1.357M tokens）；安全面全达标；质量/成本/稳定性未达切换门槛，flag=off；其统计口径由 M4.1 离线核查修正（兜底归属 E3a×2+E3b×1、混合口径高估 3~7pp、7.6s 为全量运行口径）。
+- **M4.1 校准复测（2026-10-15，IOT_UNIFIED_FOUR_AGENT_CALIBRATION_REPORT.md）**：22 次真实 LLM 运行全 completed（0 兜底）；**影响判定（配对）9/9 vs 旧 7/7 首次达标、稳定性达标（E1×3/E5×3 全一致）、安全面保持**；处置（配对）8/9 差 1 例（E2 静态紧迫性超集）、成本 -4.8%（全链口径）非实质改善 → **维持 flag=off**；遗留：static_evidence_only 放大因子前提 / E3a 残余方差 / 方向口径对齐 / 预取切片瘦身（目标 ≤60k/评审运行）。
 
 ## 关键安全边界（不可回退）
 
@@ -59,5 +62,6 @@ simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 4. ✅ 阶段七：Zephyr RTOS 终端接入——qemu_cortex_a9 固件真实构建运行（QEMU 网络打通），真实端到端联调 20/20 ALL PASS（发现/身份建档 0.9/固件元数据/版本化组件/CVE 分级/幂等/边界）；证据 reports/zephyr-live-20261014-085507/
 5. ✅ 阶段八：统一任务 Trace 与可观测性——trace_run/trace_event 统一追踪（四智能体/Harness/设备管线共用），Trace API 7 端点，AgentOps 四区域（总览/时间线/Harness 监控/证据关联）；真实 LLM 只读演示 ALL PASS；专项 15 + 回归无新增失败
 6. ✅ eBPF 2.0 全部完成：审计 → P0 运行时证据可靠性 → P1 探针增强+Falco 真实常驻部署与稳定性收尾 → final C1–C6（write-ahead spool、connect 返回值守卫、证据 session 身份、CVE 证据下钻、智能体数据质量工具、回归钩子根因修复）→ P2-1 性能评测落地（五形态实测+判重索引修复，476/0）→ P2-2 OpenWrt 降级采集（logread 只读 21/21 真实验证，499/0，IOT_EBPF2_P22_REPORT.md）
-7. ✅ 第九阶段前置专项（2026-10-15）：四智能体有效性深度审计——真实代码追踪 + 真实 LLM 消融（A/B/C/D）+ 反事实（CF1-CF7）+ 量化指标；结论与整改清单见 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md（F1-F10 / R1-R8）；零生产代码改动，499/0
-8. ⏳ Stage 9B：按审计整改清单评审后启动（双体系对账 R1 / 崩溃修复 R2 / 重试反馈 R3 / remediation 上下文 R4 / version_impact 消费 R5 / 新鲜度语义 R6 / 降级评审 R7 / 成本分层 R8）；双台账统一并入后续规划
+7. ✅ Stage 9 前置审计 + Stage 9B M0-M5 主体（2026-10-15）：架构重建/影子适配层/最终验收实验（flag=off 维持）
+8. ✅ Stage 9B M4.1 校准（2026-10-15）：统计口径修正 + 五类决策缺陷通用语义修复 + evidence_prep 确定性预取 + 稳定性治理 + 真实 LLM 复测（影响判定/稳定性首次达标；处置差 1 例、成本非实质改善，flag=off 维持）；遗留四项见校准报告 §9
+9. ⏳ 后续（需指令）：M4.1 遗留四项整改复测 → 达标后经用户确认 flag=on（影子观察 ≥1 周）→ M5 退役清单

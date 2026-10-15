@@ -4,6 +4,19 @@
 
 ## 最近完成
 
+**Stage 9B M4.1：统一四智能体研判校准与成本治理（口径修正+五类缺陷修复+证据预取；复测后影响判定首次达标，成本/处置仍差一步，维持 flag=off）**（2026-10-15，报告 IOT_UNIFIED_FOUR_AGENT_CALIBRATION_REPORT.md）
+- [x] 第一部分（零 LLM 离线核查，`stage9b_calibration_stats.py`）：M4 的 20 次运行重建为严格五类口径——全链 LLM 14 / 程序兜底 3（**实为 E3a×2+E3b×1，原报告误记"E3a 三次"**）/ 消融 1 / simple 2；混合口径 vs LLM-only 修正（影响 88.2%→85.7%、处置 64.7%→57.1%——原报告把兜底混入 LLM 准确率）；耗时口径澄清（7.6s=76.0s/10 事件全量口径，104.1s 合并口径应为 9.46s/事件）；调用数双口径如实呈现（meter 258 = 237 评审+21 消融；client 246）；原始存档与真值零改动
+- [x] 第二部分（通用安全语义，零 case_id 硬编码，三层防线=确定性事实+程序校验+fail-closed 门禁）：E3 分支排除声明确定性提取与比对（branch_excluded 不得被通用匹配推翻）/ E4 厂商冲突预检（装机≠适用确认，冲突未消解禁 confirmed 与修复处置）/ E5 VerdictItem 新增 runtime_evidence_validity+urgency_basis 分离字段（stale_verified 不是活跃利用充分依据；静态证据独立支撑的紧急建议不一刀切禁止但强制人工）/ X2 确定性 fixed 语义（KEV 不改变已修复事实）/ X3 过期证据不得推导适用性不足；门禁新增 7 类确定性矛盾理由
+- [x] 第三部分：`prepare_evidence` 确定性节点落地（LangGraph 单图，非第五个 Agent，无 LLM）：复用只读工具/多源情报包/SecurityEvidence，运行内只读复用、新鲜度按当前时间重算、有界（组件≤60/证据≤30/记录≤12）、失败退回自主查询；逐 Agent 前后对照：资产工具 90→76（-15.6%）、专家延迟 -17%~-27%、墙钟/评审运行 -7.8%、全链口径 token -4.8%（93.0k→88.5k）——**成本"实质改善"未达（评审运行口径 +15.6%），如实判定 ✗**
+- [x] 第四部分：异常重试 1s 退避；程序兜底裁定显式 program_fallback 标记（统计口径分离）；人工门禁 fail-closed 扩展；预算/超时/降级路径全保持（消融复验 F7 三项全中）；本轮 0 次 API 故障/0 兜底
+- [x] 第五部分 B-D（真实 LLM 复测，Fixture/真值表零改动）：22 次运行全部 completed（矩阵 17 全链+2 simple+1 消融 + E4 补充 2）；0 失败 0 兜底 0 预算触界；**影响判定（配对）9/9 vs 旧 7/7 首次达标；X2 完美（not_affected+monitor 零超集）；X3 回到真值；E5 处置 3/3 零方差；E4 修复后 5/5 全对**；处置（配对）8/9 vs 旧 8/8 仍差 1 例（E2 静态紧迫性超集）；E3b 三跑全部识破误匹配、E3a 残余 1/6 方差；引用幻觉 0/20（2 例评分器假阳性已对齐）
+- [x] 实验暴露并修复 1 项真实缺陷（E4 冲突漏检：release 作用域 canonical value 为单记录形态，detect_vendor_conflict 只读 records 漏检）→ 回归锁定 + 受影响案例修复后真实复测 5/5 全对
+- [x] 回归与安全：全量 **589 passed / 0 failed**（554 基线 + 35 项校准专项 test_evidence_prep.py）；Mimosa 深度扫描 **0 findings**（scan-…-25c64eb52112，123 依赖包）；shadow 全程零触碰正式字段
+- [x] **维持 LINUXGUARD_UNIFIED_PIPELINE=off**；不切换正式入口、不删旧编排器、不绕过 Harness；本轮结束即停止
+- [ ] 待办（下轮指令）：①static_evidence_only 加确定性放大因子前提（KEV/公网暴露/预认证，预期补齐处置差距）②branch_excluded 下 potentially 以上强制人工或升 focused 层（E3a 残余方差）③方向口径与真值允许集对齐（E1/E5 保守偏差）④预取切片按角色瘦身+决策 completion 引导（目标 ≤60k tokens/评审运行）
+
+## 最近完成
+
 **Stage 9B M4：统一四智能体最终验收实验（全部 10 事件真实 LLM 完成；未达切换门槛，维持 flag=off）**（2026-10-15，报告 IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）
 - [x] 充值验证：最小真实调用通过（deepseek-v4-flash / temperature 0.1 与上轮一致 / 真实 usage 67 tokens / 无 402）；System B 上一轮全量对照经代码版本核查保留（event_review_pipeline 自 d14f354 未改），X2 由本轮同配置补充
 - [x] 补齐 X2 案例（架构 §9 定义，此前未落地）：KEV + 厂商 affected 但装机已高于修复版本（CVE-2026-81008 / libxml2 / edge-06）进 Fixture 与真值表；10 事件 = E1×1 + E2×1 + E3×2 + E4×2 + E5×1 + X1×2 + X2×1 + X3×1
@@ -13,7 +26,7 @@
 - [x] 实验暴露并修复 5 项真实缺陷（全部回归锁定）：脚手架 target_ref 保真度 / 脚手架传感器心跳 120s 竞态 / 生产·决策空 verdicts 伪成功（完备性反馈重试）/ 生产·simple 路径 routing_json 缺失 / 生产·state.error 重复定义致并行 reducer 丢失（InvalidUpdateError 崩溃）
 - [x] 实验基建：逐案例保存/断点续跑/已完成去重/Token 硬预算 2.5M；3 个归档目录留存缺陷期运行不混入验收
 - [x] 回归与安全：全量 **554 passed / 0 failed**（551+3）；Mimosa 深度扫描 0 findings；敏感信息干净；shadow 零副作用
-- [ ] 待办：整改复测（验收报告 §9 五项）→ 达标后经用户确认 flag=on → M5 退役清单
+- [x] 待办（已于同日完成）：整改复测（M4.1 校准，见顶部最新完成）
 
 ## 最近完成
 

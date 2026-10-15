@@ -36,6 +36,64 @@ def risk_level(score: float) -> str:
     return "Low"
 
 
+def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: list,
+                                         runtime: dict) -> list[str]:
+    """模型裁定与程序确定性核验的矛盾检查（M4.1 校准，通用安全语义规则）。
+
+    - branch_exclusion_contradiction：可信分支排除证据 vs confirmed_affected；
+    - deterministic_fixed_overridden：确定性已修复判定被推翻为受影响；
+    - vendor_conflict_unresolved_disposal：厂商适用性冲突未消解却确认受影响
+      或直接进入修复处置（「组件已安装」≠「CVE 适用已确认」）；
+    - urgency_claim_without_fresh_runtime：宣称新鲜运行时证据支撑紧迫但证据
+      并不新鲜（stale_verified 不是活跃利用的充分依据）；
+    - urgency_basis_undeclared：immediate_fix 未声明紧迫依据；
+    - static_evidence_urgency_requires_human：静态证据独立支撑的紧急修复
+      不被一刀切禁止，但必须人工复核（不做武断禁止）；
+    - applicability_conflated_with_stale_runtime：把「运行时证据过期」直接
+      推导成「适用性不足」的口径混用（适用性与证据有效性必须分离）。
+    """
+    verdict = verdicts[0] if verdicts else {}
+    if not isinstance(verdict, dict) or verdict.get("program_fallback"):
+        return []
+    impact = verdict.get("impact_status")
+    action = verdict.get("recommended_action")
+    prep = state_like.get("evidence_prep") or {}
+    candidates = prep.get("candidates") or []
+    first = candidates[0] if candidates else {}
+    branch = first.get("branch_check") or {}
+    compare = first.get("version_compare") or {}
+    conflict = first.get("vendor_conflict") or {}
+
+    freshness = str(runtime.get("evidence_freshness") or "")
+    if not freshness:
+        packet_runtime = prep.get("runtime_facts") or {}
+        buckets = {view.get("freshness") for view in
+                   (packet_runtime.get("freshness") or {}).values() if isinstance(view, dict)}
+        freshness = "fresh" if "fresh" in buckets else ("stale" if buckets else "")
+
+    reasons: list[str] = []
+    if candidates:   # 仅当预取包携带候选确定性事实时才做矛盾核查
+        if branch.get("result") == "branch_excluded" and impact == "confirmed_affected":
+            reasons.append("branch_exclusion_contradiction")
+        if compare.get("result") == "fixed" and impact in {"confirmed_affected", "potentially_affected"}:
+            reasons.append("deterministic_fixed_overridden")
+        if conflict.get("unresolved") and (impact == "confirmed_affected"
+                                           or action in {"scheduled_fix", "immediate_fix"}):
+            reasons.append("vendor_conflict_unresolved_disposal")
+    if action == "immediate_fix":
+        basis = verdict.get("urgency_basis") or "unknown"
+        if basis == "fresh_runtime_evidence" and freshness != "fresh":
+            reasons.append("urgency_claim_without_fresh_runtime")
+        elif basis == "unknown" and freshness != "fresh":
+            reasons.append("urgency_basis_undeclared")
+        elif basis == "static_evidence_only":
+            reasons.append("static_evidence_urgency_requires_human")
+    if impact == "insufficient_evidence" and compare.get("result") == "affected" \
+            and freshness == "stale":
+        reasons.append("applicability_conflated_with_stale_runtime")
+    return reasons
+
+
 def apply_unified_audit_policy(state_like: dict[str, Any]) -> AuditPolicyDecisionRecord:
     """对单事件计算审计门禁结论。state_like 需含 baseline/degraded_roles/
     conflict_result/runtime/decision 键（状态快照或其子集）。"""
@@ -86,6 +144,12 @@ def apply_unified_audit_policy(state_like: dict[str, Any]) -> AuditPolicyDecisio
         reasons.append("stale_runtime_evidence")
     if runtime.get("runtime_status") == "unavailable" and runtime.get("capability_limited"):
         reasons.append("runtime_capability_unavailable")
+
+    # ── M4.1 校准：确定性安全语义矛盾 → fail-closed（与 decide 节点校验同语义）。
+    # 模型输出经反馈重试后若仍与程序确定性核验矛盾，门禁兜底强制人工，
+    # 绝不自动采纳任何一侧。全部为通用规则（无案例编号）。 ──
+    reasons.extend(_deterministic_contradiction_reasons(
+        state_like, verdicts, runtime))
 
     # 裁定内容门禁（继承 System B 语义）
     for verdict in verdicts:

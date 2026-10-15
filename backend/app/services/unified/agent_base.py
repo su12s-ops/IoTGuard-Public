@@ -31,6 +31,8 @@ from app.services.agents.base import (
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
+_RETRY_BACKOFF_S = 1.0   # 异常重试间的固定退避（连接错误/限流；短且有界）
+
 
 class BudgetExceeded(RuntimeError):
     """run 级预算耗尽：调用方应把当前 Agent 降级，而不是重试。"""
@@ -117,6 +119,16 @@ class UnifiedToolLoopAgent:
         self.spec = spec
         self.client = client
         self.meter = meter
+        # 逐 Agent 计量（M4.1 校准：修改前后逐 Agent 的 LLM 调用数/token 可比）
+        self._calls = 0
+        self._usage: dict[str, int] = {}
+
+    def _count_response(self, response: dict[str, Any]) -> None:
+        self._calls += 1
+        for key, value in (response.get("usage") or {}).items():
+            if value is None:
+                continue
+            self._usage[key] = self._usage.get(key, 0) + int(value)
 
     def _system_message(self) -> str:
         tool_lines = "\n".join(f"- {tool.name}: {tool.description}" for tool in self.spec.tools) or "-（本角色没有独立取证工具，依据输入的结构化材料分析）"
@@ -150,7 +162,7 @@ class UnifiedToolLoopAgent:
                                           latency_ms=int((time.monotonic() - started) * 1000),
                                           error=f"超过总时限 {deadline_s}s",
                                           feedback_history=feedback_history, triaged_fields=triaged,
-                                          llm_calls=self.meter.calls if self.meter else 0)
+                                          llm_calls=self._calls, llm_usage=dict(self._usage))
             if self.meter:
                 try:
                     self.meter.ensure_budget()
@@ -160,7 +172,7 @@ class UnifiedToolLoopAgent:
                                               latency_ms=int((time.monotonic() - started) * 1000),
                                               error=str(exc),
                                               feedback_history=feedback_history, triaged_fields=triaged,
-                                              llm_calls=self.meter.calls)
+                                              llm_calls=self._calls, llm_usage=dict(self._usage))
             # F3：重试时把上一轮校验错误反馈注入上下文
             attempt_context = context
             if feedback_history:
@@ -172,16 +184,18 @@ class UnifiedToolLoopAgent:
                 result = self._run_once(db, attempt_context, deadline, feedback_history, triaged)
             except TimeoutError as exc:
                 last_error = str(exc) or "timeout"
+                time.sleep(_RETRY_BACKOFF_S)   # 限流/抖动退避，避免重试风暴
                 continue
             except Exception as exc:   # LLM 网络错误、解析失败等 → 重试/降级，绝不击穿图节点
                 last_error = f"{type(exc).__name__}: {exc}"
+                time.sleep(_RETRY_BACKOFF_S)
                 continue
             result.attempts = attempt + 1
             result.latency_ms = int((time.monotonic() - started) * 1000)
             result.feedback_history = feedback_history
             result.triaged_fields = triaged
-            if self.meter:
-                result.llm_calls = self.meter.calls
+            result.llm_calls = self._calls
+            result.llm_usage = dict(self._usage)
             if result.status == "succeeded":
                 return result
             last_error = result.error
@@ -190,7 +204,7 @@ class UnifiedToolLoopAgent:
                                   latency_ms=int((time.monotonic() - started) * 1000),
                                   error=last_error,
                                   feedback_history=feedback_history, triaged_fields=triaged,
-                                  llm_calls=self.meter.calls if self.meter else 0)
+                                  llm_calls=self._calls, llm_usage=dict(self._usage))
 
     def _run_once(self, db: Session, context: str, deadline: float,
                   feedback_history: list[str], triaged: list[str]) -> UnifiedAgentResult:
@@ -213,6 +227,7 @@ class UnifiedToolLoopAgent:
                     return UnifiedAgentResult(self.spec.name, "degraded", None,
                                               error=str(exc), tool_calls=tool_calls_log)
             response = self.client.complete(messages, tools=self._tool_schemas() or None)
+            self._count_response(response)
             if self.meter:
                 self.meter.register_call(response.get("usage"))
             calls = response.get("tool_calls") or []
@@ -286,6 +301,7 @@ class UnifiedToolLoopAgent:
                 f"你刚才的输出未通过结构化校验。错误：{last_error}\n"
                 "请只输出一个修正后的完整 JSON 对象，不要输出其他文字。")})
             response = self.client.complete(messages, tools=None)
+            self._count_response(response)
             if self.meter:
                 self.meter.register_call(response.get("usage"))
             if response.get("tool_calls"):
