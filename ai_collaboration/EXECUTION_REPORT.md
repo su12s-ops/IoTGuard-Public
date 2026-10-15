@@ -1,6 +1,16 @@
 # 最近一次开发结果
 
-> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（eBPF 2.0 P2-1 性能评测落地）
+> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（eBPF 2.0 P2-2 OpenWrt 降级采集）
+
+## 2026-10-15（eBPF 2.0 P2-2）：OpenWrt logread 只读降级采集（真实链路 21/21 + 全量 499/0）
+
+- **真实采集**：OpenWrt 25.12.5（VMnet2 实验段）经既有 DeviceConnection（指纹钉扎与 2026-10-13 受信记录一致 + 设备私钥环境变量引用）执行固定只读脚本：身份段（hostname/boot_id/UTC 纪元/本地偏移）+ logread 全量环形缓冲；1237 条真实事件（窗口 00:13:30→03:01:55 UTC，tz=+0000）全链入库
+- **P0 复用**：append_events 既有管线（指纹幂等/资产绑定 1237:1237/证据 1:1/清空语义），零新表零新库；重复采集全量对账（duplicates 1268 + stored_new 3 = built 1271，3 条=采集会话自身 SSH 登录的真实新日志，如实说明）
+- **诚实语义**：source=openwrt_logread、观察模式=syslog（新增第五模式）、智能体声明"拉取式降级采集非 eBPF"；缺年份/不可解析行跳过计数（46 条防御路径如实入元数据）；ring 覆盖丢失 unavailable；boot_id 参与指纹（跨重启零误合并，专项锁定）；窗口变化三采新行入库/旧行判重/dropbear 57 条真实行可见
+- **联调**：CVE 下钻真实 syslog 证据直接匹配（direct_count=57、runtime_status=verified、exploitation_confirmed 恒 False）；统一 Trace runtime_log_collection completed；coverage/reliability 端点 logread 传感器可见
+- **修复 2 项真实验收发现缺陷**：raw 传输标记 "logread_ssh_pull" 含 "ssh" 关键词子串致 1246 条全量误分类敏感文件访问（改名 logread_remote_pull + 命名约束注释）；"立即重复=0 新增"断言不成立（会话自身产日志）改全量对账
+- **边界**：对设备零改动（只读、零配置、零软件包）；真实重启未执行（避免干预，语义专项锁定）；Zephyr 零触碰；未进入第九阶段
+- **回归**：新增专项 23/23；相关域 306/0（实现期中检）；全量 **499 passed / 0 failed**（476 基线 + 23 新增，零回归）
 
 ## 2026-10-15（eBPF 2.0 P2-1）：五形态性能评测完成（真实内核采集 0 丢失 + 判重索引缺陷修复 115→379 EPS）
 

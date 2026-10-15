@@ -328,7 +328,7 @@ class SensorHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: int = Field(gt=0)
     sensor_id: str = Field(min_length=1, max_length=128)
-    source: Literal["falco", "tetragon", "bpftrace", "runtime_probe"]
+    source: Literal["falco", "tetragon", "bpftrace", "logread", "runtime_probe"]
     status: Literal["running", "degraded", "stopped", "unsupported"]
     dropped_events: int | None = Field(default=None, ge=0)
     capabilities: dict = Field(default_factory=dict)

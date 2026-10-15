@@ -4,6 +4,18 @@
 
 ## 最近完成
 
+**eBPF 2.0 P2-2：OpenWrt 轻量化降级采集（logread 只读）**（2026-10-15，报告 IOT_EBPF2_P22_REPORT.md，证据 reports/ebpf-p22-20261015-111451/ 本地留存）
+- [x] 真实链路 21/21 验收：OpenWrt 25.12.5 经既有 DeviceConnection（指纹钉扎+凭据环境变量）只读拉取 logread → 1237 条真实事件全链入库（source=openwrt_logread、观察模式=syslog、资产绑定 1237/1237、SecurityEvidence 1:1）
+- [x] 时间/身份语义（不猜测）：设备本地时间按采集偏移换算 UTC（实测 +0000）；缺年份/不可解析行跳过计数不虚构；boot_id 参与指纹（跨重启不误合并，专项锁定）；ring 覆盖丢失 unavailable；窗口元数据留档
+- [x] 复用 P0 管线零新表：append_events 既有幂等/绑定/证据链；重复采集全量对账（duplicates+stored_new=窗口行数，会话自身新日志如实说明）
+- [x] 智能体数据质量：OpenWrt 缺 logread 采集显式 data_gap；已有则声明"拉取式降级采集、非 eBPF、ring 窗口外不可知"；证据工具实测读取
+- [x] CVE/Trace 联调：真实 syslog 证据直接匹配 dropbear（direct_count=57、runtime_status=verified）；统一 Trace runtime_log_collection completed 可查
+- [x] 对设备零改动（只读脚本内容哈希入审计）；Zephyr 语义零触碰
+- [x] 采集过程发现并修复 2 项真实缺陷：raw 传输标记含 "ssh" 子串致全量误分类敏感文件访问（改名并固化命名约束）；"立即重复"语义修正（SSH 会话自身产生新日志，改为全量对账断言）
+- [x] 测试：新增专项 23 项；全量 **499 passed / 0 failed**（476 基线 + 23 新增，零回归）
+
+## 最近完成
+
 **eBPF 2.0 P2-1：性能评测落地**（2026-10-15，报告 IOT_EBPF2_P21_REPORT.md，证据 reports/ebpf-p21-final/ 本地留存）
 - [x] 五种评测形态全部真实执行并统一汇总（吞吐/CPU/内存/延迟 P50/P95/P99/事件计数/丢失/重复/spool；0 与 unavailable 严格区分）：synthetic×2（后端摄取）、replay（断网 21.6s 中断恢复+幂等）、real-wsl×2（WSL2 bpftrace 真实内核，4.1 万事件/次，两次独立运行归因对账 0 丢失）、real-vm-falco（VM 常驻 Falco journalctl 拉取，14910 事件，0.021% 丢失如实记录）、bounded-spool（容量不变量+数据保全）
 - [x] 实测发现并修复 SQLite 判重全表扫描缺陷（P0 部分唯一索引不被查询计划蕴含推理）：全量索引+旧库幂等补建；EXPLAIN 前后证据 SCAN→COVERING INDEX；后端摄取 115→379 EPS、批 RTT P50 4.3s→1.3s（synthetic 口径，明确不表述为内核采集提升）
@@ -132,10 +144,10 @@
 
 ## 下一步（等待审阅，不自动开始）
 
-- eBPF 2.0 P2 剩余：P2-2 OpenWrt 降级采集（syslog 尾随）
-- 第九阶段待用户指令（未开始）
+- eBPF 2.0 P2 全部完成（P2-1 性能评测 + P2-2 OpenWrt 降级采集）；第九阶段待用户指令（未开始）
 - Private 仓库删除申请：本仓库独立 Clone/构建/运行验证与归档核验已通过，可向用户提交删除申请
 - P2-1 遗留（低优先）：后端摄取上限 ~380 EPS（SQLite 单进程）扩展评估；falco 引擎级 drops/CPU 采样待 sudo 授权窗口；bounded-spool 告警触发路径的真实触界复现（当前由单元测试覆盖）
+- P2-2 遗留（低优先）：logread 拉取式采集无常驻增量（设备只读不留状态，设计边界）；真实设备重启演练未执行（避免干预，语义由专项测试锁定）
 
 ## 已知事项
 

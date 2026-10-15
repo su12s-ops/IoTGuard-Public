@@ -2,6 +2,18 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
 
+## eBPF 2.0 P2-2 OpenWrt 降级采集轮（2026-10-15，证据 reports/ebpf-p22-20261015-111451/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 新增专项 test_ebpf_p22_openwrt_logread.py（解析/时区换算/跳过计数/事件形状/观察模式/心跳源/管线幂等/证据/重启指纹身份/窗口元数据/数据质量/Trace） | **23/23 passed** |
+| 真实 OpenWrt 验收（backend/scripts/ebpf_p22_openwrt_live.py，21 项） | **21/21 PASS**：指纹受信一致 / 1237 真实事件绑定 1237:1237 / 证据 1:1 / 重复采集全量对账（1268+3=1271）/ 窗口变化三采（新 5 旧 1262 判重）/ dropbear 57 条 / 智能体数据质量与证据 / CVE 下钻 direct=57 verified / Trace completed |
+| 相关域中检（-k "runtime or agent or trace or ebpf or iot or evidence"） | 306 passed / 0 failed |
+| 全量回归 | **499 passed / 0 failed**（476 基线 + 23 新增，零新增回归；6m22s） |
+| 验收过程发现并修复 | raw 传输标记含 "ssh" 子串致全量误分类敏感文件访问（真实验证：1246 条 file→修正为真实分类）；重复采集断言语义修正（全量对账） |
+| 设备重启 | 未真实执行（避免设备干预）：跨 boot_id 指纹零交集由专项测试锁定，boot_id 留档供跨运行比对 |
+| Mimosa | 写入钩子对验收脚本三次拦截（SSRF/SQL 注入/证书）→ 全部按建议修复（环回白名单/全 ORM 化零原生 SQL/原生 Transport 握手）后放行；**提交前完整扫描 0 findings**（封印 sha256:c6f1b184…0f1f，scan-2026-10-15T03-15-55） |
+
 ## eBPF 2.0 P2-1 性能评测轮（2026-10-15，证据 reports/ebpf-p21-final/ 本地留存）
 
 | 项 | 结果 |
@@ -56,7 +68,7 @@
 ## 口径说明
 
 - **常规回归（CI 口径）**：`python -m pytest -q --ignore=tests/test_iot_device_upgrade.py --ignore=tests/test_scan_runs.py --ignore=tests/test_scan_targets.py --ignore=tests/test_mqtt_remediation_workflow.py`（交付回归同口径；被排除的 4 个文件需要真实本机监听器 + 独立 profile，见 CURRENT_TASK 已知事项）
-- **全量**：`python -m pytest -q`（当前基线 **476 passed / 0 failed**——2026-10-14 C6 环回放行修复后 435/0，2026-10-15 P2-1 新增专项 41 项后 476/0）
+- **全量**：`python -m pytest -q`（当前基线 **499 passed / 0 failed**——2026-10-14 C6 后 435/0，2026-10-15 P2-1 +41 与 P2-2 +23 后 499/0）
 
 ## 最近结果（2026-10-13，Commit 6f4724b）
 

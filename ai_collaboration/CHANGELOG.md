@@ -2,6 +2,14 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — eBPF 2.0 P2-2：OpenWrt 轻量化降级采集（logread 只读，21/21 真实验收）
+
+- 真实链路：OpenWrt 25.12.5 经既有 DeviceConnection（SSH 指纹钉扎+凭据环境变量）只读拉取 logread → P0 统一事件管线（零新表零新库）；1237 条真实事件入库、资产绑定 1237/1237、SecurityEvidence 1:1；对设备零改动、零 eBPF、零软件包（报告 IOT_EBPF2_P22_REPORT.md，证据本地留存）
+- 时间/身份诚实语义：设备本地时间按采集偏移换算 UTC；缺年份/不可解析行跳过计数不虚构；boot_id 参与指纹（跨重启不误合并）；ring 覆盖丢失 unavailable；source=openwrt_logread/观察模式 syslog，绝不伪装 eBPF
+- 集成：智能体数据质量（缺采集显式 gap；已有声明降级边界非 eBPF）；CVE 下钻真实 syslog 证据直接匹配 dropbear（direct_count=57 verified）；统一 Trace runtime_log_collection；coverage/reliability 含 logread 心跳语义
+- 修复 2 项真实验收发现缺陷：raw 传输标记含 "ssh" 子串致全量误分类敏感文件访问（1246 条→修正，命名约束固化）；立即重复采集的全量对账语义修正（SSH 会话自身新日志如实计数）
+- 测试：新增专项 23 项；全量 499 passed / 0 failed（476 基线 + 23 新增，零回归）；设备重启语义由专项锁定（真实重启未执行，避免设备干预）
+
 ## 2026-10-15 — eBPF 2.0 P2-1：性能评测落地（五形态实测 + 判重索引缺陷修复）
 
 - 五种评测形态全部真实执行（synthetic×2 / replay 断网恢复 / real-wsl×2 真实内核 / real-vm-falco / bounded-spool），统一汇总吞吐/CPU/内存/延迟/丢失/重复/spool，0 与 unavailable 严格区分；synthetic 优化明确不表述为内核采集提升（报告 IOT_EBPF2_P21_REPORT.md，证据 reports/ebpf-p21-final/ 本地留存）

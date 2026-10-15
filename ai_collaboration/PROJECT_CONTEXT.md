@@ -1,6 +1,6 @@
 # IoTGuard 项目长期背景与系统架构
 
-> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（eBPF 2.0 P2-1 性能评测落地）。
+> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-15（eBPF 2.0 P2-2 OpenWrt 降级采集）。
 
 ## 项目定位
 
@@ -22,8 +22,8 @@ backend/   FastAPI + SQLAlchemy + SQLite（30+ 表）
     │   ├─ event_review_pipeline.py 主机逐风险四智能体研判
     │   ├─ agent_harness.py        修复 Harness（审批哈希/锁/预算/回滚）
     │   └─ ebpf_event_collector.py eBPF/Falco 证据层
-    └─ tests/ 476 项 pytest（全量绿：476 passed / 0 failed，2026-10-15）
-collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性能评测负载发生器
+    └─ tests/ 499 项 pytest（全量绿：499 passed / 0 failed，2026-10-15）
+collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性能评测负载发生器、logread 降级采集
 simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 ```
 
@@ -48,5 +48,5 @@ simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 3. ✅ 阶段六：OpenWrt 异构终端接入——设备线（自动发现/指纹/建档/幂等）与主机线（SSH 只读采集×2/身份链闭合/新旧 diff/CVE 分级消费）均已真实闭环；精确版本匹配层待登记真实官方公告后激活
 4. ✅ 阶段七：Zephyr RTOS 终端接入——qemu_cortex_a9 固件真实构建运行（QEMU 网络打通），真实端到端联调 20/20 ALL PASS（发现/身份建档 0.9/固件元数据/版本化组件/CVE 分级/幂等/边界）；证据 reports/zephyr-live-20261014-085507/
 5. ✅ 阶段八：统一任务 Trace 与可观测性——trace_run/trace_event 统一追踪（四智能体/Harness/设备管线共用），Trace API 7 端点，AgentOps 四区域（总览/时间线/Harness 监控/证据关联）；真实 LLM 只读演示 ALL PASS；专项 15 + 回归无新增失败
-6. ✅ eBPF 2.0：审计（IOT_EBPF2_AUDIT_REPORT.md）→ P0 运行时证据可靠性（IOT_EBPF2_P0_REPORT.md）→ P1 探针增强+Falco 真实常驻部署与稳定性收尾（IOT_EBPF2_P1_PREP/DEPLOY/STABILITY_REPORT.md）→ final C1–C5（write-ahead spool、connect 返回值守卫+真实内核验证、证据 session 身份+聚合视图、CVE 证据下钻、智能体数据质量工具）→ C6 回归钩子根因修复 + demo SSH 加固（de9f1f9，全量 435/0）→ P2-1 性能评测落地（IOT_EBPF2_P21_REPORT.md，五形态实测+判重索引修复 115→379 EPS，全量 476/0）；P2-2 OpenWrt 降级采集仍未实施
+6. ✅ eBPF 2.0 全部完成：审计 → P0 运行时证据可靠性 → P1 探针增强+Falco 真实常驻部署与稳定性收尾 → final C1–C6（write-ahead spool、connect 返回值守卫、证据 session 身份、CVE 证据下钻、智能体数据质量工具、回归钩子根因修复）→ P2-1 性能评测落地（五形态实测+判重索引修复，476/0）→ P2-2 OpenWrt 降级采集（logread 只读 21/21 真实验证，499/0，IOT_EBPF2_P22_REPORT.md）
 7. ⏳ 后续：双台账统一（第九阶段未开始，待指令）

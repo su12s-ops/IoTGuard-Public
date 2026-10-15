@@ -44,6 +44,7 @@ _CVE_RE = re.compile(r"^CVE-\d{4}-\d{4,}$")
 TASK_TYPES = {
     "four_agent_analysis", "device_refresh", "device_cve_match",
     "discovery_enrollment", "harness_investigate", "harness_repair", "harness_collect",
+    "runtime_log_collection",
 }
 
 

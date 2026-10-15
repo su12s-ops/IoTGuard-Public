@@ -216,6 +216,46 @@ def create_collection(connection_id: int, payload: CollectionRequest, db: Sessio
         raise HTTPException(400, str(exc)) from exc
 
 
+@router.post("/connections/{connection_id}/collect-logs", dependencies=[Depends(require_control)])
+def collect_runtime_logs(connection_id: int, db: Session = Depends(get_db)):
+    """eBPF 2.0 P2-2：OpenWrt logread 只读拉取 → P0 统一事件管线。
+
+    统一 Trace 记录本次运行（task_type=runtime_log_collection）；事件
+    source=openwrt_logread（观察模式 syslog，绝不伪装 eBPF）；重复采集由
+    服务端指纹幂等收敛（duplicates 如实返回）。
+    """
+    from app.services.openwrt_runtime_log import collect_runtime_logs as run_collect
+
+    row = db.get(models.DeviceConnection, connection_id)
+    if not row:
+        raise HTTPException(404, "设备连接不存在")
+    if row.asset_id and db.get(models.HarnessAssetLock, row.asset_id):
+        raise HTTPException(409, "设备任务正在执行，请稍后再拉取日志")
+    asset = db.get(models.LinuxAsset, row.asset_id) if row.asset_id else None
+    trace = tracing.start_trace(db, task_type="runtime_log_collection",
+                                target_type="linux_asset",
+                                target_ref=str(row.asset_id or ""),
+                                run_ref_type="device_connection", run_ref_id=str(row.id),
+                                metadata={"collector_type": "openwrt_logread", "host": row.host})
+    try:
+        result = run_collect(db, row)
+    except ValueError as exc:
+        db.rollback()
+        tracing.finish_trace(db, trace.trace_id, "failed", error=str(exc)[:400])
+        code = getattr(exc, "code", "collection_failed")
+        raise HTTPException(400, {"message": str(exc), "error_code": code}) from exc
+    summary = {key: result[key] for key in ("stored_new", "duplicates", "sensor_id", "asset_id")}
+    summary["log_window"] = result["meta"]
+    summary["audit"] = {key: result["audit"][key] for key in
+                        ("collector_type", "collector_sha256", "node", "ssh_host_identity",
+                         "ssh_authentication", "events_stored_new", "events_duplicates")}
+    tracing.emit(db, trace.trace_id, "logread_collected", actor="collector", status="completed",
+                 payload=summary, duration_ms=0, commit=False)
+    tracing.finish_trace(db, trace.trace_id, "completed", summary=summary)
+    summary["trace_id"] = trace.trace_id
+    return summary
+
+
 @router.get("/collection-runs", dependencies=[Depends(require_control)])
 def collection_runs(connection_id: int | None = None, db: Session = Depends(get_db)):
     query = db.query(models.HarnessRun)

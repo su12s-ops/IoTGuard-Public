@@ -351,6 +351,8 @@ def _observation_mode(source: str) -> str:
         return "ebpf"
     if "bpftrace" in value:
         return "ebpf"  # collector/ebpf_trace_capture.sh 真实内核探针（source=ebpf_bpftrace）
+    if "logread" in value or value.startswith("syslog"):
+        return "syslog"  # P2-2 OpenWrt 设备原生日志（降级采集），绝非 eBPF
     if "falco" in value:
         return "sensor"  # The event format does not establish the selected driver.
     if value.startswith("runtime_probe_"):

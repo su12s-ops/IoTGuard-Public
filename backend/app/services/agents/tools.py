@@ -282,6 +282,9 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
         coverage_view = coverage(db, asset.id)
         if not coverage_view["sensors"]:
             gaps.append("该资产没有任何采集器心跳记录（覆盖未知，不代表安全）")
+        if asset.distribution == "openwrt" and not any(
+                sensor["source"] == "logread" for sensor in coverage_view["sensors"]):
+            gaps.append("OpenWrt 资产尚无 logread 运行时日志采集记录（运行时覆盖缺口，不代表安全）")
     for sensor in coverage_view.get("sensors", []):
         sensor_rows.append({
             "sensor_id": sensor["sensor_id"], "source": sensor["source"], "status": sensor["status"],
@@ -294,6 +297,9 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
             gaps.append(f"传感器 {sensor['sensor_id']} 报告丢失 {sensor['dropped_events']} 条事件")
         if sensor["status"] == "stale":
             gaps.append(f"传感器 {sensor['sensor_id']} 心跳已过期（{sensor['age_seconds']}s 未更新）")
+        if sensor["source"] == "logread":
+            gaps.append(f"传感器 {sensor['sensor_id']} 为 logread 拉取式降级采集（设备原生日志，"
+                        "非 eBPF 内核级观测；ring 覆盖窗口外的历史不可知）")
 
     now = datetime.now(timezone.utc)
     freshness = {}
