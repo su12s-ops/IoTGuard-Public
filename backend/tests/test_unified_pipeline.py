@@ -268,6 +268,35 @@ class TestAgentBase:
         assert result.status == "degraded"
         assert "预算" in result.error
 
+    def test_client_exception_degrades_not_crashes(self, session_factory):
+        """实验修复 #1：客户端/解析异常必须走重试→降级，绝不击穿调用方（图节点）。"""
+        db = self._db(session_factory)
+
+        class ExplodingClient:
+            def __init__(self):
+                self.calls = 0
+
+            def complete(self, messages, tools=None):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("simulated API outage")
+                return json_response(GOOD_RUNTIME)
+
+        agent = UnifiedToolLoopAgent(RUNTIME_ANALYST_SPEC, ExplodingClient())
+        result = agent.run(db, context="测试", deadline_s=60)
+        db.close()
+        assert result.status == "succeeded"   # 异常消耗重试后恢复
+
+        class AlwaysExploding:
+            def complete(self, messages, tools=None):
+                raise RuntimeError("simulated API outage")
+
+        agent = UnifiedToolLoopAgent(RUNTIME_ANALYST_SPEC, AlwaysExploding())
+        result = agent.run(db, context="测试", deadline_s=60)
+        db.close()
+        assert result.status == "failed"
+        assert "RuntimeError" in result.error
+
     def test_tool_rejection_for_unregistered_tool(self, session_factory):
         db = self._db(session_factory)
 

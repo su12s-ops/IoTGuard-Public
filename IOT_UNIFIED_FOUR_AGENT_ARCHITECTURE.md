@@ -277,3 +277,86 @@ RiskAssessment 正式字段 / UnifiedAnalysisRun（唯一写入口；影子模�
 | `UnifiedAnalysisRun`（新表） | run_id、task_type、target、mode（shadow/formal）、status、routing_json、state_json、agents_json、decision_json、plan_json、usage_json、trace_id、error、时间戳 |
 | `RiskAssessment.device_context_json`（新列，M4 起） | F2/R1 对账写回（设备级证据结论只读附加），不影响既有门禁 |
 | 历史表 | 零改动；历史审计数据保留原始版本标识 |
+
+---
+
+## 11. 实现状态与最终架构图（M1–M3 交付后回填）
+
+**实现状态（2026-10-15，commit 9185144）**：§3–§7 全部落地。新增测试 50 项
+（`test_unified_pipeline.py` 46 + `test_unified_adapter.py` 4 + F1 两形态），
+全量回归 **549 passed / 0 failed**（499 基线 + 50 新增，零回归）。
+代码迁移细节见 `IOT_STAGE9B_MIGRATION_NOTES.md`。
+
+### 11.1 架构图（唯一正式编排器）
+
+```
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        统一四智能体（unified-four-agent-v1）                  │
+│                                                                             │
+│  /api/analysis（flag=on，经 adapter 兼容契约）  /api/unified/*（影子/直连）    │
+│        │                                          │                         │
+│        ▼                                          ▼                         │
+│  ┌──────────────────────────── LangGraph StateGraph ──────────────────────┐ │
+│  │                                                                        │ │
+│  │  START ─→ prepare(程序：路由分层/能力边界/规则基线只读引用)               │ │
+│  │            │  simple 层 → 0 次 LLM 规则直通（不入图，runner 处理）        │ │
+│  │            ▼                                                            │ │
+│  │  investigate_asset ── Agent 1 资产与证据调查员（4 只读工具）              │ │
+│  │            ├───────────────┬───────────────┐                            │ │
+│  │            ▼（并行）       ▼               │                            │ │
+│  │  analyze_vulnerability   analyze_runtime    │                            │ │
+│  │  Agent 2 漏洞分析师       Agent 3 运行时分析师│                            │ │
+│  │  （4 工具含多源情报包）    （5 工具；F6 新鲜度）│                           │ │
+│  │            └───────┬───────┘               │                            │ │
+│  │                    ▼                       │                            │ │
+│  │  detect_conflicts（程序：7 条确定性规则）     │                            │ │
+│  │            │ 冲突→directed_rereview（≤1 次）─┘                           │ │
+│  │            ▼                                                             │ │
+│  │  decide ── Agent 4 研判与处置规划师（无工具；离散裁定）                     │ │
+│  │            │ follow_up_requests → execute_follow_ups（≤1 轮）→ decide    │ │
+│  │            ▼                                                             │ │
+│  │  finalize（程序：审计门禁/F5 聚合/白名单计划强制待审批）                    │ │
+│  └────────────────────────────────────────────────────────────────────────┘ │
+│        │ sink（formal）/ None（shadow）                                     │
+│        ▼                                                                    │
+│  RiskAssessment 正式字段（唯一写入口）＋ UnifiedAnalysisRun 全量快照           │
+│        ▼                                                                    │
+│  修复授权 _authorized()（零改动）→ Harness 审批执行（零改动）                  │
+└─────────────────────────────────────────────────────────────────────────────┘
+```
+
+### 11.2 真实调用链（一次 risk_review 标准评审）
+
+```
+POST /api/analysis/runs  (flag=on)
+  → adapter.generate_and_save_report_unified → Selection（复用 System B _selection）
+  → 逐事件 runner.run_unified_sync（formal sink）
+      → UnifiedAnalysisRun 行 + TraceRun(unified_four_agent)
+      → prepare：decide_routing（分层判据/跳过角色/理由入 Trace）
+      → investigate_asset：Agent1 工具循环（query_device_profile /
+        query_network_surface / query_runtime_data_quality / list_devices）
+      → [并行] analyze_vulnerability（query_cve_intelligence / query_version_impact /
+        query_matched_vulnerabilities / query_intelligence_sources）
+        ∥ analyze_runtime（process/network/file 证据 / process_tree / 数据质量）
+      → 证据防幻觉校验（evidence_id 存在性）→ 失败带反馈重试 1 次 → 仍败剔除/降级
+      → detect_conflicts（7 规则）→ 命中 → directed_rereview（被牵连角色 ≤1 次）
+      → decide：Agent4（离散裁定 + key_evidence_checks 程序复核 + follow_up ≤1 轮
+        + 白名单 response_plan）
+      → finalize：apply_unified_audit_policy（fail-closed 门禁，方向 ±10/±20 有界）
+        / 设备任务走 aggregate_device_risk（F5）
+      → formal_sink：RiskAssessment.review_* / final_*（语义=System B）
+        + device_context_json（F2/R1 对账）+ AgentAuditRecord ×4
+  → AnalysisReport（pipeline_version=unified-four-agent-v1+analysis-compat，契约兼容）
+```
+
+### 11.3 预算与安全边界实现对照
+
+| 设计要求 | 实现 |
+|---|---|
+| 单 Agent 工具轮 ≤8 / 时限 150s | `AgentSpec.max_tool_rounds` / `RunContext.agent_budget_s` |
+| run 级 LLM 调用 ≤40 | `UsageMeter(max_llm_calls)` 超限 → BudgetExceeded → 角色降级 |
+| 补查 ≤1 轮 / 复议 ≤1 次 | `Budgets.follow_up_rounds / rereview_rounds`（图条件边） |
+| LLM 不写最终分 | 方向→±10/±20 映射在 `audit_policy`（程序），LLM 输出仅枚举 |
+| LLM 无执行权 | `ResponsePlan.requires_approval` 程序强制 True；动作白名单 + 禁 shell 参数 |
+| 不可信内容仅作数据 | 系统消息声明 + 工具/证据包内容永不进入系统提示词 |
+| 真实计量 | `UsageMeter` 仅累计客户端真实 usage；缺失记 unavailable |

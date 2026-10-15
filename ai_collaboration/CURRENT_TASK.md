@@ -4,6 +4,18 @@
 
 ## 最近完成
 
+**Stage 9B：统一四智能体架构重建（唯一编排器落地 + 真实 LLM 对照实验部分完成）**（2026-10-15，设计 IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md、迁移说明 IOT_STAGE9B_MIGRATION_NOTES.md、实验报告 IOT_STAGE9B_EXPERIMENT_REPORT.md）
+- [x] 技术选型（实测论证）：**LangGraph 1.2.15**（Python 3.14 实装冒烟通过）为唯一编排器底座——有状态图/条件路由/并行/任务恢复语义与本项目"程序门禁+LLM 分析"形态直译；不选 OpenAI Agents SDK（自由 handoff 与固定管线+程序门禁形态相反）；不选 MS Agent Framework（与 LangGraph 重叠且本仓对 AutoGen 仅有单次 JSON 调用面，无可继承资产）
+- [x] 唯一四智能体落地（`backend/app/services/unified/`，11 模块）：asset_investigator（资产与证据调查）/ vulnerability_analyst（漏洞分析，新增只读多源情报包工具含 OpenWrt 公告）/ runtime_analyst（运行时，F6 新鲜度语义）/ decision_planner（研判与处置规划，F4 全上下文+有界补查+白名单待审批计划）；A2∥A3 并行、冲突定向复议≤1、补查≤1、run 级 40 次调用预算、真实 usage 计量、统一 Trace
+- [x] 缺陷修复：F1（P0 报告崩溃，list/dict 双形态）、F3（校验失败带错误反馈重试+字段预分拣修 CF6）、F5（fixed/not_affected 不计聚合基线分）、F6（freshness 参与 runtime_status：verified⇒fresh、stale_verified 新状态+门禁）、F7（逐 Agent 独立落库+degraded 保留意见+门禁转人工）、F2/R1（device_context_json 对账写回）、F9（simple 分层 0 次 LLM 直通，immediate_fix 仍强制人工）、§7-7（运行时告警 vs 不受影响交叉冲突强制人工）
+- [x] 影子模式与兼容适配层：`LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on`（默认 off 零行为变化）；影子运行零触碰正式字段（逐字段快照对比测试锁定）；flag=on 时 /api/analysis 经 adapter 以兼容契约接统一编排器
+- [x] 测试：新增 52 项专项（schema 语义/重试反馈/预算/路由分层/冲突 7 规则/门禁/图拓扑/降级/影子隔离/适配层）；全量回归 **549 passed / 0 failed**（499 基线，零回归）
+- [x] 真实 LLM 对照实验（deepseek-v4-flash）：System B 全量 10 事件 44 调用 242,108 tokens 76.0s 完成；统一链 7 次运行（E1×3/E2/E3#0/X1×2）后**账户余额耗尽（402）**，其余运行待充值续跑（脚本已支持 --unified-only/--cases 断点续跑）；人工路由 6/6、引用幻觉 0、E1#1 全链成功且与真值一致
+- [x] 实验暴露并修复 5 个统一链真实缺陷（执行基座异常保护回归/解析器 Extra data 容错/决策者误用 CVE 作证据 ID（上下文下发合法 ID 清单）/情报冲突规则过敏收紧/API 限流退化 max_retries=1），全部加回归锁定
+- [ ] 待办：充值后续跑完整对照实验（E3 剩余/E4/E5/X3/屏蔽消融）→ 达标后 flag=on 正式切换 → 按退役清单摘除旧编排器
+
+## 最近完成
+
 **第九阶段前置专项：四智能体有效性深度审计（真实代码追踪 + 真实 LLM 消融/反事实实验）**（2026-10-15，报告 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md；Stage 9B 未启动，等待审阅）
 - [x] 静态审计：查明仓库存在**两套"四智能体"体系**——System A 设备编排（services/agents/，真工具循环 14 工具）与 System B 逐风险评审（event_review_pipeline.py，单次类型化 LLM+确定性证据包/门禁），职责互不映射、数据互不流通
 - [x] 消费链路核验：System B 输出全链真实消费（风险排序/人工复核/修复授权/Harness 补采复评）；System A 主输出 risk_json 确认为**死端**（仅 AgentOps 展示+一条修复任务写回），其修复智能体实测结构性空转（risk_ref=""、actions=[]）

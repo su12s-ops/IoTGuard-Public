@@ -92,13 +92,23 @@ def detect_conflicts(state_like: dict[str, Any]) -> ConflictResultRecord:
             description="行为告警仅由过期证据支撑（freshness=stale）；紧迫度结论需要新鲜证据。",
             involved_agents=[AGENT_RUNTIME]))
 
-    # 规则 7（新增）：多源情报冲突（漏洞分析师声明的来源矛盾）。
+    # 规则 7（新增）：多源情报矛盾「未被分析师消解」时才升级为冲突——
+    # 分析师已给出明确适用性结论（confirmed/potentially/not_affected）视为已消解；
+    # 只有结论仍为 insufficient_evidence（或没有任何结论）时才强制转人工。
+    # （实验教训：无条件触发会在多源数据常态差异上空转，制造无意义复议。）
     intel_conflicts = vulnerability.get("intelligence_conflicts") or []
     if intel_conflicts:
-        conflicts.append(ConflictItemRecord(
-            code="intelligence_source_conflict",
-            description="漏洞情报来源之间存在矛盾（如厂商 under_investigation vs NVD affected）。",
-            involved_agents=[AGENT_VULNERABILITY]))
+        unresolved_by_analyst = (
+            not findings
+            or all(isinstance(f, dict) and f.get("applicability") in
+                   {"insufficient_evidence", None, ""} for f in findings)
+        )
+        if unresolved_by_analyst:
+            conflicts.append(ConflictItemRecord(
+                code="intelligence_source_conflict",
+                description="漏洞情报来源之间存在矛盾且分析师未能消解"
+                            "（如厂商 under_investigation vs NVD affected）。",
+                involved_agents=[AGENT_VULNERABILITY]))
 
     return ConflictResultRecord(
         has_major_conflict=bool(conflicts),

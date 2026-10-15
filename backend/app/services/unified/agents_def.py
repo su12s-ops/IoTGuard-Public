@@ -7,6 +7,7 @@
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict
@@ -30,10 +31,11 @@ class IntelligenceSourceQuery(BaseModel):
 
 def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str = "",
                                     package_name: str = "") -> dict[str, Any]:
-    """查询 CVE 多源情报状态包（Canonical/NVD/CISA KEV/EPSS/Kylin，只读）。
+    """查询 CVE 多源情报状态包（Canonical/NVD/CISA KEV/EPSS/Kylin/OpenWrt，只读）。
 
-    供漏洞分析师做「厂商公告语义理解 + 情报冲突核查」（E3/E4 类案例的
-    事实基础）。来源数据与 System B 证据包同源（get_source_bundle），
+    供漏洞分析师做「厂商公告语义理解 + 情报冲突核查」（E3/E4/E5 类案例的
+    事实基础）。来源数据与 System B 证据包同源（get_source_bundle），并补充
+    操作员登记的 OpenWrt 厂商公告（与 System B 证据包的 OPENWRT 项同源）——
     不引入新的情报能力，只把它开放为 Agent 2 的专属工具。
     """
     from app.services.vulnerability_intelligence.service import get_source_bundle
@@ -42,6 +44,19 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
         return {"error": "缺少 cve_id"}
     vulnerability = db.query(models.VulnerabilityInfo).filter_by(cve_id=cve_id).one_or_none()
     bundle = get_source_bundle(db, cve_id, release=release, package_name=package_name)
+    advisories = db.query(models.OpenWrtAdvisory).filter_by(cve_id=cve_id).all()
+    if advisories:
+        bundle["openwrt_advisory"] = {
+            "status": "operator_supplied",
+            "records": [{
+                "package_name": item.package_name,
+                "release": item.release,
+                "affected_versions": json.loads(item.affected_versions_json or "[]"),
+                "fixed_versions": json.loads(item.fixed_versions_json or "[]"),
+                "source_url": item.source_url,
+                "note": "操作员依据官方公告人工登记，需结合原文核对；仅适用于对应 release。",
+            } for item in advisories],
+        }
     return {
         "cve_id": cve_id,
         "known_in_library": vulnerability is not None,

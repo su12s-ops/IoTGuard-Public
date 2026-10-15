@@ -619,13 +619,16 @@ def node_decide(ctx: RunContext):
             "capability_marks": state.capability_marks,
             "follow_up_results": state.follow_up_results or None,
             "follow_up_round_used": state.follow_ups_used,
+            # 防幻觉：可引用的证据 ID 全集（引用之外一律视为编造）
+            "available_evidence_ids": sorted(_decision_known_ids(state)),
         }
         context_text = (
             "综合以下结构化材料完成研判与处置规划。\n"
             f"{json.dumps(decision_context, ensure_ascii=False, default=str)}\n"
             "要求：\n"
             "1. impact_status/risk_direction/recommended_action 只能取 schema 枚举；"
-            "supporting_evidence_ids 只能引用材料中已存在的 ID；\n"
+            "supporting_evidence_ids 只能引用 available_evidence_ids 中列出的证据 ID"
+            "（CVE 编号、版本号、主机名都不是证据 ID，禁止填入）；\n"
             "2. 独立核对关键证据：对承重证据逐条给 key_evidence_checks（存在性/相关性/时效性）；\n"
             "3. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
             f"{state.budgets.follow_up_rounds - state.follow_ups_used}）；已提供 follow_up_results 时优先使用，不要重复申请；\n"
@@ -663,10 +666,9 @@ def node_decide(ctx: RunContext):
     return decide
 
 
-def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
+def _decision_known_ids(state: UnifiedAnalysisState) -> set[str]:
     """决策者可引用的证据全集：事件证据包 + 运行时证据 + 各专家报告已引用项。"""
-    known: set[str] = set(ctx.packet_evidence_ids)
-    known.update(state.baseline.get("packet_evidence_ids") or [])
+    known: set[str] = set(state.baseline.get("packet_evidence_ids") or [])
     runtime = state.runtime or state.runtime_program_fallback or {}
     known.update(runtime.get("evidence_ids") or [])
     for finding in runtime.get("findings") or []:
@@ -677,6 +679,12 @@ def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
             if isinstance(finding, dict):
                 known.update(finding.get("supporting_evidence_ids") or [])
     known.discard("")
+    return known
+
+
+def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
+    """防幻觉校验：决策者引用必须在可引用全集内（错误信息附合法 ID 清单）。"""
+    known = _decision_known_ids(state)
 
     def validate(output: dict[str, Any]) -> list[str]:
         errors: list[str] = []
@@ -688,7 +696,10 @@ def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
         cited.discard("")
         unknown = sorted(cited - known)
         if unknown:
-            errors.append(f"引用了材料中不存在的证据 ID（防幻觉校验失败）: {unknown[:5]}")
+            # 反馈必须附带合法 ID 清单（实验发现：不附清单时模型会用 CVE/版本号填充）
+            errors.append(
+                f"引用了材料中不存在的证据 ID（防幻觉校验失败）: {sorted(unknown)[:5]}；"
+                f"supporting_evidence_ids/key_evidence_checks.evidence_id 只能取: {sorted(known)[:20]}")
         return errors
     return validate
 

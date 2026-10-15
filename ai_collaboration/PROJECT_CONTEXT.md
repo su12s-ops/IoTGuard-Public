@@ -30,11 +30,12 @@ collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性
 simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 ```
 
-### 两套"四智能体"体系（2026-10-15 审计核实，详见 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md）
+### 统一四智能体（Stage 9B 起，2026-10-15 落地；演进自 Stage 9 审计的双体系）
 
-- **System A（services/agents/，AgentOps 页展示）**：device_intelligence / vulnerability_intelligence / runtime_behavior / remediation_verification，真工具循环。runtime 智能体对 eBPF 证据的消费与风险聚合有实测增量（屏蔽实验 62→54 分）；但主输出 risk_json 不进风险研判主链路（死端），remediation 智能体因上下文饥饿+授权依赖结构性空转——整改方案 R1-R8 待评审。
-- **System B（event_review_pipeline.py，风险研判页/总览大屏展示）**：evidence_audit / impact_assessment / exposure_runtime / decision_coordinator，单次类型化 LLM + 确定性证据包 + 门禁。输出全链真实消费；真实 LLM 消融实验证明其在规则误报/矛盾情报/过期监控案例上优于纯规则（规则处置正确 2/7 vs 智能体 6/7，影响判定 7/7，0 证据幻觉）。
-- 两体系职责互不映射、数据互不引用（F2，待整改）；竞赛表述不得混用"自主取证智能体"口径。
+- **统一编排器（services/unified/，唯一正式架构，pipeline_version=unified-four-agent-v1）**：LangGraph 1.2 单图——prepare(路由分层)→asset_investigator→(vulnerability_analyst ∥ runtime_analyst)→detect_conflicts(7 确定性规则)→[定向复议≤1]→decision_planner([补查≤1])→finalize(审计门禁/F5 聚合/强制待审批计划)。能力来源：System A 的 14 只读工具与工具循环基座 + System B 的证据包/冲突/门禁/有界方向映射；F1/F3/F5/F6/F7/F9 与 §7 八问题已修复并有测试锁定。
+- **开关**：`LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on`（默认 off=System B 原链路零变化；shadow=影子对照只写 unified_analysis_run；on=/api/analysis 经 adapter 切换统一编排器）。影子隔离由逐字段快照测试锁定。
+- **旧体系现状（能力来源与历史兼容，非正式入口）**：System A（services/agents/）与 System B（event_review_pipeline.py）在开关 off 时仍是正式链路（System B）；on 切换稳定后按 IOT_STAGE9B_MIGRATION_NOTES.md §5 清单退役。
+- 真实 LLM 对照实验部分完成（余额耗尽待续跑，见 IOT_STAGE9B_EXPERIMENT_REPORT.md）；样本量不足以判定优劣，不以部分数据下结论。
 
 ## 关键安全边界（不可回退）
 

@@ -55,10 +55,14 @@ class ChatClient(Protocol):
 class DeepSeekChatClient:
     """真实客户端：openai SDK 直连 DeepSeek 兼容接口。"""
 
-    def __init__(self, model: str, api_key: str, base_url: str, timeout: int = 60):
+    def __init__(self, model: str, api_key: str, base_url: str, timeout: int = 60,
+                 max_retries: int = 1):
         from openai import OpenAI
         self._model = model
-        self._client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"), timeout=timeout)
+        # max_retries=1：限流退化时单次调用不再指数退避多次（实验实测单智能体
+        # 曾因此拖到 17 分钟）；整体时限由编排器的 deadline 协同约束
+        self._client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"), timeout=timeout,
+                              max_retries=max_retries)
 
     def complete(self, messages, tools=None):
         kwargs: dict[str, Any] = {
@@ -97,7 +101,7 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 
 def parse_structured_output(content: str) -> dict[str, Any]:
-    """从模型回复中提取 JSON 对象；容忍 ```json 围栏与前后说明文字。"""
+    """从模型回复中提取 JSON 对象；容忍 ```json 围栏、前后说明与尾部多余文字。"""
     text = (content or "").strip()
     if not text:
         raise ValueError("模型返回为空")
@@ -106,10 +110,23 @@ def parse_structured_output(content: str) -> dict[str, Any]:
     try:
         parsed = json.loads(candidate)
     except json.JSONDecodeError:
+        # 依次尝试：首尾大括号切片 → 从每个 '{' 起点的平衡解析（容忍
+        # 尾部说明文字/第二个对象，"Extra data" 类失败不再整体报废）
         start, end = candidate.find("{"), candidate.rfind("}")
-        if start < 0 or end <= start:
-            raise ValueError("模型回复中未找到 JSON 对象")
-        parsed = json.loads(candidate[start:end + 1])
+        parsed = None
+        if 0 <= start < end:
+            try:
+                parsed = json.loads(candidate[start:end + 1])
+            except json.JSONDecodeError:
+                decoder = json.JSONDecoder()
+                for pos in (index for index, char in enumerate(candidate) if char == "{"):
+                    try:
+                        parsed, _ = decoder.raw_decode(candidate[pos:])
+                        break
+                    except json.JSONDecodeError:
+                        continue
+        if parsed is None:
+            raise ValueError("模型回复中未找到可解析的 JSON 对象")
     if not isinstance(parsed, dict):
         raise ValueError("模型输出必须是 JSON 对象")
     return parsed

@@ -2,6 +2,13 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-15 — Stage 9B：统一四智能体架构重建（M0-M4 部分，LangGraph 唯一编排器）
+
+- M0（f6bd0ef）：IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md——LangGraph 选型实测论证（Python 3.14 + 1.2.15 冒烟）、四 Agent Schema/路由/预算/影子-切换-退役/验收设计；对比否决 OpenAI Agents SDK 与 MS Agent Framework
+- M1-M3（9185144）：`backend/app/services/unified/` 唯一编排器（LangGraph 单图 9 节点、asset_investigator/vulnerability_analyst/runtime_analyst/decision_planner 四角色、A2∥A3 并行、有界复议/补查、UsageMeter 预算、统一 Trace）；F1/F3/F5/F6/F7/F9 与 §7 八问题修复；`UnifiedAnalysisRun` 影子表 + `LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on` 开关 + /api/analysis 兼容适配层 + F2/R1 device_context_json 对账列；前端角色映射与品牌统一；新增 52 项专项测试，全量 **549 passed / 0 failed**（499 基线零回归）
+- M4 部分：真实 LLM 对照实验（backend/scripts/stage9b_unified_compare.py，可复跑+断点续跑）——System B 全量 10 事件 44 调用 242k tokens 完成；统一链 7 次运行后 DeepSeek 账户余额耗尽（402），剩余运行待充值；部分数据显示人工路由 6/6、引用幻觉 0、E1#1 全链成功与真值一致；实验暴露并修复统一链 5 项真实缺陷（图节点异常保护回归/解析容错/决策证据 ID 清单下发/情报冲突规则收紧/限流 max_retries=1）；IOT_STAGE9B_EXPERIMENT_REPORT.md 如实留档，不含未完成部分的结论
+- 诚实性：样本量不足以判定新旧优劣，正式入口保持 System B（开关默认 off）；所有失败运行原文留档未删除
+
 ## 2026-10-15 — 第九阶段前置专项：四智能体有效性深度审计（零生产代码改动，Stage 9B 未启动）
 
 - 交付 IOT_STAGE9_AGENT_EFFECTIVENESS_AUDIT.md：双"四智能体"体系架构核验（System A 设备编排=真工具循环、System B 逐风险评审=单次类型化 LLM+确定性证据包/门禁）、逐智能体输入→工具→输出→消费追踪、摆设化明确结论

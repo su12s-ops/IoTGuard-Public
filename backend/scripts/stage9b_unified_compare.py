@@ -360,6 +360,10 @@ def main():
     parser.add_argument("--repeats", type=int, default=3,
                         help="E1/E3/E5 统一链重复运行次数（含首次）")
     parser.add_argument("--skip-old", action="store_true", help="跳过 System B 对照运行")
+    parser.add_argument("--unified-only", action="store_true",
+                        help="续跑模式：只运行统一链（历史 System B 结果已在上一轮 JSON 中）")
+    parser.add_argument("--cases", default="",
+                        help="逗号分隔的案例过滤（如 CVE-2026-81004,CVE-2026-81005）；空=全部")
     args = parser.parse_args()
 
     out_dir = Path(args.out)
@@ -405,7 +409,7 @@ def main():
     }
 
     # ── 对照组 1：System B 原链路（全量 5+2 案例 1 次） ──
-    if not args.skip_old:
+    if not args.skip_old and not args.unified_only:
         import app.services.event_review_pipeline as erp
         counter_old = UsageCounter()
 
@@ -458,8 +462,11 @@ def main():
     unified_factory = _make_unified_client_factory(unified_counter)
     unified_runs: list[dict] = []
     repeat_cases = ["CVE-2026-81001", "CVE-2026-81003", "CVE-2026-81005"]
+    case_filter = {item.strip() for item in args.cases.split(",") if item.strip()}
     plan: list[tuple[str, any, int]] = []
     for case in CASE_ORDER + CASE_ORDER_X:
+        if case_filter and case not in case_filter:
+            continue
         for risk in risks_by_case.get(case, []):
             repeats = args.repeats if case in repeat_cases else 1
             for index in range(repeats):
@@ -474,21 +481,23 @@ def main():
     results["unified"] = {"usage": unified_counter.as_dict(), "runs": unified_runs}
 
     # ── 对照组 3：失败恢复（屏蔽 runtime_analyst，E1） ──
-    mask_counter = UsageCounter()
-    mask_factory = _make_unified_client_factory(mask_counter, mask_agent="runtime")
-    risk_e1 = risks_by_case["CVE-2026-81001"][0]
-    print("== 统一链·失败恢复（屏蔽 runtime_analyst，E1） ==")
-    masked = run_unified_case(db, risk_e1, mask_factory, "uni-mask-runtime-e1")
-    masked["graded"] = grade_unified(masked, TRUTH["CVE-2026-81001"])
-    results["unified_mask_runtime"] = {
-        "usage": mask_counter.as_dict(),
-        "event": masked,
-        "expectation": {
-            "degraded_recorded": "runtime_analyst" in (masked.get("degraded_roles") or []),
-            "human_review": (masked.get("policy") or {}).get("status") == "pending_human_review",
-            "verdict_still_produced": bool(masked.get("verdict")),
-        },
-    }
+    results.setdefault("unified_mask_runtime", {"event": None, "expectation": {}})
+    if not case_filter or "CVE-2026-81001" in case_filter:
+        mask_counter = UsageCounter()
+        mask_factory = _make_unified_client_factory(mask_counter, mask_agent="runtime")
+        risk_e1 = risks_by_case["CVE-2026-81001"][0]
+        print("== 统一链·失败恢复（屏蔽 runtime_analyst，E1） ==")
+        masked = run_unified_case(db, risk_e1, mask_factory, "uni-mask-runtime-e1")
+        masked["graded"] = grade_unified(masked, TRUTH["CVE-2026-81001"])
+        results["unified_mask_runtime"] = {
+            "usage": mask_counter.as_dict(),
+            "event": masked,
+            "expectation": {
+                "degraded_recorded": "runtime_analyst" in (masked.get("degraded_roles") or []),
+                "human_review": (masked.get("policy") or {}).get("status") == "pending_human_review",
+                "verdict_still_produced": bool(masked.get("verdict")),
+            },
+        }
 
     # ── 汇总 ──
     summary = summarize(results)
@@ -523,12 +532,14 @@ def summarize(results: dict) -> dict:
                           for key in ("impact_ok", "direction_ok", "action_ok", "human_ok")},
         "unified_citation_hallucination": sum(
             0 if run["graded"]["citation_ok"] else 1 for run in unified_runs),
+        "unified_completed_runs": sum(1 for run in unified_runs if run["status"] == "completed"),
+        "unified_failed_runs": sum(1 for run in unified_runs if run["status"] != "completed"),
         "unified_avg_llm_calls_per_event": round(
             results["unified"]["usage"]["llm_calls"] / max(1, len(unified_runs)), 2),
         "unified_total_tokens": results["unified"]["usage"]["total_tokens"],
         "unified_total_wall_seconds": round(
             sum(run["wall_seconds"] for run in unified_runs), 1),
-        "mask_recovery": results["unified_mask_runtime"]["expectation"],
+        "mask_recovery": results.get("unified_mask_runtime", {}).get("expectation", {}),
     }
     if "old_system_b" in results:
         old_graded = results["old_system_b"]["graded"]

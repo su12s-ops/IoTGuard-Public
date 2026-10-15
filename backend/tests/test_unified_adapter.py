@@ -162,6 +162,40 @@ class TestFormalSink:
 
 
 class TestBatchAdapter:
+    def test_simple_tier_immediate_fix_requires_human(self, session_factory, monkeypatch):
+        """实验修复：规则直通的 immediate_fix 不得 auto_confirmed（与主门禁一致）。
+
+        实验实测：edge-01 zlib（Low）规则基线为 immediate_fix（作为 nginx 依赖
+        contextual→likely），曾直通为 auto_confirmed——已修复为强制人工。
+        """
+        import app.services.unified.runner as runner_mod
+        monkeypatch.setattr(runner_mod, "SessionLocal", session_factory)
+        risk_id = _setup_risk(session_factory, level="Low", score=30.51)
+        db = session_factory()
+        db.query(models.RiskAssessment).filter_by(id=risk_id).update(
+            {"preliminary_decision": "immediate_fix"})
+        db.commit()
+        row = models.UnifiedAnalysisRun(run_id="UA-simple-ifx", task_type="risk_review",
+                                        target_type="linux_host", target_ref="edge-01",
+                                        mode="shadow", risk_id=risk_id)
+        db.add(row)
+        db.commit()
+        row_pk = row.id
+        db.close()
+
+        def exploding_factory():
+            raise AssertionError("simple 分层不允许任何 LLM 调用")
+
+        db = session_factory()
+        row = db.get(models.UnifiedAnalysisRun, row_pk)
+        runner_mod.run_unified_sync(db, row, client_factory=exploding_factory)
+        db.refresh(row)
+        final = json.loads(row.state_json)["final"]
+        assert final["rule_tier_simple"] is True
+        assert final["policy"]["status"] == "pending_human_review"
+        assert "high_impact_operation_requires_human" in final["policy"]["reasons"]
+        db.close()
+
     def test_run_review_analysis_unified_shape_and_effects(self, session_factory, monkeypatch):
         import app.services.unified.runner as runner_mod
         monkeypatch.setattr(runner_mod, "SessionLocal", session_factory)

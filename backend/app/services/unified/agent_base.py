@@ -168,7 +168,14 @@ class UnifiedToolLoopAgent:
                     f"{context}\n\n上一次输出未通过结构化校验，错误：{feedback_history[-1]}。"
                     "请修正后重新输出完整 JSON（只输出 JSON 对象）。"
                 )
-            result = self._run_once(db, attempt_context, deadline, feedback_history, triaged)
+            try:
+                result = self._run_once(db, attempt_context, deadline, feedback_history, triaged)
+            except TimeoutError as exc:
+                last_error = str(exc) or "timeout"
+                continue
+            except Exception as exc:   # LLM 网络错误、解析失败等 → 重试/降级，绝不击穿图节点
+                last_error = f"{type(exc).__name__}: {exc}"
+                continue
             result.attempts = attempt + 1
             result.latency_ms = int((time.monotonic() - started) * 1000)
             result.feedback_history = feedback_history

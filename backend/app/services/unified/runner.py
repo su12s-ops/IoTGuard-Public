@@ -36,13 +36,17 @@ PersistSink = Callable[[Session, models.UnifiedAnalysisRun, UnifiedAnalysisState
 def _simple_tier_state(state: UnifiedAnalysisState) -> UnifiedAnalysisState:
     """简单分层：0 次 LLM，规则基线直通（审计 R8）。结论显式标注来源。"""
     baseline = state.baseline
+    rule_action = baseline.get("preliminary_decision") or "monitor"
+    # 与主门禁一致：immediate_fix 属于高影响操作，规则直通也不得自动确认
+    needs_human = ((baseline.get("preliminary_level") or "") in {"High", "Critical"}
+                   or rule_action == "immediate_fix")
     state.decision = {
         "verdicts": [{
             "object_id": state.object_id or baseline.get("object_id", state.target_ref),
             "impact_status": "rule_baseline",
             "risk_direction": "maintain",
-            "recommended_action": baseline.get("preliminary_decision") or "monitor",
-            "recommended_priority": "low",
+            "recommended_action": rule_action,
+            "recommended_priority": "high" if needs_human else "low",
             "confidence": 0.5,
             "supporting_evidence_ids": [],
             "reason": "规则分层直通：低复杂度候选不经 LLM 评审（成本分层，理由入 Trace 可审计）",
@@ -52,8 +56,8 @@ def _simple_tier_state(state: UnifiedAnalysisState) -> UnifiedAnalysisState:
         "pipeline_version": PIPELINE_VERSION,
         "rule_tier_simple": True,
         "policy": {
-            "status": "pending_human_review" if (baseline.get("preliminary_level") or "") in {"High", "Critical"} else "auto_confirmed",
-            "reasons": ["rule_tier_simple"],
+            "status": "pending_human_review" if needs_human else "auto_confirmed",
+            "reasons": ["rule_tier_simple"] + (["high_impact_operation_requires_human"] if rule_action == "immediate_fix" else []),
             "adjustment": 0,
             "final_score": baseline.get("preliminary_score"),
             "final_level": baseline.get("preliminary_level"),
