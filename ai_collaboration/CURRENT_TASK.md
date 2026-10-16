@@ -1,5 +1,18 @@
 # 当前任务
 
+## Stage 9B M4.6（2026-10-16—17）
+
+当前依据：`IOTGUARD_UNIFIED_AGENT_PRODUCTION_READINESS.md`。开发前 HEAD/origin/main=`10be6f0`，工作区干净；M4.5 基线711/0。正式入口仍是 System B；统一 flag=off；设备修复与 Ubuntu 隔离修复开关均为0。
+
+- [x] 三类真实对象：curl风险126、已纠正OpenSSL历史风险12、OpenWrt真实零候选；完整四角色与旧System B只读对照，保留失败和分歧。
+- [x] 复用collection_tasks与Linux pull节点，打通Agent申请→精确摘要授权→固定只读Collector→INV/Trace→四角色再研判；同事实置信不增长。
+- [x] 修正真实资产/版本/发行版CVE后缀/完整性/嵌套证据消费；AgentOps展示调查申请与前后结果。
+- [x] 单一正式写入路径及shadow禁sink校验；126条正式风险迁移快照与只读回滚差异规划；没有切on。
+- [x] 最终全量729 passed / 0 failed（842.87秒，5个既有警告）；新增必要专项18/0；前端21/0及构建；52个引用解析/原文摘要通过；暂存26文件凭据材料匹配0。
+- [ ] Mimosa仍无入口，安全验收未关闭；新旧方向口径等待人工复核，不能冒签。
+
+最终全量回归、证据校验、Git交付以本轮报告末尾验收补录为准。完成后停止，等待正式迁移审批；不修复设备、不删除旧编排器。下方M4.5及更早内容为历史记录。
+
 ## Stage 9B M4.5（2026-10-16）
 
 当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。

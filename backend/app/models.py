@@ -508,6 +508,24 @@ class CollectionEvidence(Base):
     collected_at = Column(DateTime, default=utcnow)
 
 
+class InvestigationRequest(Base):
+    """Agent proposal, operator authorization and immutable reanalysis lineage."""
+    __tablename__ = "investigation_request"
+    id = Column(String(48), primary_key=True)
+    source_run_id = Column(String(48), nullable=False, index=True)
+    asset_id = Column(Integer, ForeignKey("linux_asset.id"), nullable=False)
+    request_json = Column(Text, nullable=False)
+    request_hash = Column(String(64), nullable=False)
+    before_json = Column(Text, nullable=False)
+    status = Column(String(32), default="awaiting_authorization")
+    collection_run_id = Column(String(64), default="")
+    reanalysis_run_id = Column(String(48), default="")
+    authorized_by = Column(String(128), default="")
+    authorization_reason = Column(Text, default="")
+    result_json = Column(Text, default="{}")
+    created_at = Column(DateTime, default=utcnow)
+
+
 class OfficialCveRecord(Base):
     """Append-only official response or failed fetch; never a runtime event."""
     __tablename__ = "official_cve_record"

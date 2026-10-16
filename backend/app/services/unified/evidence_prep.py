@@ -457,6 +457,8 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
             public_services = _public_services(db, target_ref)
             asset_facts = {
                 "inventory_provenance": ({"sha256": asset_row.inventory_sha256,
+                    "inventory_complete": asset_row.inventory_complete,
+                    "package_count": len(asset_row.packages),
                     "collected_at": str(asset_row.inventory_collected_at),
                     "identity_source": asset_row.identity_source,
                     **{k: v for k, v in json.loads(asset_row.inventory_metadata_json or "{}").items()

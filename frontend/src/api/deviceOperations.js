@@ -59,3 +59,5 @@ export const fetchUnifiedSpecs = () => api.get("/unified/specs").then(r => r.dat
 export const fetchUnifiedRuns = params => api.get("/unified/runs", { params }).then(r => r.data);
 export const fetchUnifiedRun = runId => api.get("/unified/runs/" + runId).then(r => r.data);
 export const fetchUnifiedComparison = runId => api.get("/unified/runs/" + runId + "/comparison").then(r => r.data);
+export const authorizeInvestigation = (id, payload) => api.post(`/unified/investigations/${id}/authorize`, payload, control()).then(r => r.data);
+export const resumeInvestigation = id => api.post(`/unified/investigations/${id}/resume`, null, control()).then(r => r.data);

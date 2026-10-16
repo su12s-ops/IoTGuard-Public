@@ -1,5 +1,17 @@
 # 变更日志
 
+## Stage 9B M4.6（2026-10-16—17）：统一四智能体主动调查业务闭环
+
+- 基于实际origin/main=`10be6f0`推进，维持既有四Agent/LangGraph，不扩展包修复能力。
+- 新增受控隔离shadow入口、InvestigationRequest与inventory确定性策略，复用collection_tasks、固定Collector及已认证Linux pull节点；精确摘要授权、原文/资产绑定、幂等/并发领取与Trace关联。
+- 新采集回流四角色；记录已解决事实、剩余问题、判断字段与完整输出前后对照；同事实禁止置信增长。
+- 真实业务修正：Linux主机网络/画像回查、CVE发行版后缀、当前安装版本、完整清单与展示截断、嵌套证据Trace；AgentOps加入逐申请授权与再研判展示。
+- 迁移准备：唯一/api/analysis正式切换点，旧/新写入器互斥与shadow禁sink；只读快照与回滚差异规划，保留全部历史审计；没有实际迁移。
+- 三类真实对象及SystemB同对象对照；首轮失败、重要分歧和待人工复核记录保留。正式字段和历史19条运行未变。
+- 报告`IOTGUARD_UNIFIED_AGENT_PRODUCTION_READINESS.md`及五份协作文档；最终回归/扫描/Commit见报告与最终回复。Mimosa仍缺入口，不能宣称安全全验收通过。
+- 最终全量729/0（842.87秒，5既有警告），必要新增18/0、前端21/0及构建；52引用/原文摘要通过；暂存26文件敏感匹配0。当前本地令牌与既有演示默认值匹配已列未关闭轮换事项。
+- 交付后停止等待正式迁移审批；flag=off、设备/Ubuntu隔离写开关均0，无软件包修复、无旧编排器删除。
+
 ## Stage 9B M4.5（2026-10-16）
 
 当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。

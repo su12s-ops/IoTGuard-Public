@@ -992,6 +992,10 @@ async def _safe_process_event(packet: EvidencePacket, model_client, progress: _R
 
 
 def _persist_event_result(db: Session, run_id: str, outcome: dict[str, Any]) -> None:
+    """Persist only while System B owns the formal entry."""
+    from app import config
+    if config.UNIFIED_PIPELINE_MODE == "on":
+        raise ValueError("system_b_formal_writer_disabled")
     packet: EvidencePacket = outcome["packet"]
     risk = db.get(models.RiskAssessment, packet.risk_id)
     if risk is None:
@@ -1263,6 +1267,9 @@ def _fail_selected(db: Session, selected: list[models.RiskAssessment], reason: s
 
 
 def run_review_analysis(db: Session, run_id: str | None = None, selected_risks=None, selection_result=None, progress_callback=None) -> dict[str, Any]:
+    from app import config
+    if config.UNIFIED_PIPELINE_MODE == "on":
+        raise ValueError("system_b_formal_writer_disabled")
     del selection_result
     selected = list(selected_risks or _selection(db)["_selected_risks"])
     run_id = run_id or uuid.uuid4().hex[:12]
@@ -1352,6 +1359,9 @@ def _persist_report(db: Session, report: models.AnalysisReport, result: dict[str
 
 
 def generate_and_save_report(db: Session, run_id: str | None = None, background: bool = False) -> dict[str, Any]:
+    from app import config
+    if config.UNIFIED_PIPELINE_MODE == "on":
+        raise ValueError("system_b_formal_writer_disabled")
     selection = _selection(db)
     selected = selection["_selected_risks"]
     run_id = run_id or uuid.uuid4().hex[:12]

@@ -82,7 +82,7 @@
 
       <el-tab-pane label="统一编排（影子）" name="unified">
         <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
-          title="影子研判：统一四智能体（LangGraph 唯一编排器）在隔离入口运行，只写影子运行表，不改变正式风险结论、不触发设备写操作；正式入口仍由现有管线提供。" />
+          title="影子研判：统一四智能体在隔离入口运行，单独保存影子结论与调查审计，不改变正式风险结论；补证须授权固定只读采集，影子计划不授予修复权限；正式入口仍由现有管线提供。" />
         <section class="operation-section">
           <div class="section-head">
             <div>
@@ -163,6 +163,25 @@
               <el-table-column label="工具调用" min-width="280"><template #default="{ row }">{{ (row.tool_calls || []).join('、') || '—' }}</template></el-table-column>
               <el-table-column label="引用证据" min-width="240"><template #default="{ row }">{{ (row.evidence_ids || []).join('、') || '—' }}</template></el-table-column>
             </DataTable>
+          </section>
+
+          <section class="operation-section" v-if="unifiedRun.investigations?.length">
+            <h2>主动补证与再研判（影子）</h2>
+            <p>授权仅允许该资产的固定清单采集，不授予修复权限。清单不能解决运行时缺口；无实质更新时置信度不得提高。</p>
+            <el-form inline>
+              <el-form-item label="已登记连接 ID"><el-input-number v-model="investigationForm.connection_id" :min="1" /></el-form-item>
+              <el-form-item label="授权人"><el-input v-model="investigationForm.actor" /></el-form-item>
+              <el-form-item label="授权依据"><el-input v-model="investigationForm.reason" /></el-form-item>
+            </el-form>
+            <div v-for="item in unifiedRun.investigations" :key="item.id" style="margin-bottom: 16px">
+              <strong>{{ item.request_json.question }}</strong>
+              <p>预期解决：{{ item.request_json.expected_effect }} · {{ item.status }}</p>
+              <p>采集任务：{{ item.collection_run_id || '未授权' }} · 新证据：{{ item.result_json.evidence_id || '尚无' }} · 缺口状态：{{ item.result_json.gap_resolution || '尚未复核' }}</p>
+              <el-button v-if="item.status === 'awaiting_authorization'" :disabled="!canOperate || !investigationForm.actor.trim() || !investigationForm.reason.trim()" @click="authorizeEvidence(item)">授权此申请的只读采集</el-button>
+              <el-button v-if="item.status === 'authorized'" :disabled="!canOperate" @click="resumeEvidence(item)">采集完成后重新研判</el-button>
+              <el-button v-if="item.reanalysis_run_id" @click="viewUnifiedRun(item.reanalysis_run_id)">查看再研判</el-button>
+              <details v-if="item.result_json.agents"><summary>四角色前后判断与变化</summary><pre style="white-space: pre-wrap; max-height: 420px; overflow: auto">{{ JSON.stringify(item.result_json, null, 2) }}</pre></details>
+            </div>
           </section>
 
           <section class="operation-section" v-if="unifiedPlanActions.length">
@@ -408,7 +427,7 @@ import {
   startAgentAnalysis, fetchAgentRuns, fetchAgentRun,
   startMqttWorkflow, fetchWorkflowRuns, fetchWorkflowRun,
   fetchTraces, fetchTraceSummary, fetchTraceDetail, fetchTraceHarness, fetchTraceEvidence,
-  fetchUnifiedRuns, fetchUnifiedRun, fetchUnifiedComparison
+  fetchUnifiedRuns, fetchUnifiedRun, fetchUnifiedComparison, authorizeInvestigation, resumeInvestigation
 } from "../api/deviceOperations";
 import { useRouter, useRoute } from "vue-router";
 
@@ -430,6 +449,20 @@ let timer = null;
 const analysisForm = reactive({ target: "", targetType: "device" });
 const workflowForm = reactive({ host: "", port: 1883 });
 const canOperate = computed(() => Boolean(controlSession.token));
+const investigationForm = reactive({ connection_id: 1, actor: "", reason: "" });
+async function authorizeEvidence(item) {
+  try {
+    await authorizeInvestigation(item.id, { ...investigationForm, request_hash: item.request_hash });
+    await viewUnifiedRun(unifiedRun.value.run_id);
+  } catch (e) { error.value = errorMessage(e); }
+}
+async function resumeEvidence(item) {
+  try {
+    await resumeInvestigation(item.id);
+    ElMessage.success("已请求影子再研判，请刷新查看进度");
+    await viewUnifiedRun(unifiedRun.value.run_id);
+  } catch (e) { error.value = errorMessage(e); }
+}
 const stageOrder = ["DEVICE", "VULNERABILITY", "RUNTIME", "RISK", "REMEDIATION", "VERIFY"];
 const agentRows = computed(() => Object.entries(agentRun.value?.agents || {}).map(([name, log]) => ({ name, ...log })));
 const stageActive = computed(() => {

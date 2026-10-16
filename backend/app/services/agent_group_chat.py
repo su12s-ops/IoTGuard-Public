@@ -108,6 +108,9 @@ def _risk_for_compat_object(db: Session, object_id: str):
 
 def _apply_object_verdicts(db: Session, valid_verdicts, candidate_object_ids, failed_agents=None):
     """Legacy verdict adapter, still strictly bound to one object per verdict."""
+    from app import config
+    if config.UNIFIED_PIPELINE_MODE == "on":
+        raise ValueError("system_b_formal_writer_disabled")
     stats = {"updated": 0, "not_found": 0, "human_review": 0}
     for verdict in valid_verdicts:
         oid = str(verdict.get("object_id", ""))

@@ -196,6 +196,20 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                     refs.append(str(finding["cve_id"]))
                 if finding.get("evidence_id"):
                     refs.append(str(finding["evidence_id"]))
+        def collect_refs(value):
+            if isinstance(value, dict):
+                for key, entry in value.items():
+                    if key in {"supporting_evidence_ids", "evidence_ids"} and isinstance(entry, list):
+                        refs.extend(str(ref) for ref in entry)
+                    elif key == "evidence_id" and entry:
+                        refs.append(str(entry))
+                    else:
+                        collect_refs(entry)
+            elif isinstance(value, list):
+                for entry in value:
+                    collect_refs(entry)
+        collect_refs(output)
+        refs = list(dict.fromkeys(refs))
         ctx.emit(db, "agent_finished" if output is not None else "agent_failed",
                  actor=spec.name, status="succeeded" if output is not None else "failed",
                  is_llm_step=True,
@@ -458,10 +472,12 @@ def _candidate_context(db: Session, state: UnifiedAnalysisState,
     """漏洞分析师的候选清单（规则命中，只读；不含规则分数——防锚定）。"""
     if risk is not None:
         match = db.get(models.VulnerabilityMatch, risk.match_id) if risk.match_id else None
+        current = db.query(models.AssetPackage).filter_by(asset_id=risk.asset_id, package_name=risk.package_name).first()
         return [{
             "cve_id": risk.cve_id,
             "package_name": risk.package_name,
-            "installed_version": match.installed_version if match else "",
+            "installed_version": current.package_version if current else (match.installed_version if match else ""),
+            "historical_installed_version": match.installed_version if match else "",
             "fixed_version": match.fixed_version if match else "",
             "match_status": match.match_status if match else risk.affected_status,
         }]
@@ -526,6 +542,8 @@ def node_investigate_asset(ctx: RunContext):
             return {"stage_status": state.record_stage("investigate_asset", "skipped")}
         context_text = (
             f"调查目标资产: {state.target_ref}（类型 {state.target_type}）。\n"
+            f"业务调查问题: {state.investigation_goal}\n"
+            f"本次候选包（完整清单截断时仍须逐一调查）: {json.dumps(state.candidate_context, ensure_ascii=False)}\n"
             "请先调用工具获取真实画像、暴露面与运行时数据质量，再输出结构化结论。\n"
             "evidence_inventory 必须来自 query_runtime_data_quality 的真实返回；"
             "evidence_quality 按覆盖/新鲜度/缺口如实评级。\n"
@@ -615,9 +633,13 @@ def node_analyze_vulnerability(ctx: RunContext):
                 f"\n资产画像摘要（来自资产调查员）: device_type={investigation.get('device_type')} "
                 f"firmware={investigation.get('firmware_version')} "
                 f"os={investigation.get('os')} 组件数={len(investigation.get('components') or [])} "
-                f"证据质量={investigation.get('evidence_quality')}")
+                f"证据质量={investigation.get('evidence_quality')}\n"
+                f"已调查组件及版本（最多20项，非完整性证明）: {json.dumps((investigation.get('components') or [])[:20], ensure_ascii=False)}\n"
+                f"原始清单来源: {json.dumps(((_prep(state).get('asset_facts') or {}).get('inventory_provenance') or {}), ensure_ascii=False)}\n"
+                "候选为空仅表示现有匹配范围内零命中，不得虚构 CVE，亦不得将画像显示截断误认为原始清单不完整。")
         context_text = (
             f"分析目标: {state.target_ref} 的候选 CVE 适用性。\n"
+            f"本次调查与补证上下文: {state.investigation_goal}\n"
             f"候选清单（规则命中，供核查——规则结论本身可能误报）:\n"
             f"{json.dumps(state.candidate_context, ensure_ascii=False)}"
             f"{asset_summary}\n"
@@ -679,6 +701,7 @@ def node_analyze_runtime(ctx: RunContext):
                               f"coverage={inventory.get('coverage_status')}")
         context_text = (
             f"分析目标: {state.target_ref} 的运行时行为与证据质量。"
+            f"本次调查与补证上下文: {state.investigation_goal}\n"
             f"关注软件包: {watched or '（无特定包，观察整体行为链）'}"
             f"{inventory_note}\n"
             "要求：用多标识键查询（device_id/IP/主机名均可）；引用 evidence_id 必须来自工具真实返回；"
@@ -891,6 +914,9 @@ def node_decide(ctx: RunContext):
             "9. 关键事实缺口可用 follow_up_requests 申请定向补充调查（本轮之后仍可用次数："
             f"{state.budgets.follow_up_rounds - state.follow_ups_used}），必须写明"
             "expected_effect（该补查消除哪个缺口、结果如何改变研判）；已提供 "
+            "需要重新核实当前安装包/资产身份时，collection_capability=inventory，向资产调查员或漏洞分析师提出"
+            "具体问题。程序只登记申请，须操作员授权后由固定 Collector 采集；不得要求命令、密钥、扩大白名单。"
+            "运行时进程/网络/心跳缺口不能用 inventory 解决，应标明当前能力不支持。collection_capability=database 仅重读既有库。"
             "follow_up_results 时：先评估每个补查结果与所提问题的相关性——答非所问的"
             "补查不得计入证据，补查返回更多信息本身不构成提高置信度的依据，只有当补查"
             "实质性改变关键事实时才调整结论/置信度并在 reason 说明改变点；不要重复申请；\n"
@@ -901,6 +927,7 @@ def node_decide(ctx: RunContext):
             "不要把 Falco 重启描述为 CVE 修复。rationale 说明前置条件与可能影响。\n"
             "11. 任一专家角色缺失（degraded_roles 非空，或 semantic_ablation_masked "
             "标注的实验性隐藏）时如实声明并在 reason 中说明影响。"
+            f"\n业务调查问题（未满足须明确申请支持的补采）：{state.investigation_goal}"
         )
         evidence_validator = _decision_evidence_validator(ctx, state)
 
@@ -923,6 +950,9 @@ def node_decide(ctx: RunContext):
                                            validate_fn=combined_validator)
         update: dict[str, Any] = {"stage_status": state.record_stage("decide", "succeeded")}
         if output is not None:
+            if state.follow_ups_used and state.decision:
+                from app.services.unified.investigation import clamp_confidence
+                clamp_confidence(state.decision, output)
             update["decision"] = output
         else:
             # 程序兜底（继承 System B fail-safe）：保留角色降级信息，不虚构裁定。
@@ -1164,6 +1194,20 @@ def node_execute_follow_ups(ctx: RunContext):
         update: dict[str, Any] = {"follow_ups_used": state.follow_ups_used + 1}
         degraded = list(state.degraded_roles)
         for request in requests:
+            if request.get("collection_capability") == "inventory":
+                db = ctx.session()
+                try:
+                    from app.services.unified.investigation import propose
+                    try:
+                        item = propose(db, state.run_id, request)
+                        results.append({"request_id": item.id, "question": request.get("question"),
+                            "status": "awaiting_authorization", "resolved": False,
+                            "note": "仅提出固定清单采集申请；须操作员授权，尚无新证据，不得提高置信度"})
+                    except ValueError as exc:
+                        results.append({"question": request.get("question"), "status": "policy_rejected", "resolved": False, "error": str(exc)})
+                finally:
+                    db.close()
+                continue
             spec = SPEC_BY_NAME.get(request.get("target_agent", ""))
             if spec is None:
                 results.append({"agent": request.get("target_agent", ""), "error": "unknown target"})
@@ -1192,6 +1236,8 @@ def node_execute_follow_ups(ctx: RunContext):
                                                       validate_fn=validator)
             entry: dict[str, Any] = {"agent": spec.name, "question": request.get("question", "")}
             if output is not None:
+                from app.services.unified.investigation import clamp_confidence
+                clamp_confidence(previous, output)
                 entry["output"] = output
             else:
                 entry["error"] = degraded_reason
@@ -1206,6 +1252,28 @@ def node_execute_follow_ups(ctx: RunContext):
 
 def node_finalize(ctx: RunContext):
     def finalize(state: UnifiedAnalysisState) -> dict[str, Any]:
+        # Keep every external proposal even if the last bounded decision still
+        # requests collection. Persisted rows are idempotent and never dispatch.
+        db = ctx.session()
+        try:
+            from app.services.unified.investigation import propose, clamp_confidence
+            for request in (state.decision or {}).get("follow_up_requests") or []:
+                if request.get("collection_capability") == "inventory":
+                    try:
+                        propose(db, state.run_id, request)
+                    except ValueError:
+                        pass  # rejected capability never becomes an authorized task
+            link = db.query(models.InvestigationRequest).filter_by(reanalysis_run_id=state.run_id).first()
+            if link:
+                from app.services.unified.investigation import evidence_view, substantive_change
+                if not substantive_change(json.loads(link.before_json), evidence_view(db, link.asset_id)):
+                    parent = db.query(models.UnifiedAnalysisRun).filter_by(run_id=link.source_run_id).one()
+                    old = json.loads(parent.state_json)
+                    for key in ("investigation", "vulnerability", "runtime", "decision"):
+                        report = getattr(state, key)
+                        clamp_confidence(old.get(key), report)
+        finally:
+            db.close()
         snapshot = state.model_dump()
         final: dict[str, Any] = {"pipeline_version": PIPELINE_VERSION}
         if state.task_type == TASK_RISK_REVIEW:
@@ -1231,7 +1299,9 @@ def node_finalize(ctx: RunContext):
                               "aggregate": final.get("aggregate")})
         finally:
             db.close()
-        return {"final": final, "stage_status": state.record_stage("finalize", "succeeded")}
+        return {"final": final, "decision": state.decision, "investigation": state.investigation,
+                "vulnerability": state.vulnerability, "runtime": state.runtime,
+                "stage_status": state.record_stage("finalize", "succeeded")}
     return finalize
 
 

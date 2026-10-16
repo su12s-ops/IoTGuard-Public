@@ -291,6 +291,7 @@ class FollowUpRequest(BaseModel):
     target_agent: Literal["asset_investigator", "vulnerability_analyst", "runtime_analyst"]
     question: str = Field(min_length=1)
     evidence_hint: str = ""
+    collection_capability: Literal["database", "inventory"] = "database"
     expected_effect: str = Field(default="", description="该补查预期消除哪个具体证据缺口、"
                                                          "以及结果会如何改变研判（防止无边界索证）")
 

@@ -1,5 +1,19 @@
 # IoTGuard 项目长期背景与系统架构
 
+## Stage 9B M4.6 当前边界（2026-10-16—17）
+
+当前报告：`IOTGUARD_UNIFIED_AGENT_PRODUCTION_READINESS.md`；起点origin/main=`10be6f0`。四角色和LangGraph保持原体系；正式入口System B，flag=off，两个修复写开关均0。
+
+新增InvestigationRequest保存问题/预期效果/能力范围/事实快照/摘要、授权、collection_tasks关联、父子运行及角色前后报告。Agent只能提出inventory申请，操作员持控制令牌与精确摘要授权；固定节点Collector不刷新索引、不补运行时、不执行修复。resume校验同资产原文/摘要与采集任务、原子领取、四角色再研判；同事实限制最终置信。
+
+`POST /api/unified/shadow`为受控隔离入口；调查authorize/resume及AgentOps复用现有业务。未来正式输出仍只走`/api/analysis`：on拒绝旧写入器，formal_sink拒绝非formal/off来源，shadow拒绝sink。不能混跑不同模式的正式worker。
+
+迁移工具只生成正式全字段快照和回滚差异计划；不能将shadow直接提升为正式结论/审批。回滚须排空worker、另行批准恢复正式字段并保留审计，再恢复off；只改flag不能还原结果。真实正式字段与M4.5快照一致，历史19条统一运行未改变。
+
+未关闭：Mimosa无入口、正式人工分歧复核、Ubuntu过期运行时覆盖、OpenWrt覆盖范围、修复包可用性与隔离修复实验、正式迁移审批。本轮结束停止；旧文档为历史，不代表已切换。
+
+最终功能回归729/0（711+18）、前端21/0与构建、52引用及原文摘要核验通过；不是完整安全验收。当前本地控制令牌匹配历史演示默认值，需迁移前轮换；M4.6暂存26文件没有新增敏感匹配。临时验收服务/节点已停止。
+
 ## Stage 9B M4.5（2026-10-16）
 
 当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。

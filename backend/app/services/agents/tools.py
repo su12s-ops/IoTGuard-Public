@@ -38,9 +38,10 @@ def tool_query_device_profile(db: Session, device_id: str = "", host: str = "") 
         ).first()
     if device is None:
         # 兼容主机型资产：LinuxAsset 同样是真实项目数据
+        key = host or device_id
         asset = db.query(models.LinuxAsset).filter(
-            (models.LinuxAsset.hostname == host) | (models.LinuxAsset.ip_address == host)
-        ).first() if host else None
+            (models.LinuxAsset.hostname == key) | (models.LinuxAsset.ip_address == key)
+        ).first() if key else None
         if asset is None:
             return {"found": False, "note": "未找到匹配设备，请在 data_gaps 中说明"}
         return {
@@ -50,6 +51,9 @@ def tool_query_device_profile(db: Session, device_id: str = "", host: str = "") 
             "model": asset.device_model, "firmware_version": asset.firmware_version,
             "os": f"{asset.os_name} {asset.os_version}".strip(),
             "ip": asset.ip_address, "status": "registered",
+            "inventory_complete": asset.inventory_complete,
+            "component_count": len(asset.packages),
+            "components_truncated": len(asset.packages) > 200,
             "services": [{"port": s.port, "service_type": s.service_name or s.process_name,
                           "product": s.process_name} for s in asset.services],
             "components": [{"name": p.package_name, "version": p.package_version,
@@ -88,7 +92,17 @@ def tool_query_network_surface(db: Session, device_id: str = "", host: str = "")
     if device is None and host:
         device = db.query(models.IotDevice).filter(models.IotDevice.ip == host).first()
     if device is None:
-        return {"found": False}
+        key = host or device_id
+        asset = db.query(models.LinuxAsset).filter(
+            (models.LinuxAsset.hostname == key) | (models.LinuxAsset.ip_address == key)).first() if key else None
+        if asset is None:
+            return {"found": False}
+        return {"found": True, "asset_kind": "linux_host", "device_id": asset.hostname,
+            "ip": asset.ip_address, "exposure_level": asset.exposure_level,
+            "open_services": [{"port": s.port, "service_type": s.service_name or s.process_name,
+                "product": s.process_name, "listen_address": s.listen_address,
+                "public": bool(s.is_public_exposed), "auth_state": "unknown"} for s in asset.services],
+            "anonymous_services": [], "note": "清单中的监听事实；不代表主动公网可达性或认证验证"}
     open_services = [s for s in device.services if s.status == "open"]
     risky = [s for s in open_services if s.auth_state == "anonymous_accepted"]
     return {
@@ -152,7 +166,13 @@ def tool_query_matched_vulnerabilities(db: Session, host: str = "",
     from app.services.device_vulnerability import device_matches, resolve_device
     query = db.query(models.VulnerabilityMatch)
     if cve_id:
-        query = query.filter(models.VulnerabilityMatch.cve_id == cve_id)
+        query = query.filter((models.VulnerabilityMatch.cve_id == cve_id) |
+            (models.VulnerabilityMatch.cve_id.startswith(cve_id + ":", autoescape=True) if ":" not in cve_id else False))
+    key = host or device_id
+    if key:
+        asset_ids = db.query(models.LinuxAsset.id).filter(
+            (models.LinuxAsset.hostname == key) | (models.LinuxAsset.ip_address == key))
+        query = query.filter(models.VulnerabilityMatch.asset_id.in_(asset_ids))
     matches = query.order_by(models.VulnerabilityMatch.id.desc()).limit(30).all()
     rows = []
     for match in matches:

@@ -74,16 +74,20 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      sink: PersistSink | None = None,
                      run_deadline_s: float = 900.0,
                      ablation_mask: frozenset[str] = frozenset(),
-                     force_full_review: bool = False) -> models.UnifiedAnalysisRun:
+                     force_full_review: bool = False,
+                     investigation_goal: str = "") -> models.UnifiedAnalysisRun:
     """同步执行一次统一编排（worker 线程/测试/实验共用）。
 
     ablation_mask（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策
     输入（角色照常执行）——用于语义消融度量各角色独立贡献，不是失败路径。
     """
+    if run_row.mode == "shadow" and sink is not None:
+        raise ValueError("shadow_sink_forbidden")
     state = empty_state(
         run_row.run_id, run_row.task_type, run_row.target_ref,
         run_row.target_type, run_row.mode)
     state.budgets.run_deadline_s = run_deadline_s
+    state.investigation_goal = investigation_goal
     risk = None
     if run_row.task_type == TASK_RISK_REVIEW and run_row.risk_id:
         risk = db.get(models.RiskAssessment, run_row.risk_id)
@@ -235,7 +239,9 @@ def _complete(db: Session, run_row: models.UnifiedAnalysisRun,
 def start_unified_run(task_type: str, target_ref: str, target_type: str,
                       risk_id: int | None = None, mode: str = "shadow",
                       client_factory: ClientFactory = default_client_factory,
-                      sink: PersistSink | None = None) -> models.UnifiedAnalysisRun:
+                      sink: PersistSink | None = None,
+                      force_full_review: bool = False,
+                      investigation_goal: str = "") -> models.UnifiedAnalysisRun:
     """API 入口：创建运行记录 + Trace，后台线程执行。"""
     db = SessionLocal()
     try:
@@ -257,7 +263,8 @@ def start_unified_run(task_type: str, target_ref: str, target_type: str,
             try:
                 row = worker_db.query(models.UnifiedAnalysisRun).filter_by(
                     run_id=run_row.run_id).one()
-                run_unified_sync(worker_db, row, client_factory=client_factory, sink=sink)
+                run_unified_sync(worker_db, row, client_factory=client_factory, sink=sink,
+                                 force_full_review=force_full_review, investigation_goal=investigation_goal)
             except Exception as exc:   # 编排级异常：整体失败并保留快照
                 try:
                     row.status = "failed"

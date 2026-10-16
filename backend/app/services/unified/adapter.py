@@ -40,6 +40,8 @@ def _utc_now_iso() -> str:
 def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
                 state: UnifiedAnalysisState) -> None:
     """正式模式落库：门禁结论 → RiskAssessment（fail-closed 语义不变）。"""
+    if config.UNIFIED_PIPELINE_MODE != "on" or run_row.mode != "formal" or state.mode != "formal":
+        raise ValueError("formal_source_required")
     risk = db.get(models.RiskAssessment, run_row.risk_id) if run_row.risk_id else None
     if risk is None:
         return

@@ -91,6 +91,7 @@ class UnifiedAnalysisState(BaseModel):
     target_ref: str = ""
     target_type: str = "linux_host"
     mode: Literal["shadow", "formal"] = "shadow"
+    investigation_goal: str = ""
 
     routing: RoutingDecision = Field(default_factory=RoutingDecision)
     capability_marks: dict[str, Any] = Field(default_factory=dict)

@@ -1,5 +1,19 @@
 # 最近一次开发结果
 
+## Stage 9B M4.6（2026-10-16—17）
+
+核验干净工作区与实际origin/main=`10be6f0`、M4.5 711/0交付；仅操作IoTGuard-Public。
+
+真实首链：curl126 → `m46-real-482fde0e7bdb` → Agent申请 `IR-a57ce5d5436d5f8fc55c2f1c062d7383` → 授权固定Collector任务 `669e3d59963bdded5f49a3d0506ffd63` → 新INV → `UA-a300a7f502c746df9ef3d526`。1790包、版本仍.15，四角色成功，实质更新false，决策置信.64→.64。运行时、索引刷新问题没有被清单解决；未执行修复。
+
+修正LinuxAsset网络工具、发行版CVE后缀查找、当前/历史版本区分、清单完整性及嵌套Trace引用；真实复验与首轮分开保存。SystemB风险126首轮结构失败与复验upgrade_minor语义偏差均保留，不作为真值；OpenSSL仍not_affected，OpenWrt不造CVE。
+
+单一正式输出路径完成互斥与shadow隔离检查；126条风险迁移快照及只读回滚规划差异0。正式风险及原有19条统一运行与M4.5快照一致。精确摘要/控制令牌拒绝和Harness未授权执行拒绝实际验证。
+
+最终全量729/0（842.87秒，5个既有警告），新增专项18/0、前端21/0和构建；4运行52引用真实解析并复算原文摘要。暂存26文件敏感匹配0；全量当前扫描发现2处既有演示默认值与本地控制令牌匹配，已列迁移前轮换事项。
+
+完整结果、最终运行ID、回归与扫描见`IOTGUARD_UNIFIED_AGENT_PRODUCTION_READINESS.md`验收补录；本地原始证据在gitignored `reports/m46-work/`。Mimosa仍未运行，人工分歧复核仍待办。M4.6临时后端/节点已停止；维持flag=off、双写开关0，交付即停止等待迁移审批。
+
 ## Stage 9B M4.5（2026-10-16）
 
 当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。

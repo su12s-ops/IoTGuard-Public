@@ -8,6 +8,12 @@ from __future__ import annotations
 
 import copy
 import json
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def formal_mode_for_adapter_tests(monkeypatch):
+    monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
 
 from app import config, models
 from app.services.unified.adapter import (
