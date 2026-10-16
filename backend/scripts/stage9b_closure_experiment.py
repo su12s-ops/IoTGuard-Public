@@ -125,6 +125,22 @@ def _fresh_db(tmp_root: Path):
     return factory()
 
 
+def _degenerate_runtime_report(event: dict) -> bool:
+    """运行时分析师退化输出检测：预取证据在库（runtime_evidence_ids 非空、
+    非 RT-D 设计），但报告 findings/evidence_ids 全空且 exploitation_relation=
+    not_observed——模型把 Schema 回显当答案（rt2-RT-A 首跑两次命中的失效
+    模式），语义上等价于「没做分析」，须重试；真实无证据的 RT-D 不受影响
+    （其 runtime_evidence_ids 为空）。"""
+    if (event.get("graded") or {}).get("category") != "llm_full_chain":
+        return False
+    prep_ids = (event.get("evidence_prep") or {}).get("runtime_evidence_ids") or []
+    if not prep_ids:
+        return False
+    rt = event.get("runtime") or {}
+    return (not (rt.get("findings") or []) and not (rt.get("evidence_ids") or [])
+            and (rt.get("exploitation_relation") in (None, "", "not_observed")))
+
+
 def _chain_terminal(runs_dir: Path, base_run_id: str) -> tuple[dict | None, int]:
     """找 base_run_id 链的末端运行与最大 attempt 序号（base=0, base-r1=1…）。"""
     existing: list[tuple[int, dict]] = []
@@ -151,13 +167,15 @@ def run_with_retry(db, risk, factory, run_id: str, runs_dir: Path, truth: dict,
     """
     terminal, last_attempt = _chain_terminal(runs_dir, run_id)
     if terminal is not None and not (_is_external_failure(terminal)
-                                     or _stage_failed_externally(terminal)):
+                                     or _stage_failed_externally(terminal)
+                                     or _degenerate_runtime_report(terminal)):
         print(f"   去重跳过（链末端有效）：{terminal.get('run_id')}")
         return terminal
     attempt = last_attempt + (1 if terminal is not None else 0)
     event = terminal if terminal is not None else None
     while event is None or ((_is_external_failure(event)
-                             or _stage_failed_externally(event)) and attempt <= retries):
+                             or _stage_failed_externally(event)
+                             or _degenerate_runtime_report(event)) and attempt <= retries):
         target_id = run_id if attempt == 0 else f"{run_id}-r{attempt}"
         if usage_so_far is not None and _sum_run_usage(usage_so_far)["total_tokens"] >= max_tokens:
             print(f"!! Token 预算触界，停止重试 {target_id}")
