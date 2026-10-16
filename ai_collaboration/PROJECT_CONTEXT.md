@@ -1,5 +1,17 @@
 # IoTGuard 项目长期背景与系统架构
 
+## Stage 9B M4.7 当前边界（2026-10-17）
+
+当前报告：`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`；基线`fa3b474`。四角色与LangGraph原体系未动；正式入口仍System B，`LINUXGUARD_UNIFIED_PIPELINE=off`，双修复写开关0，旧编排器保留。
+
+接管阻断项处置：控制令牌已轮换（演示脚本改环境变量强制读取；新值仅存`backend/.env`，指纹`9f06…58ffe`，操作员须重启后端生效）；风险126/12人工复核材料已备（`IOTGUARD_M47_HUMAN_REVIEW_PACKETS.md`，Q1–Q8待授权操作员裁定，落库走`POST /api/analysis/risks/{id}/human-review`）；Mimosa恢复可用，交付以最终重扫封印为准。
+
+新增能力面（均为验收工具，不改变业务语义）：`backend/scripts/m47_migration_drill.py`（隔离副本迁移/回滚演练，确定性客户端）、`backend/scripts/m47_continuous_shadow.py`（受批准连续shadow窗口）；`unified/adapter.py`修复正式批处理对编排器failed运行的fail-closed缺口（与System B `_fail_selected`同语义，回归锁定）。
+
+W47连续shadow实证：9/9运行、36/36角色、同事实置信无上行、申请未授权不执行、正式字段零触碰；curl 126存在同事实impact/方向方差（动作稳定），openssl 12全稳，OpenWrt零候选诚实；新旧分歧模式与M4.6一致且均可解释。技术侧具备接管条件；正式切换前置：操作员完成Q1–Q8裁定 + 用户切换批准 + M4.6 §5排空/备份/单worker程序。不得将shadow结论复制为正式结果；回滚须恢复快照而非仅切flag。
+
+未关闭（人工事项）：复核材料裁定；curl方差口径确认；采集授权流程执行；正式迁移审批与部署排空。本轮结束即停止；下方M4.6及更早内容为历史。
+
 ## Stage 9B M4.6 当前边界（2026-10-16—17）
 
 当前报告：`IOTGUARD_UNIFIED_AGENT_PRODUCTION_READINESS.md`；起点origin/main=`10be6f0`。四角色和LangGraph保持原体系；正式入口System B，flag=off，两个修复写开关均0。

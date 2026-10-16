@@ -41,7 +41,9 @@ LAB_CIDR = "192.168.100.0/25"
 ALLOWED_CIDRS = "192.168.100.0/24"
 ZEPHYR_IP = os.environ.get("LINUXGUARD_STAGE7_ZEPHYR_IP", "")
 ZEPHYR_PORT = 8080
-TOKEN = "stage8-trace-demo-token"
+TOKEN = os.environ.get("LINUXGUARD_CONTROL_TOKEN", "")
+if not TOKEN:
+    raise SystemExit("Set LINUXGUARD_CONTROL_TOKEN before running this demo")
 REPORT_NAME_RE = re.compile(r"^stage8-trace-\d{8}-\d{6}$")
 LLM_POLL_TIMEOUT_S = 600
 

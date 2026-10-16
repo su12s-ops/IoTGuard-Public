@@ -9,7 +9,11 @@
 set -uo pipefail
 
 BACKEND="${1:-auto}"
-TOKEN="${2:-demo-token}"
+TOKEN="${2:-${LINUXGUARD_CONTROL_TOKEN:-}}"
+if [ -z "$TOKEN" ]; then
+    echo "Set LINUXGUARD_CONTROL_TOKEN or supply the control-token argument" >&2
+    exit 1
+fi
 PORT=18885
 DIR=/tmp/lg-mqtt-demo
 CONF="$DIR/mosquitto.conf"

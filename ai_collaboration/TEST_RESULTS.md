@@ -1,5 +1,21 @@
 # 测试结果
 
+## Stage 9B M4.7（2026-10-17）
+
+基线`fa3b474`；M4.6参考729/0。本轮围绕P0阻断项、W47连续shadow、隔离副本迁移演练与必要回归。
+
+| 验证 | 已确认结果 |
+| --- | --- |
+| 最终全量 | **730 passed / 0 failed**，527.88秒，5个既有utcnow弃用警告；729基线+1项新增fail-closed回归 |
+| 新增回归 | `test_orchestrator_failure_fail_closes_risk_not_stuck`（编排器异常→正式批处理fail-closed，不停留agent_reviewing）；适配层专项6/6 |
+| 前端 | 全套Playwright **21 passed / 0 failed**（18.4s）；生产构建通过 |
+| P2迁移演练 | 隔离副本 **44 passed / 0 failed**：快照哈希/排空/off-on互斥9项/契约17键/简单与全量分层/fail-closed/影子禁晋升/人审401·409/Harness未审批与错哈希拒绝/仅切flag不还原/全字段恢复差异0/审计保留/完整性ok |
+| W47连续Shadow | 9/9统一链completed、36/36角色成功、零降级；正式字段每轮快照一致；真实库risk/harness零更新；3,299,064 tokens（40次/运行预算未触界） |
+| W47申请纪律 | IR-ee08ce1a/IR-f2feb101 awaiting_authorization未执行；窗口6次SystemB对照提取缺陷失败样本保留+2次补充捕获（分歧模式与M4.6一致） |
+| 令牌 | 现用令牌轮换后旧字面量失效（防呆比对通过）；329跟踪文件新旧令牌/私钥0命中 |
+| Mimosa | 恢复可用；深扫`scan-2026-10-16T16-37-49.880Z-c218fa2fda10` 0 findings/123包（seal`730ff98c…a504`）；最终重扫见验收报告§9 |
+| 边界 | flag=off、双修复写开关0全程维持；演练/影子零设备写、零正式结论写入、零shadow晋升 |
+
 ## Stage 9B M4.6（2026-10-16—17）
 
 基线origin/main=`10be6f0`；M4.5参考711 passed / 0 failed。本轮测试仅围绕真实调查、采集授权、迁移契约及既有回归。

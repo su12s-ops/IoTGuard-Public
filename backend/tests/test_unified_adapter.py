@@ -167,6 +167,32 @@ class TestFormalSink:
         db.close()
 
 
+class TestFormalFailClosed:
+    def test_orchestrator_failure_fail_closes_risk_not_stuck(self, session_factory, monkeypatch):
+        """M4.7 P2 演练发现：runner 捕获编排异常后返回 failed（不抛出、不落
+        sink），正式批处理若不处理会把风险留在 agent_reviewing。回归锁定：
+        失败事件必须与 System B _fail_selected 同语义 fail-closed。"""
+        import app.services.unified.runner as runner_mod
+        monkeypatch.setattr(runner_mod, "SessionLocal", session_factory)
+        monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
+        risk_id = _setup_risk(session_factory)  # High/70 → 全量路径，客户端必被调用
+
+        def exploding():
+            raise RuntimeError("simulated outage")
+
+        db = session_factory()
+        risk = db.get(models.RiskAssessment, risk_id)
+        result = run_review_analysis_unified(db, "failclose1", [risk], client_factory=exploding)
+        db.refresh(risk)
+        assert risk.review_status == "pending_human_review"
+        assert risk.human_review_required is True
+        assert risk.final_score is None and risk.risk_level is None and risk.decision is None
+        assert "unified_orchestrator_failed" in (risk.review_reason or "")
+        assert result["status"] == "human_review"
+        assert result["human_review_object_count"] == 1
+        db.close()
+
+
 class TestBatchAdapter:
     def test_simple_tier_immediate_fix_requires_human(self, session_factory, monkeypatch):
         """实验修复：规则直通的 immediate_fix 不得 auto_confirmed（与主门禁一致）。

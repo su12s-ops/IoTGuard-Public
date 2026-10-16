@@ -1,5 +1,17 @@
 # 最近一次开发结果
 
+## Stage 9B M4.7（2026-10-17）
+
+基线`fa3b474`、工作区含上轮遗留的两处演示令牌改动与验收草稿；唯一仓库IoTGuard-Public。依据`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`。
+
+P0执行：确认两处演示默认值与`backend/.env`现用令牌一致且已入公开Git历史→脚本改环境变量强制读取→现用令牌轮换为48位urlsafe（SHA256指纹`9f061621…58ffe`，全程未输出原文），归档烧毁值清除；`IOTGUARD_M47_HUMAN_REVIEW_PACKETS.md`建风险126/12独立复核材料（两侧真实输出+官方SHA256+Q1–Q8待裁问题，裁定栏留空）；Mimosa恢复，深扫`scan-2026-10-16T16-37-49.880Z-c218fa2fda10` 0 findings（seal `730ff98c…a504`，123包）。
+
+P1执行：W47窗口经用户会话内批准（"批准 W47（推荐）"）后运行01:00–02:58三轮无重叠。统一链9/9 completed、每轮每对象4/4角色、零降级；curl126三轮`confirmed→potentially→potentially`/`maintain→downgrade_minor→maintain`（action恒scheduled_fix、置信0.65/0.60/0.62无上行）；openssl12三轮恒`not_affected/downgrade_major/monitor`；OpenWrt零候选诚实（R2/R3显式insufficient_evidence）。新申请IR-ee08ce1a/IR-f2feb101具体绑定只读范围，均awaiting_authorization未执行。窗口6次SystemB对照推理已跑但脚本提取缺陷（Pydantic CoordinatorResult .get）未捕获，全留失败样本；修复后补充对照：126`confirmed/upgrade_minor/0.62`、12`not_affected/maintain/0.72`，分歧模式与M4.6一致。正式字段每轮快照一致；真实库risk/harness零更新；3,299,064 tokens。
+
+P2执行：`m47_migration_drill.py`隔离副本44/0；发现真实缺陷——runner吞编排异常后正式批处理把风险留在`agent_reviewing`（System B由`_fail_selected`落人工）→`adapter.run_review_analysis_unified`对failed运行逐风险fail-closed（`unified_orchestrator_failed:`原因），回归`test_orchestrator_failure_fail_closes_risk_not_stuck`锁定。演练含：off/on互斥9项、契约17键、简单/全量双分层、fail-closed、人审令牌401/409、Harness未审批与错哈希拒绝、仅切flag不还原、全字段恢复差异0、审计保留。演练副本曾误触发一次只读历史调查（side_effect=0、无SSH/LLM），留档并修正。
+
+回归：全量730/0（527.88s，5既有警告）；前端21/0+构建；敏感扫描329跟踪文件0命中。最终Mimosa重扫与交付哈希见验收报告§9补录。维持flag=off、双写开关0；结束即停止，等待人工裁定与切换审批。
+
 ## Stage 9B M4.6（2026-10-16—17）
 
 核验干净工作区与实际origin/main=`10be6f0`、M4.5 711/0交付；仅操作IoTGuard-Public。

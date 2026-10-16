@@ -224,6 +224,17 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
         db.commit()
         run_unified_sync(db, run_row, sink=formal_sink,
                          client_factory=client_factory or default_client_factory)
+        if run_row.status == "failed":
+            # runner 会捕获编排级异常并把运行标记 failed（不抛出、不落 sink）。
+            # 正式路径必须与 System B 的 _fail_selected 同语义：fail-closed 落
+            # 人工门禁，不能把风险停留在 agent_reviewing。
+            risk.review_status = "pending_human_review"
+            risk.human_review_required = True
+            risk.review_reason = f"unified_orchestrator_failed:{(run_row.error or 'unknown')[:1000]}"
+            risk.final_score = None
+            risk.risk_level = None
+            risk.decision = None
+            db.commit()
         rows.append(run_row)
         states.append(UnifiedAnalysisState.model_validate_json(run_row.state_json))
         if progress_callback:
