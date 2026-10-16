@@ -52,6 +52,7 @@ from stage9b_unified_compare import (  # noqa: E402
     _save_run,
     _sum_run_usage,
     classify_run,
+    extend_fixture_for_x_cases,
     grade_old,
     grade_unified,
     per_agent_cost_rollup,
@@ -391,6 +392,7 @@ def main():
     factory_db, engine = fresh_session_factory(tmp_root / "db")
     db = factory_db()
     build_fixture(db, with_runtime=True)
+    extend_fixture_for_x_cases(db)      # X1–X3（X2/X3 复验必须进入矩阵）
     extend_fixture_for_y_cases(db, y6_kev=not args.counterfactual)
     baseline = collect_baseline(db)
 
