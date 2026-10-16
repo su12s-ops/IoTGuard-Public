@@ -43,6 +43,7 @@ from stage9_agent_effectiveness_audit import (  # noqa: E402
 from stage9b_closure_cases import (  # noqa: E402
     RT_CONDITION_ORDER,
     RT_CVE,
+    RT_HOSTNAME,
     RT_TRUTH,
     Y6_CELLS,
     Y6_CF2_TRUTH,
@@ -64,23 +65,33 @@ EXTERNAL_ERROR_MARKERS = ("APIConnectionError", "APITimeoutError", "APIStatusErr
 
 
 def _is_external_failure(event: dict) -> bool:
-    """程序兜底且证据指向外部 API 故障（连接/限流/4xx/5xx），非语义 fail-closed。"""
+    """程序兜底且证据指向外部 API 故障（连接/限流/4xx/5xx），非语义 fail-closed。
+
+    语义 fail-closed（decide 失败但错误为确定性矛盾反馈、无 API 异常标记）
+    是设计行为，不重试。decide 单独失败且带 API 异常标记（如 E2 首跑
+    APIConnectionError）按外部故障处理。
+    """
     if (event.get("graded") or {}).get("category") != "program_fallback":
         return False
     agents = event.get("agents_log") or {}
-    for entry in agents.values():
-        error = str((entry or {}).get("error") or "")
-        if any(marker in error for marker in EXTERNAL_ERROR_MARKERS):
-            return True
-        if (entry or {}).get("status") == "failed":
+    for role, entry in agents.items():
+        entry = entry or {}
+        error = str(entry.get("error") or "")
+        has_api_marker = any(marker in error for marker in EXTERNAL_ERROR_MARKERS)
+        if entry.get("status") == "failed":
+            # 分析师阶段 failed：角色执行层故障（API/工具）；API 标记或非决策角色都重试
+            if has_api_marker or role != "decision_planner":
+                return True
+        elif has_api_marker:
             return True
     return False
 
 
 def _stage_failed_externally(event: dict) -> bool:
-    """任一分析/决策阶段因外部错误 failed（stage_status 维度）。"""
+    """分析师阶段因外部错误 failed（decide 语义 fail-closed 不在此列）。"""
     stages = event.get("stage_status") or {}
-    return any(status == "failed" for status in stages.values())
+    analyst_stages = ("investigate_asset", "analyze_runtime", "analyze_vulnerability")
+    return any(stages.get(stage) == "failed" for stage in analyst_stages)
 
 
 def run_with_retry(db, risk, factory, run_id: str, runs_dir: Path, truth: dict,
@@ -107,8 +118,77 @@ def run_with_retry(db, risk, factory, run_id: str, runs_dir: Path, truth: dict,
 
 
 def _fresh_db(tmp_root: Path):
-    factory, _engine = fresh_session_factory(tmp_root)
+    """每次调用独立临时 SQLite（重复调用/续跑不与既有库冲突）。"""
+    import tempfile
+
+    factory, _engine = fresh_session_factory(Path(tempfile.mkdtemp(prefix="stage9b-closure-")))
     return factory()
+
+
+def _chain_terminal(runs_dir: Path, base_run_id: str) -> tuple[dict | None, int]:
+    """找 base_run_id 链的末端运行与最大 attempt 序号（base=0, base-r1=1…）。"""
+    existing: list[tuple[int, dict]] = []
+    for path in runs_dir.glob(f"run-{base_run_id}*.json"):
+        run_id = path.stem[len("run-"):]
+        if run_id == base_run_id:
+            existing.append((0, json.loads(path.read_text(encoding="utf-8"))))
+        elif run_id.startswith(base_run_id + "-r") and run_id[len(base_run_id) + 2:].isdigit():
+            existing.append((int(run_id[len(base_run_id) + 2:]),
+                             json.loads(path.read_text(encoding="utf-8"))))
+    if not existing:
+        return None, 0
+    existing.sort(key=lambda item: item[0])
+    return existing[-1][1], existing[-1][0]
+
+
+def run_with_retry(db, risk, factory, run_id: str, runs_dir: Path, truth: dict,
+                   *, ablation_mask=frozenset(), retries: int = 2,
+                   usage_so_far=None, max_tokens: int = 10**9) -> dict:
+    """运行单事件；断点续跑接续既有链末端，外部故障以新 -rN run_id 重试。
+
+    纪律：任何已存在的运行文件永不删除/覆盖——重试一律新 run_id 新文件；
+    语义 fail-closed（确定性矛盾反馈）不重试，是设计行为。
+    """
+    terminal, last_attempt = _chain_terminal(runs_dir, run_id)
+    if terminal is not None and not (_is_external_failure(terminal)
+                                     or _stage_failed_externally(terminal)):
+        print(f"   去重跳过（链末端有效）：{terminal.get('run_id')}")
+        return terminal
+    attempt = last_attempt + (1 if terminal is not None else 0)
+    event = terminal if terminal is not None else None
+    while event is None or ((_is_external_failure(event)
+                             or _stage_failed_externally(event)) and attempt <= retries):
+        target_id = run_id if attempt == 0 else f"{run_id}-r{attempt}"
+        if usage_so_far is not None and _sum_run_usage(usage_so_far)["total_tokens"] >= max_tokens:
+            print(f"!! Token 预算触界，停止重试 {target_id}")
+            break
+        if event is not None:
+            print(f"   外部故障，重试 → {target_id}")
+            time.sleep(20 * attempt)
+        event = run_case(db, risk, factory, target_id, ablation_mask=ablation_mask)
+        event["graded"] = grade_unified(event, truth)
+        if attempt > 0:
+            event["superseded_run_ids"] = (
+                [run_id] + [f"{run_id}-r{n}" for n in range(1, attempt)]
+                + list(event.get("superseded_run_ids") or []))
+        _save_run(runs_dir, event)
+        attempt += 1
+    return event
+
+
+def _refresh_rt_sensor(db, condition: str) -> None:
+    """RT-A/RT-B 运行前刷新传感器心跳（120s stale 阈值的脚手架竞态修复，
+    与 E/X/Y 的 _refresh_y_sensor_heartbeats 同语义）；RT-C 的过期心跳是
+    设计干预点，绝不刷新；RT-D 无传感器。"""
+    if condition not in ("RT-A", "RT-B"):
+        return
+    from app import models
+
+    (db.query(models.RuntimeSensor)
+       .filter(models.RuntimeSensor.sensor_id == f"sensor-{RT_HOSTNAME}")
+       .update({models.RuntimeSensor.last_heartbeat_at: datetime.now(timezone.utc)},
+               synchronize_session=False))
+    db.commit()
 
 
 def mode_matrix_retry(args, runs_dir: Path) -> dict:
@@ -168,6 +248,11 @@ def mode_y6_matrix(args, runs_dir: Path) -> dict:
     factory = _make_unified_factory(counter)
     amplifier_assertions: list[dict] = []
     for index, cell in enumerate(Y6_CELL_ORDER):
+        prefix = f"cf2-y6-{cell}-"
+        prior = [path for path in runs_dir.glob(f"run-{prefix}*.json")]
+        if prior:
+            print(f"== 去重跳过格 {cell}（已有 {[p.stem for p in prior]}）==")
+            continue
         if _sum_run_usage([r for item in results.values() for r in item["runs"]])[
                 "total_tokens"] >= args.max_total_tokens:
             print(f"!! Token 预算触界，停止于格 {cell}")
@@ -224,11 +309,13 @@ def mode_rt(args, runs_dir: Path) -> dict:
         condition_runs = {}
         for tag, mask in (("full", frozenset()),
                           ("abl", frozenset({"runtime_analyst"}))):
-            if _sum_run_usage([r for item in results.values()
-                               for r in item["runs"]])["total_tokens"] >= args.max_total_tokens:
+            prefix = getattr(args, "rt_prefix", "rt")
+            run_id = f"{prefix}-{condition.lower().replace('-', '')}-{tag}-{risk.id}"
+            prior_usage = [r for item in results.values() for r in item["runs"].values()]
+            if _sum_run_usage(prior_usage)["total_tokens"] >= args.max_total_tokens:
                 print(f"!! Token 预算触界，停止于 {condition}/{tag}")
                 break
-            run_id = f"rt-{condition.lower().replace('-', '')}-{tag}-{risk.id}"
+            _refresh_rt_sensor(db, condition)
             print(f"   -- {tag}（mask={sorted(mask) or '无'}）→ {run_id}")
             event = run_with_retry(db, risk, factory, run_id, runs_dir, truth,
                                    ablation_mask=mask, retries=args.retries)
@@ -245,6 +332,9 @@ def main():
     parser.add_argument("--out", default="reports/stage9b-closure")
     parser.add_argument("--retries", type=int, default=2,
                         help="外部 API 故障的重试次数（新 run_id，原文件保留）")
+    parser.add_argument("--rt-prefix", default="rt",
+                        help="RT 运行 ID 前缀（脚手架缺陷修复后的重跑用新前缀，"
+                             "旧前缀文件全部保留留档）")
     parser.add_argument("--max-total-tokens", type=int, default=6_000_000)
     args = parser.parse_args()
 

@@ -273,11 +273,17 @@ def extend_fixture_for_y_cases(db, *, y6_kev: bool = True) -> None:
     def ev(hostname, target, category, event_type, process, parent, cmdline, *,
            dest="", port=0, file_path="", sev="info", score=0, ts=None, pid=0, ppid=0,
            rule="", sensor_id=""):
+        # timestamp 与 ts 同值双键（收尾轮脚手架修复）：persist_evidence 取
+        # event["timestamp"] 写入证据层，缺该键会让 Y 案例证据层时间戳为空
+        # （RuntimeEvent.occurred_at 一直正确；已记录的 Y 运行无任何真值依赖
+        # freshness，结论不受影响；修复仅影响未来重跑的证据 ID 哈希）。
+        recent_ts = ts or recent
         return {"hostname": hostname, "asset_id": target.id, "source": "falco",
                 "event_type": event_type, "category": category, "severity": sev,
                 "severity_score": score, "rule": rule, "process_name": process,
                 "parent_process": parent, "commandline": cmdline, "file_path": file_path,
-                "destination": dest, "port": port, "ts": ts or recent, "pid": pid,
+                "destination": dest, "port": port, "ts": recent_ts,
+                "timestamp": recent_ts, "pid": pid,
                 "ppid": ppid, "sensor_id": sensor_id or f"sensor-{hostname}"}
 
     # ── Y1（CVE-2026-81010）：厂商 backport（gnutls28，独占包） ──

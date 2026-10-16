@@ -245,6 +245,51 @@ def test_rt_condition_interventions(rt_dbs):
             assert active, "RT-B: 应有 vsftpd 常规服务活动事件"
 
 
+def test_rt_evidence_layer_timestamps_nonempty(rt_dbs):
+    """证据层时间戳回归锁（RT-A 首跑暴露的脚手架缺陷）：
+    persist_evidence 取 event['timestamp']——Fixture 事件必须双键同值，
+    否则 data_quality freshness 恒为 no_evidence、fresh 设计无法被检验。"""
+    from app import models
+
+    for condition in ("RT-A", "RT-B", "RT-C"):
+        db = rt_dbs[condition]
+        asset = db.query(models.LinuxAsset).filter_by(hostname="edge-rt").one()
+        rows = (db.query(models.SecurityEvidence)
+                .filter_by(asset_id=asset.id).all())
+        assert rows, condition
+        for row in rows:
+            assert row.timestamp, f"{condition}: 证据 {row.evidence_id} 时间戳为空"
+            parsed = datetime.fromisoformat(row.timestamp)
+            assert parsed.tzinfo is not None or True
+            age = abs((datetime.now(timezone.utc)
+                       - (parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc))
+                       ).total_seconds())
+            if condition == "RT-A":
+                assert age <= 3600, f"RT-A: 证据应新鲜（≤1h），实得 {age:.0f}s"
+            if condition == "RT-C":
+                assert age >= RT_STALE_OFFSET.total_seconds() * 0.99, \
+                    f"RT-C: 证据应过期（≥45d），实得 {age:.0f}s"
+
+
+def test_y_fixture_evidence_layer_timestamps_nonempty(tmp_path_factory):
+    """Y 案例同一缺陷的回归锁（已记录的主矩阵运行无真值依赖 freshness、
+    结论不受影响；本锁保证未来重跑证据层时间戳完整）。"""
+    from app import models
+
+    root = tmp_path_factory.mktemp("y-ts")
+    factory, engine = fresh_session_factory(root / "db")
+    db = factory()
+    build_fixture(db, with_runtime=True)
+    extend_fixture_for_y_cases(db)
+    asset = db.query(models.LinuxAsset).filter_by(hostname="edge-10").one()
+    rows = db.query(models.SecurityEvidence).filter_by(asset_id=asset.id).all()
+    assert rows
+    for row in rows:
+        assert row.timestamp, f"Y 证据 {row.evidence_id} 时间戳为空"
+    db.close()
+    engine.dispose()
+
+
 def test_rt_truth_invariants():
     """RT 真值不变量：仅 RT-A 允许 immediate；B/D 不得升级方向。"""
     assert set(RT_CONDITION_ORDER) == set(RT_TRUTH)

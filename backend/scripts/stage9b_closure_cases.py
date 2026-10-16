@@ -252,11 +252,16 @@ def build_rt_condition_fixture(db, condition: str) -> None:
     def ev(*, process, parent, cmdline, sev="info", score=0, rule="", ts,
            event_type="process_execution", category="process_execution",
            dest="", port=0, pid=0, ppid=0):
+        # timestamp 与 ts 同值双键：persist_evidence 取 event["timestamp"] 写入
+        # 证据层（data_quality 的 freshness 依此计算），RuntimeEvent 用 ts——
+        # 缺 timestamp 会导致证据层时间戳为空（脚手架竞态之外的第二处缺陷，
+        # 由 RT-A 首跑暴露，见收尾报告 §RT）。
         return {"hostname": RT_HOSTNAME, "asset_id": asset.id, "source": "falco",
                 "event_type": event_type, "category": category, "severity": sev,
                 "severity_score": score, "rule": rule, "process_name": process,
                 "parent_process": parent, "commandline": cmdline, "file_path": "",
-                "destination": dest, "port": port, "ts": ts, "pid": pid, "ppid": ppid,
+                "destination": dest, "port": port, "ts": ts, "timestamp": ts,
+                "pid": pid, "ppid": ppid,
                 "sensor_id": f"sensor-{RT_HOSTNAME}"}
 
     if condition in ("RT-A", "RT-C"):
