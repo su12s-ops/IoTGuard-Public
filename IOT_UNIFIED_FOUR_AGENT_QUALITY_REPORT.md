@@ -373,7 +373,8 @@ System B 原路径；统一链产物独立表，正式字段零迁移）。
 | 交付物 | 位置 |
 |---|---|
 | 实现提交（含先验真值表） | **`42fe3b1`**（基线 ff7e3c8） |
-| 本报告 + 实验脚本 X 扩展修复 + Mimosa 补记 | 最终提交（见 §11 补记的 commit hash） |
+| 本报告 + 实验脚本 X 扩展修复 + Mimosa 封印 | **`22045b8`**（§11 扫描时工作区与该提交内容一致） |
+| 本补记提交 | `1c4b5a1`（仅本节哈希补录，无代码变化） |
 | Y 案例集与先验真值表 | `backend/scripts/stage9b_quality_cases.py` |
 | 实验脚本（三方对照/消融/反事实/全运行口径/断点续跑） | `backend/scripts/stage9b_quality_experiment.py` |
 | M4.2 专项回归（48 项） | `backend/tests/test_quality_deepening.py` |
