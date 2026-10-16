@@ -1,5 +1,21 @@
 # 最近一次开发结果
 
+> M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
+
+## 2026-10-16 — Stage 9B M4.4 实际交付
+
+真实链路：节点采集资产 1/2 → 官方 Canonical 原文 → CVE-2026-94266:noble:curl / risk 126 → INV/ADV/SE → `m44-real-841d76e9aa` / `TR-20261016135101-38986d` → confirmed_affected、scheduled_fix、stale_verified、pending_human_review → 只读 Harness `2dc572f6d9ad41b9abd0168063d37ba2`（needs_evidence）和修复门禁 `8e4241c90c4c4687840647046c33bf41`（blocked）。11/11 一致性，39 原始依据真实存在，16 条历史影子不变，126 条正式风险字段影子前后不变。
+
+CVE-2026-63073 的错误为跨发行分支比较；noble/openssl 官方 not-affected，纠正 #9 关联旧风险 12 及 8 个历史影子，不再把旧升级建议作为可执行依据。curl 的 CVE 表 needed 与 USN 已发布 .16 的差异原样保留，以同 CVE/发行版/源包 USN 作为修复版本依据。
+
+产品内采集通过常驻 Linux runner，无手工清单上传；OpenWrt 182 包、Ubuntu 1790 包，原文/执行节点/身份/Trace 入库。前端实测了纠正查询、采集任务、风险详情、角色实际输出与证据引用、计划动作分类及 Harness 状态。
+
+正常产品按钮追加验收：Ubuntu 任务 `58ff0db47893fdf35428161426d330c5` 自动 completed（1790 包），INV/Trace 与页面一致，无手工 SSH/上传。
+
+没有恢复 Falco/转发器、没有修改软件包、没有真实审批/修复/回滚、没有更改 Harness 授权规则。Falco 服务只读检查 active，但心跳约 48.7h 过期；恢复建议仍是待核验计划，不等于进程已停。75 个候选未取回可用官方证据，保留缺口。
+
+最终测试/封印及提交以 TEST_RESULTS 和 `IOTGUARD_REAL_CVE_CLOSURE_REPORT.md` 为准；真实原文、数据库快照、截图与日志留在 gitignored `reports/m44-work/`。
+
 > 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-16（Stage 9B M4.2 收尾：质量闭环验收——研判质量闭环而非 Token 优化）
 
 ## 2026-10-16（Stage 9B M4.3）：核心业务主链集中建设——真实设备检测、四智能体研判与安全修复闭环（OpenWrt+Ubuntu 双真实链路打通；655 回归零失败；flag=off 维持）

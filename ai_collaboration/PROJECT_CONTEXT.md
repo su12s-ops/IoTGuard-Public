@@ -1,6 +1,16 @@
 # IoTGuard 项目长期背景与系统架构
 
-> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-16（Stage 9B M4.3 核心主链）。
+> M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
+
+## Stage 9B M4.4 当前产品边界
+
+Ubuntu 适用性按 Canonical 的实际发行版及源包记录判定；USN 的 CVE/release/source-package 必须精确匹配。NVD 上游版本范围只用于候选，不能替代发行版回移植/分支结论。新增 OfficialCveRecord、ApplicabilityCorrection、CollectionEvidence，原始 JSON/stdout、失败来源状态、内容摘要、历史纠正都可追溯。
+
+Windows 仍不执行产品设备 SSH；Linux 节点通过独立节点令牌原子领取固定任务，保留 SSH 指纹钉扎、资产白名单和凭据环境变量引用。Ubuntu 节点本机采集身份为 authenticated_collection_node，SSH 状态不适用；OpenWrt 为节点核验的 pinned SSH。节点声明与产品直接执行核验分开记录。临时开发会话部署不是持久 systemd 服务。
+
+唯一 LangGraph 四角色仍经隔离 shadow runner 接入真实风险。计划增加原始依据、源包/发行版版本核验与动作分类；Harness 只接收影子计划溯源关联，不接收修复授权。正式入口 System B，flag=off，设备写关闭。CVE-2026-63073/noble/openssl 的旧 M4.3 判断已纠正为 not-affected，替代可信案例为 CVE-2026-94266/noble/curl。
+
+> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-16（Stage 9B M4.4 真实漏洞闭环）。
 
 ## 项目定位
 

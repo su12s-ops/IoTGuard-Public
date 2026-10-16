@@ -1,5 +1,26 @@
 # 测试结果
 
+> M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
+
+## Stage 9B M4.4（2026-10-16）
+
+| 检查 | 实际结果 |
+| --- | --- |
+| 全量回归 | 677 passed / 0 failed（655 基线 + 22 项主链必要回归）；交付代码最终复跑 487.00 秒，5 个既有 utcnow 弃用警告 |
+| M4.4 必要专项 | 22 passed：发行分支/官方原文/纠正保留、精确 USN、节点认证/领取/失败/摘要/身份、单记录 ADV 引用与伪造拒绝、Schema 回显拒绝、计划源包版本/Harness 不授予权限 |
+| 采集/Harness 相关专项 | 86 passed / 0 failed |
+| 前端 | npm run build 通过；浏览器实际核对纠正 #9、两类真实采集、risk 126 同链、四角色原始输出及引用、分类计划、Harness needs_evidence/blocked |
+| 实际一致性 | m44_real_cve_closure.py validate：11/11；39 个原始 ID 可解析；Trace 中引用均可解析；16 条历史影子全文不变；126 条正式风险全字段影子前后不变 |
+| 真实运行 | m44-real-841d76e9aa，四角色 succeeded，runtime 7 真实证据/7 发现；confirmed_affected / scheduled_fix / stale_verified / pending_human_review；未确认利用 |
+| 旧风险纠正 | correction #9 / risk 12 → noble openssl not_affected；保留 8 次关联历史影子。总 126 CVE 官方回查，51 可用、75 缺可用官方记录；15 条纠正 |
+| Harness | 只读调查 needs_evidence；修复 blocked；错误哈希、无审批资格及 blocked 执行均 409；设备写 0、修复授权 0 |
+| Mimosa | 0 findings；覆盖 partial / inconclusive，不能声称全局安全证明。SSRF 静态发现已改为固定回环、无重定向客户端后复扫 |
+| 敏感检查 | 本轮改动对本地凭据值比对、私钥材料扫描无发现；Mimosa git-secrets 40 个历史提交无发现（含实现提交 c7ca5a3）；原始库/地址/日志/截图均不提交 |
+
+最终 Mimosa 封印：`scan-2026-10-16T14-09-21.519Z-da2ab63a6201` / `sha256:f1a18ebd1b11ee95b113717e1d714bd1499946a0e4bcf867a58b2177f6f1f954`；223 个文件解析无失败；coverage 为 partial / inconclusive，威胁建模与发现阶段覆盖不完整。
+
+失败/非验收运行同样保留：m44-real-0f50c24861（官方证据结构误拒后中止修复）；m44-real-33395231a5（Schema 回显伪空报告，经修复后重跑）。不把这两条结果混入最终验收。
+
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-16
 
 ## Stage 9B M4.3 核心主链轮（2026-10-16；E2E 证据 reports/m43-core-e2e-*/ 本地留存不入库）

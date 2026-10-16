@@ -1,5 +1,20 @@
 # 当前任务
 
+> M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
+
+## 当前完成：Stage 9B M4.4（2026-10-16）
+
+- [x] CVE-2026-63073 发行分支误匹配纠正：noble/openssl 官方 not-affected；纠正 #9、旧风险 12、8 次历史影子运行关联保留。此前 M4.3 该风险的建议已撤回适用性依据，不能执行。
+- [x] 126 个真实候选逐项官方回查：51 个可用官方记录，75 个仍无可用记录；15 条纠正；未把 unknown 候选当确认漏洞。
+- [x] Windows 产品入口 → 已认证 Linux 常驻节点 → OpenWrt 钉扎 SSH / Ubuntu 节点本机固定只读采集 → 原文 INV/SHA256/Trace 入库。182 / 1790 个真实包；失败保留旧清单。
+- [x] 真实 curl CVE-2026-94266 / noble / 8.5.0-2ubuntu10.15 → 官方 USN-8932-1 修复版 8.5.0-2ubuntu10.16 → 风险 126 → 四角色实际影子研判 `m44-real-841d76e9aa` → confirmed_affected / scheduled_fix / pending_human_review。
+- [x] runtime 7 条真实证据明确 stale；缺新鲜证据不否定静态适用性，也不宣称 CVE 利用。修复真公告 ID 误拒、Schema 回显伪成功、前端角色引用映射问题。
+- [x] 现有 Harness 同风险/影子计划哈希关联：只读调查 needs_evidence；修复 blocked；审批/执行拒绝；39 个原始证据 ID 可解析；一致性 11/11；126 条正式风险字段影子前后不变；16 条历史影子全文不变。
+- [x] 回归 677/0、M4.4 专项 22/0、采集/Harness 专项 86/0、前端构建；Mimosa 0 findings（partial 覆盖，不能声称完整安全证明），敏感扫描无发现。
+- [x] 交付 `IOTGUARD_REAL_CVE_CLOSURE_REPORT.md`，仅提交/推送 IoTGuard-Public。flag=off；System B 正式入口；无设备写入/自动修复/旧编排器删除。
+
+本轮完成即停止。保留环境缺口：75 个未核验候选、过期运行时心跳/转发链、Ubuntu Harness 不支持真实修复。实际执行须另行隔离方案与明确批准。下文较早阶段的完成/待办为历史记录，以本节和 M4.4 报告为准。
+
 > 每完成一个任务更新本文件。最后更新：2026-10-16
 
 ## 最近完成
