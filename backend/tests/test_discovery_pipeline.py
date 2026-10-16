@@ -210,6 +210,64 @@ def test_unidentifiable_device_keeps_evidence_and_supports_retry(session_factory
         db.close()
 
 
+# ── 4b. 身份防降级：弱探测轮不得改写已识别身份（M4.3 真实 E2E 发现） ────────────
+
+def test_upsert_device_identity_never_downgrades(session_factory, monkeypatch):
+    """已识别设备的重复入档在弱探测轮（瞬时协议未应答 → unknown-device-<ip>
+    低置信身份）不得降级身份承载字段；强证据轮仍正常更新身份，且不产生重复设备。"""
+    strong = {"device_name": "OpenWrt-000c2915a8c8", "device_type": "router",
+              "vendor": "", "model": "", "firmware_version": "25.12.5",
+              "os": "Linux 6.12", "confidence": 0.9, "source": "protocol_fingerprint",
+              "metadata": {}}   # 与弱轮同为 host 兜底键（真实缺陷场景：同键降级）
+    weak = {"device_name": "unknown-device-192.168.50.9", "device_type": "unknown",
+            "vendor": "", "model": "", "firmware_version": "", "os": "",
+            "confidence": 0.35, "source": "banner_fallback", "metadata": {}}
+    probe_results = {
+        22: {"service_type": "ssh", "product": "dropbear_2024.85", "version": "2024.85",
+             "banner": "SSH-2.0-dropbear", "auth_state": "auth_required", "evidence": {}},
+        80: {"service_type": "http", "product": "uhttpd", "version": "1.0",
+             "banner": "<html>", "auth_state": "unknown", "evidence": {}},
+    }
+
+    def fake_identify(host, port, timeout=2.0, banner_fallback=False):
+        return dict(probe_results[port])
+
+    def fake_build_identity(host, service_results):
+        base = strong if any(r.get("service_type") == "ssh"
+                             for r in service_results.values()) else weak
+        return {**base, "metadata": dict(base.get("metadata") or {})}
+
+    monkeypatch.setattr(device_inventory, "identify_service", fake_identify)
+    monkeypatch.setattr(device_inventory, "build_identity", fake_build_identity)
+
+    db = session_factory()
+    try:
+        device, _ = device_inventory.upsert_device(db, "192.168.50.9", ports=[22])
+        assert device.device_name == "OpenWrt-000c2915a8c8"
+        assert device.identity_confidence == 0.9
+
+        # 弱证据轮：身份承载字段不被降级，在线画像照常刷新
+        device, _ = device_inventory.upsert_device(db, "192.168.50.9", ports=[80])
+        db.refresh(device)
+        assert device.device_name == "OpenWrt-000c2915a8c8"
+        assert device.identity_confidence == 0.9
+        assert device.device_type == "router"
+        assert device.ip == "192.168.50.9" and device.status == "online"
+
+        # 更强证据轮：身份正常更新（防降级不阻碍升级），且不产生重复设备
+        stronger = {**strong, "confidence": 0.95, "device_name": "OpenWrt-lab"}
+        monkeypatch.setattr(
+            device_inventory, "build_identity",
+            lambda host, service_results: {**stronger, "metadata": dict(stronger["metadata"])})
+        device, _ = device_inventory.upsert_device(db, "192.168.50.9", ports=[80])
+        db.refresh(device)
+        assert device.device_name == "OpenWrt-lab"
+        assert device.identity_confidence == 0.95
+        assert db.query(models.IotDevice).filter_by(ip="192.168.50.9").count() == 1
+    finally:
+        db.close()
+
+
 # ── 5. 已确认组件版本的设备进入 CVE 检测（保持候选语义） ──────────────────────
 
 def test_versioned_components_enter_cve_matching_as_candidates(session_factory, monkeypatch):

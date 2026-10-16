@@ -118,10 +118,16 @@ def _serialize_run(row: models.UnifiedAnalysisRun, include_state: bool = True) -
 
 
 @router.get("/runs")
-def list_runs(limit: int = 20, mode: str = "", db: Session = Depends(get_db)):
+def list_runs(limit: int = 20, mode: str = "", risk_id: int = 0,
+              target_ref: str = "", db: Session = Depends(get_db)):
+    """运行列表（只读）。risk_id/target_ref 供风险详情与资产页关联展示。"""
     query = db.query(models.UnifiedAnalysisRun).order_by(models.UnifiedAnalysisRun.id.desc())
     if mode in {"shadow", "formal"}:
         query = query.filter(models.UnifiedAnalysisRun.mode == mode)
+    if risk_id:
+        query = query.filter(models.UnifiedAnalysisRun.risk_id == risk_id)
+    if target_ref:
+        query = query.filter(models.UnifiedAnalysisRun.target_ref == target_ref)
     rows = query.limit(max(1, min(limit, 100))).all()
     return [{"run_id": row.run_id, "task_type": row.task_type, "target_ref": row.target_ref,
              "mode": row.mode, "status": row.status, "risk_id": row.risk_id,

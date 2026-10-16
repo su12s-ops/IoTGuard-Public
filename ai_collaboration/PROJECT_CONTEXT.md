@@ -1,6 +1,6 @@
 # IoTGuard 项目长期背景与系统架构
 
-> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-16（Stage 9B M4.2 收尾）。
+> 本文件由开发过程持续维护，必须与实际代码保持一致。最后核对：2026-10-16（Stage 9B M4.3 核心主链）。
 
 ## 项目定位
 
@@ -27,7 +27,8 @@ backend/   FastAPI + SQLAlchemy + SQLite（30+ 表）
     │   ├─ agent_harness.py        修复 Harness（审批哈希/锁/预算/回滚；执行 coordinator
     │   │                          requested_tools 真实补采并复评）
     │   └─ ebpf_event_collector.py eBPF/Falco 证据层
-    └─ tests/ 650 项 pytest（全量绿：650 passed / 0 failed，2026-10-16）
+    ├─ scripts/ m43_core_e2e.py 核心主链 E2E 编排器（真实设备发现/采集/匹配/logread/影子研判/Harness 闭环/一致性核验）
+    └─ tests/ 655 项 pytest（全量绿：655 passed / 0 failed，2026-10-16）
 collector/  bpftrace 探针、OpenWrt/Linux 只读采集器、Falco 规则、性能评测负载发生器、logread 降级采集
 simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 ```
@@ -37,6 +38,7 @@ simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 - **统一编排器（services/unified/，唯一正式架构，pipeline_version=unified-four-agent-v1）**：LangGraph 1.2 单图——prepare(路由分层)→**prepare_evidence(确定性证据预取，M4.1：无 LLM、复用只读工具/多源情报包/SecurityEvidence、运行内只读复用、新鲜度按当前时间重算、失败退回自主查询)**→asset_investigator→(vulnerability_analyst ∥ runtime_analyst)→detect_conflicts(7 确定性规则)→[定向复议≤1]→decision_planner([补查≤1])→finalize(审计门禁/F5 聚合/强制待审批计划)。能力来源：System A 的 14 只读工具与工具循环基座 + System B 的证据包/冲突/门禁/有界方向映射；F1/F3/F5/F6/F7/F9、§7 八问题与 M4.1 五类决策语义约束（分支排除/厂商冲突/紧迫度分离字段 runtime_evidence_validity+urgency_basis/已修复确定性/过期≠不适用）已修复并有测试锁定；门禁 fail-closed 新增 7 类确定性矛盾理由；程序兜底裁定带 program_fallback 显式标记（统计口径与 LLM 判定分离）。M4.2 增：紧迫性放大因子（KEV ∨ 受影响组件公网监听×CVSS≥9.0）、branch_excluded/below_stated_affected_range 扩展拦截、fixed_disposal_contradiction、vendor_not_affected_overridden（含 backport）、冲突规则 8（确定性事实 vs 分析师结论→定向复议）、四维 DimensionAssessment 分层 Schema、消融钩子 ablation_mask。
 - **开关**：`LINUXGUARD_UNIFIED_PIPELINE=off|shadow|on`（默认 off=System B 原链路零变化；shadow=影子对照只写 unified_analysis_run；on=/api/analysis 经 adapter 切换统一编排器）。影子隔离由逐字段快照测试锁定。
 - **旧体系现状（能力来源与历史兼容，非正式入口）**：System A（services/agents/）与 System B（event_review_pipeline.py）在开关 off 时仍是正式链路（System B）；on 切换稳定后按 IOT_STAGE9B_MIGRATION_NOTES.md §5 清单退役。
+- **核心主链 E2E（M4.3，2026-10-16）**：backend/scripts/m43_core_e2e.py 把真实设备业务闭环固化为可重入编排：发现入档→操作员 SSH 只读采集（指纹钉扎+固定 Collector）→官方上传建档→CVE 匹配→logread/运行时证据→统一四智能体影子研判（隔离入口，flag=off 不变）→Harness 只读闭环与门禁→一致性核验（影子隔离/引用反幻觉/Trace 贯穿）。证据键跨线语义：设备线（IotDevice DEV-*）与主机线（LinuxAsset 自报主机名）经同 IP 资产或指纹钉扎 DeviceConnection 双向传递（agents/tools._evidence_keys）；设备身份防降级（device_inventory.upsert_device）；影子运行可经 `GET /api/unified/runs?risk_id=` 关联风险详情展示。
 - **实验基建（backend/scripts/，本地 reports/ 留存不入库）**：stage9_agent_effectiveness_audit.py（E 案例与基座）→ stage9b_unified_compare.py（X 案例/三方对照）→ stage9b_quality_{cases,experiment}.py（M4.2：Y1–Y10 先验真值、消融/反事实、断点续跑）→ stage9b_closure_{cases,experiment,stats}.py（M4.2 收尾：Y6 2×2 修正反事实、RT-A/B/C/D 正向贡献、链末端续接重试、退化输出检测、零 LLM 可复现统计）。**真值先验纪律**：cases 真值表提交先于任何真实 LLM 运行（git 时序可核验）；原始产物零改动，重试新 run_id。
 - **M4 最终验收（2026-10-15，IOT_UNIFIED_FOUR_AGENT_FINAL_ACCEPTANCE.md）**：全部 10 事件 20 次运行完成（1.357M tokens）；安全面全达标；质量/成本/稳定性未达切换门槛，flag=off；其统计口径由 M4.1 离线核查修正（兜底归属 E3a×2+E3b×1、混合口径高估 3~7pp、7.6s 为全量运行口径）。
 - **M4.1 校准复测（2026-10-15，IOT_UNIFIED_FOUR_AGENT_CALIBRATION_REPORT.md）**：22 次真实 LLM 运行全 completed（0 兜底）；**影响判定（配对）9/9 vs 旧 7/7 首次达标、稳定性达标（E1×3/E5×3 全一致）、安全面保持**；处置（配对）8/9 差 1 例（E2 静态紧迫性超集）、成本 -4.8%（全链口径）非实质改善 → **维持 flag=off**；遗留：static_evidence_only 放大因子前提 / E3a 残余方差 / 方向口径对齐 / 预取切片瘦身（目标 ≤60k/评审运行）。

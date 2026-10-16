@@ -486,21 +486,29 @@ def upsert_device(db, host: str, ports: list[int] | None = None, timeout: float 
         identity["metadata"]["scan_scope"] = scan_scope
     device_key = _device_key(identity, host)
     device = db.query(models.IotDevice).filter_by(device_id=device_key).one_or_none()
+    identity_downgrade = False
     if device is None:
         device = models.IotDevice(device_id=device_key)
         db.add(device)
         device.first_seen_at = models.utcnow()
-    device.device_name = identity["device_name"] or device.device_name
-    device.device_type = identity["device_type"]
-    device.vendor = identity["vendor"]
-    device.model = identity["model"]
-    device.firmware_version = identity["firmware_version"]
-    device.os = identity["os"]
+    elif identity["confidence"] < (device.identity_confidence or 0.0):
+        # 身份防降级：本轮探测证据弱于已存身份（瞬时探测失败/协议未应答）时，
+        # 不覆盖身份承载字段（名称/类型/厂商/型号/固件/系统/来源/置信度/元数据），
+        # 只刷新在线状态与画像；否则一次弱探测轮会把已识别设备改写为
+        # unknown-device-<ip>，破坏"重复入档不降级已识别身份"语义。
+        identity_downgrade = True
+    if not identity_downgrade:
+        device.device_name = identity["device_name"] or device.device_name
+        device.device_type = identity["device_type"]
+        device.vendor = identity["vendor"]
+        device.model = identity["model"]
+        device.firmware_version = identity["firmware_version"]
+        device.os = identity["os"]
+        device.identity_source = identity["source"]
+        device.identity_confidence = identity["confidence"]
+        device.metadata_json = json.dumps(identity["metadata"], ensure_ascii=False)
     device.ip = host
     device.status = "online"
-    device.identity_source = identity["source"]
-    device.identity_confidence = identity["confidence"]
-    device.metadata_json = json.dumps(identity["metadata"], ensure_ascii=False)
     baseline, factors = _exposure_baseline(service_results)
     device.risk_score, device.risk_score_basis = baseline, "service_exposure_baseline"
     device.security_status = "unassessed"  # 设备级漏洞匹配在后续阶段接入

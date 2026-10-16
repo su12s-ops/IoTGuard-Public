@@ -80,6 +80,128 @@
         </section>
       </el-tab-pane>
 
+      <el-tab-pane label="统一编排（影子）" name="unified">
+        <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
+          title="影子研判：统一四智能体（LangGraph 唯一编排器）在隔离入口运行，只写影子运行表，不改变正式风险结论、不触发设备写操作；正式入口仍由现有管线提供。" />
+        <section class="operation-section">
+          <div class="section-head">
+            <div>
+              <h2>影子运行列表</h2>
+              <p class="operation-help">业务链：资产 → 候选 CVE → 原始证据 → 四智能体输出 → 确定性门禁 → 影子结论 → 待审批计划；每条运行可追溯到原始证据 ID。</p>
+            </div>
+            <el-select v-model="unifiedFilter.mode" size="small" style="width: 140px" @change="loadUnifiedRuns">
+              <el-option value="" label="全部模式" />
+              <el-option value="shadow" label="仅影子" />
+              <el-option value="formal" label="仅正式" />
+            </el-select>
+          </div>
+          <el-alert v-if="!unifiedLoading && unifiedRuns.length === 0" title="暂无统一编排运行" type="info" :closable="false" />
+          <DataTable v-else :rows="unifiedRuns" v-loading="unifiedLoading" :height="280">
+            <el-table-column prop="run_id" label="运行" min-width="210" />
+            <el-table-column prop="task_type" label="任务" width="130" />
+            <el-table-column prop="target_ref" label="目标" min-width="160" />
+            <el-table-column label="模式" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="row.mode === 'shadow' ? 'warning' : 'success'">{{ row.mode === 'shadow' ? '影子' : '正式' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="statusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
+            <el-table-column prop="risk_id" label="风险" width="70" />
+            <el-table-column prop="created_at" label="创建时间" min-width="170"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
+            <el-table-column label="操作" width="100"><template #default="{ row }"><el-button size="small" @click="viewUnifiedRun(row.run_id)">查看</el-button></template></el-table-column>
+          </DataTable>
+        </section>
+
+        <template v-if="unifiedRun">
+          <section class="operation-section">
+            <div class="section-head">
+              <div>
+                <h2>运行 {{ unifiedRun.run_id }}
+                  <el-tag size="small" :type="unifiedRun.mode === 'shadow' ? 'warning' : 'success'" style="margin-left: 6px">{{ unifiedRun.mode === 'shadow' ? '影子研判' : '正式' }}</el-tag>
+                </h2>
+                <p class="operation-help">{{ unifiedRun.task_type }} · {{ unifiedRun.target_type }} {{ unifiedRun.target_ref }}
+                  · 管线 {{ unifiedRun.pipeline_version }} · 状态 {{ unifiedRun.status }}{{ unifiedRun.error ? ' · ' + unifiedRun.error : '' }}</p>
+              </div>
+              <el-button size="small" :loading="unifiedLoading" @click="viewUnifiedRun(unifiedRun.run_id)">刷新</el-button>
+            </div>
+            <el-steps :active="unifiedStageActive" align-center style="margin: 8px 0 14px">
+              <el-step v-for="stage in unifiedStageOrder" :key="stage" :title="stage"
+                :status="stepStatus((unifiedRun.stage_status || {})[stage] ? { status: unifiedRun.stage_status[stage] === 'succeeded' ? 'succeeded' : unifiedRun.stage_status[stage] } : null)" />
+            </el-steps>
+            <el-row :gutter="12">
+              <el-col :span="12">
+                <el-descriptions title="确定性门禁（程序审计策略）" :column="1" border size="small">
+                  <el-descriptions-item label="门禁状态">
+                    <el-tag size="small" :type="(unifiedRun.final?.policy?.status) === 'auto_confirmed' ? 'success' : 'warning'">
+                      {{ unifiedRun.final?.policy?.status || '—' }}
+                    </el-tag>
+                  </el-descriptions-item>
+                  <el-descriptions-item label="理由">{{ (unifiedRun.final?.policy?.reasons || []).join('；') || '—' }}</el-descriptions-item>
+                  <el-descriptions-item label="降级角色">{{ (unifiedRun.degraded_roles || []).join('、') || '无' }}</el-descriptions-item>
+                  <el-descriptions-item label="LLM 用量">{{ JSON.stringify(unifiedRun.usage?.usage || unifiedRun.usage || {}) }}</el-descriptions-item>
+                </el-descriptions>
+              </el-col>
+              <el-col :span="12">
+                <el-descriptions title="影子结论（不写正式字段）" :column="1" border size="small">
+                  <el-descriptions-item label="影响判定">{{ unifiedVerdict.impact_status || '—' }}</el-descriptions-item>
+                  <el-descriptions-item label="建议处置">{{ unifiedVerdict.recommended_action || '—' }}（优先级 {{ unifiedVerdict.recommended_priority || '—' }}，置信度 {{ unifiedVerdict.confidence ?? '—' }}）</el-descriptions-item>
+                  <el-descriptions-item label="证据有效性">{{ unifiedVerdict.runtime_evidence_validity || '—' }} / 紧迫度依据 {{ unifiedVerdict.urgency_basis || '—' }}</el-descriptions-item>
+                  <el-descriptions-item label="引用证据">{{ (unifiedVerdict.supporting_evidence_ids || []).join('、') || '—' }}</el-descriptions-item>
+                  <el-descriptions-item label="证据缺口">{{ (unifiedVerdict.missing_evidence || unifiedRun.final?.data_gaps || []).join('；') || '无' }}</el-descriptions-item>
+                </el-descriptions>
+              </el-col>
+            </el-row>
+            <div v-if="unifiedVerdict.reason" class="cell-sub" style="margin-top: 8px">研判依据：{{ unifiedVerdict.reason }}</div>
+          </section>
+
+          <section class="operation-section">
+            <div class="section-head"><div><h2>四智能体执行明细（证据消费可追溯）</h2></div></div>
+            <DataTable :rows="unifiedAgentRows">
+              <el-table-column prop="name" label="智能体" min-width="180" />
+              <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.status || '—' }}</template></el-table-column>
+              <el-table-column label="工具调用" min-width="280"><template #default="{ row }">{{ (row.tool_calls || []).join('、') || '—' }}</template></el-table-column>
+              <el-table-column label="引用证据" min-width="240"><template #default="{ row }">{{ (row.evidence_ids || []).join('、') || '—' }}</template></el-table-column>
+            </DataTable>
+          </section>
+
+          <section class="operation-section" v-if="unifiedPlanActions.length">
+            <div class="section-head"><div><h2>待审批处置计划（requires_approval 由程序强制）</h2></div></div>
+            <el-row :gutter="12">
+              <el-col :span="8">
+                <h3 class="drawer-section-title">建议动作（白名单）</h3>
+                <el-descriptions :column="1" border size="small">
+                  <el-descriptions-item v-for="(a, i) in unifiedPlanActions" :key="i" :label="a.action">
+                    {{ a.target || a.package || '' }} {{ a.params ? JSON.stringify(a.params) : '' }}
+                  </el-descriptions-item>
+                </el-descriptions>
+              </el-col>
+              <el-col :span="8">
+                <h3 class="drawer-section-title">验证条件</h3>
+                <ul class="plan-list"><li v-for="(v, i) in (unifiedRun.plan?.verification_plan || [])" :key="i">{{ v.step || v.description || JSON.stringify(v) }}</li></ul>
+              </el-col>
+              <el-col :span="8">
+                <h3 class="drawer-section-title">回滚要求</h3>
+                <ul class="plan-list"><li v-for="(r, i) in (unifiedRun.plan?.rollback_plan || [])" :key="i">{{ r }}</li></ul>
+              </el-col>
+            </el-row>
+          </section>
+
+          <section class="operation-section" v-if="unifiedRun.mode === 'shadow' && unifiedRun.risk_id">
+            <div class="section-head">
+              <div><h2>与正式链路对照</h2>
+                <p class="operation-help">影子结论只读对照同事件正式结论；正式字段仅由正式链路写入。</p>
+              </div>
+              <el-button size="small" :loading="unifiedLoading" @click="loadUnifiedComparison">加载对照</el-button>
+            </div>
+            <el-descriptions v-if="unifiedComparison" :column="1" border size="small">
+              <el-descriptions-item label="统一（影子）">{{ JSON.stringify(unifiedComparison.unified?.policy || {}) }}</el-descriptions-item>
+              <el-descriptions-item label="正式链路">{{ JSON.stringify(unifiedComparison.formal_snapshot || {}) }}</el-descriptions-item>
+            </el-descriptions>
+            <el-button v-else size="small" text type="primary" @click="$router.push({ path: '/risk', query: { tab: 'hits' } })">前往风险中心查看正式结论</el-button>
+          </section>
+        </template>
+      </el-tab-pane>
+
       <el-tab-pane label="统一追踪 (Trace)" name="traces">
         <!-- A. 任务总览：真实记录聚合（无记录时如实空态） -->
         <section class="operation-section">
@@ -277,11 +399,13 @@ import {
   controlSession, errorMessage, fetchDevices,
   startAgentAnalysis, fetchAgentRuns, fetchAgentRun,
   startMqttWorkflow, fetchWorkflowRuns, fetchWorkflowRun,
-  fetchTraces, fetchTraceSummary, fetchTraceDetail, fetchTraceHarness, fetchTraceEvidence
+  fetchTraces, fetchTraceSummary, fetchTraceDetail, fetchTraceHarness, fetchTraceEvidence,
+  fetchUnifiedRuns, fetchUnifiedRun, fetchUnifiedComparison
 } from "../api/deviceOperations";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 
 const router = useRouter();
+const route = useRoute();
 
 const tab = ref("agents");
 const loading = ref(false);
@@ -364,6 +488,52 @@ async function startWorkflow() {
 async function viewWorkflow(runId) { workflow.value = await fetchWorkflowRun(runId); }
 async function refreshWorkflow() { if (workflow.value) workflow.value = await fetchWorkflowRun(workflow.value.run_id); }
 
+// ── 统一四智能体影子编排（只读展示；业务链：资产→CVE→证据→四智能体→门禁→结论→计划）──
+const unifiedLoading = ref(false);
+const unifiedRuns = ref([]);
+const unifiedRun = ref(null);
+const unifiedComparison = ref(null);
+const unifiedFilter = reactive({ mode: "shadow" });
+const unifiedStageOrder = ["prepare", "prepare_evidence", "investigate_asset", "analyze_vulnerability",
+  "analyze_runtime", "detect_conflicts", "directed_rereview", "decide", "execute_follow_ups", "finalize"];
+const unifiedStageActive = computed(() => {
+  const stages = unifiedRun.value?.stage_status || {};
+  const done = unifiedStageOrder.filter(s => stages[s] === "succeeded").length;
+  return unifiedRun.value?.status === "completed" ? unifiedStageOrder.length : done;
+});
+const unifiedVerdict = computed(() => {
+  const decision = unifiedRun.value?.decision || {};
+  return (decision.verdicts || [])[0] || {};
+});
+const unifiedPlanActions = computed(() => unifiedRun.value?.plan?.actions || []);
+const unifiedAgentRows = computed(() =>
+  Object.entries(unifiedRun.value?.agents || {}).map(([name, log]) => ({
+    name,
+    status: log.status,
+    tool_calls: (log.tool_calls || []).map(c => c.name || c),
+    evidence_ids: (log.output?.supporting_evidence_ids) || (log.output?.evidence_ids) || [],
+  })));
+
+async function loadUnifiedRuns() {
+  unifiedLoading.value = true;
+  try {
+    unifiedRuns.value = await fetchUnifiedRuns(
+      Object.fromEntries(Object.entries({ limit: 30, ...(unifiedFilter.mode ? { mode: unifiedFilter.mode } : {}) })));
+  } catch (e) { error.value = errorMessage(e); } finally { unifiedLoading.value = false; }
+}
+async function viewUnifiedRun(runId) {
+  unifiedLoading.value = true;
+  unifiedComparison.value = null;
+  try { unifiedRun.value = await fetchUnifiedRun(runId); }
+  catch (e) { error.value = errorMessage(e); } finally { unifiedLoading.value = false; }
+}
+async function loadUnifiedComparison() {
+  if (!unifiedRun.value) return;
+  unifiedLoading.value = true;
+  try { unifiedComparison.value = await fetchUnifiedComparison(unifiedRun.value.run_id); }
+  catch (e) { error.value = errorMessage(e); } finally { unifiedLoading.value = false; }
+}
+
 // ── 统一追踪（第八阶段）：全部数据来自后端真实记录 ──
 const traceLoading = ref(false);
 const traceSummary = ref({});
@@ -435,7 +605,14 @@ function jumpToTarget() {
   else if (detail.target_type === "cidr") router.push("/scan");
 }
 
-onMounted(() => { load(); loadTraceOverview(); });
+onMounted(async () => {
+  load(); loadTraceOverview(); loadUnifiedRuns();
+  // 深链：/agent-ops?tab=unified&run_id=xxx（风险详情页「统一四智能体影子研判」入口）
+  if (route.query.tab === "unified") {
+    tab.value = "unified";
+    if (route.query.run_id) await viewUnifiedRun(String(route.query.run_id));
+  }
+});
 onUnmounted(stopPolling);
 </script>
 
@@ -443,4 +620,6 @@ onUnmounted(stopPolling);
 .drawer-section-title { margin: 18px 0 10px; font-size: 14px; font-weight: 600; }
 .trace-payload { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 220px; overflow: auto; }
 .cell-sub { color: var(--el-text-color-secondary); font-size: 12px; }
+.plan-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--el-text-color-regular); }
+.plan-list li { margin-bottom: 4px; }
 </style>

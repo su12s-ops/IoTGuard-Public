@@ -54,6 +54,21 @@
     <section class="detail-section"><header><span>07</span><div><h2>修复建议</h2><p>建议执行不代表已经执行</p></div><span class="status-label" :class="['fixed','verified'].includes(chain.remediation.status) ? 'is-l' : 'is-h'">{{ ['fixed','verified'].includes(chain.remediation.status) ? "已经执行" : "建议执行" }}</span></header><dl class="detail-dl compact"><div><dt>修复状态</dt><dd>{{ fixStatus(chain.remediation.status) }}</dd></div><div><dt>目标版本</dt><dd>{{ chain.package.fixed_version || "待确认" }}</dd></div></dl><div class="command-grid"><div><header><span>修复命令</span><el-button text :icon="CopyDocument" @click="copy(chain.remediation.command)">复制</el-button></header><pre>{{ chain.remediation.command || "暂无修复命令" }}</pre></div><div><header><span>验证命令</span></header><pre>{{ chain.remediation.verification || "升级后重新采集资产并核对软件包版本。" }}</pre></div></div></section>
 
     <section class="detail-section"><header><span>08</span><div><h2>审计记录</h2><p>Audit Policy、人工审核和证据缺口</p></div></header><table class="data-table"><thead><tr><th>审计项</th><th>结果</th><th>说明</th></tr></thead><tbody><tr><td>自动审计策略</td><td>{{ riskRecord.human_review_required ? "转人工审核" : "通过" }}</td><td>{{ (riskRecord.audit_policy_reasons || []).join("；") || "无阻断策略" }}</td></tr><tr><td>冲突复议</td><td>{{ riskRecord.review_conflicts?.length ? "存在冲突" : "无冲突" }}</td><td>{{ (riskRecord.review_conflicts || []).join("；") || "-" }}</td></tr><tr><td>证据完整性</td><td>{{ riskRecord.review_missing_evidence?.length ? "存在缺口" : "完整" }}</td><td>{{ (riskRecord.review_missing_evidence || []).join("；") || "-" }}</td></tr><tr><td>人工审计</td><td>{{ riskRecord.review_status || "待研判" }}</td><td>{{ riskRecord.human_review_required ? "必须由人工逐条确认" : "未触发人工门禁" }}</td></tr></tbody></table></section>
+
+    <section class="detail-section" v-if="unifiedShadowRuns.length"><header><span>09</span><div><h2>统一四智能体影子研判</h2><p>LangGraph 唯一编排器的影子运行（只读对照，不改变上方正式结论）</p></div><span class="status-label is-info">影子</span></header>
+      <table class="data-table"><thead><tr><th>运行</th><th>任务</th><th>模式</th><th>状态</th><th>Trace</th><th>完成时间</th><th></th></tr></thead><tbody>
+        <tr v-for="run in unifiedShadowRuns" :key="run.run_id">
+          <td class="mono">{{ run.run_id }}</td>
+          <td>{{ run.task_type }}</td>
+          <td><span class="status-label" :class="run.mode === 'shadow' ? 'is-info' : 'is-l'">{{ run.mode === "shadow" ? "影子" : "正式" }}</span></td>
+          <td>{{ run.status }}</td>
+          <td class="mono">{{ run.trace_id || "-" }}</td>
+          <td>{{ run.completed_at ? new Date(run.completed_at).toLocaleString("zh-CN", { hour12: false }) : "-" }}</td>
+          <td><el-button size="small" text type="primary" @click="goUnifiedRun(run.run_id)">在智能体页查看</el-button></td>
+        </tr>
+      </tbody></table>
+      <p class="section-note">影子运行只写 UnifiedAnalysisRun 表；正式字段（风险分/裁决/处置建议）仅由正式链路写入，两个结论可在「智能体分析与修复工作流 → 统一编排（影子）」中对照。</p>
+    </section>
   </section>
 
   <section v-else class="page">
@@ -67,6 +82,7 @@ import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
+import { fetchUnifiedRuns } from "../api/deviceOperations";
 
 const route = useRoute();
 const router = useRouter();
@@ -141,6 +157,10 @@ const pct = (v) => `${Math.round(Number(v || 0) * 100)}%`;
 const fixStatus = (s) => ({ pending: "待修复", in_progress: "进行中", fixed: "已修复", verified: "已验证" }[s] || "待修复");
 const back = () => router.push("/risk");
 
+// 统一四智能体影子研判（M4.3）：按 risk_id 关联展示，只读。
+const unifiedShadowRuns = ref([]);
+const goUnifiedRun = (runId) => router.push({ path: "/agent-ops", query: { tab: "unified", run_id: runId } });
+
 const copy = async (text) => {
   if (!text) return;
   try { await navigator.clipboard.writeText(text); ElMessage.success("修复命令已复制"); }
@@ -155,6 +175,10 @@ onMounted(async () => {
     vulnerabilityDetail.value = await fetchVulnerability(chain.value.intelligence.cve_id).catch(() => ({}));
     cveEvidence.value = await fetchCveRuntimeEvidence(chain.value.intelligence.cve_id, chain.value.asset.id)
       .catch(() => null);
+  }
+  const rid = Number(riskRecord.value.risk_id || 0);
+  if (rid) {
+    unifiedShadowRuns.value = await fetchUnifiedRuns({ risk_id: rid, limit: 10 }).catch(() => []);
   }
 });
 </script>

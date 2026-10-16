@@ -2,6 +2,18 @@
 
 > 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-16
 
+## Stage 9B M4.3 核心主链轮（2026-10-16；E2E 证据 reports/m43-core-e2e-*/ 本地留存不入库）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归 | **655 passed / 0 failed**（650 基线 + 5 新增：test_unified_pipeline runs 过滤 1 / test_multi_source 情报重复行容错 1 / test_discovery_pipeline 身份防降级 1 / test_ebpf_p23 证据键跨线 2；终态代码两轮独立复跑零回归） |
+| 实机 E2E（backend/scripts/m43_core_e2e.py） | 五阶段 38 项检查全通过：A OpenWrt 12/12（发现/指纹钉扎采集/上传建档/连接预检边界/匹配诚实零命中/logread 幂等/风险计算）+ B Ubuntu 7/7（采集/情报导入/线上同步 349 条/377 匹配/125 风险/risk 12 就绪）+ C/D/E 19/19（flag=off 核验/OpenWrt 设备面影子研判/Ubuntu 风险影子研判/影子隔离快照/引用反幻觉/待审批计划/Harness×6 门禁/链内一致×2/Trace 贯穿/正式结论零写入/引用独立复验） |
+| 影子研判质量（真实 LLM，14 次运行全部 completed） | risk_review 多轮全链成功：CVE-2026-63073 openssl → potentially_affected + scheduled_fix + pending_human_review（confidence<0.70/evidence_partial/stale_runtime_evidence/high_critical 四理由）；runtime_evidence_validity=stale_verified（Falco 45.8h 如实降级）、urgency_basis=static_evidence_only；canonical unavailable 不虚判 confirmed；计划 update_package openssl + backup/restart，验证+回滚齐备，requires_approval 程序强制 |
+| 溯源核验 | E2：影子链引用证据 43 条全部真实存在于 SecurityEvidence；E3：统一 Trace 22/22 贯穿（unified_four_agent + harness_*）；E4：正式 RiskAssessment 零触碰（无最终分/裁决，review_status 保持候选侧）；C2b：影子前后正式字段快照一致 |
+| 本轮缺陷修复（3 项，回归锁定） | ①情报同步二次运行崩溃（autoflush=False 重复建行）②设备身份降级（弱探测轮覆盖已识别身份）③设备线↔主机线证据键失配（修复后 OpenWrt 设备面 runtime 分析师真实入链，6 发现+6 引用全真实） |
+| Mimosa 深度扫描 | **0 findings**（scan-2026-10-16T11-54-28.320Z-b7c5bff9c409，seal sha256:52fbd4fb…e18a7，123 依赖包） |
+| 敏感信息/边界 | diff 与新增脚本无凭据字面量；设备密钥/口令仅环境变量引用；影子零触碰；flag=off 保持；零设备写操作 |
+
 ## Stage 9B M4.2 收尾闭环轮（2026-10-16；实验证据 backend/reports/stage9b-closure/ 本地留存，stage9b-quality/ 原始产物零改动）
 
 | 项 | 结果 |

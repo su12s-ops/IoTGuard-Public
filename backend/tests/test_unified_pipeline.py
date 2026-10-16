@@ -964,6 +964,48 @@ class TestUnifiedApi:
         assert response.status_code == 200
         assert response.json() == []
 
+    def test_runs_listing_filters_by_risk_and_target(self, client, session_factory):
+        """M4.3：风险详情/资产页按 risk_id、target_ref 关联影子运行（只读过滤）。"""
+        db = session_factory()
+        asset = make_asset(db, hostname="edge-filter")
+        match = models.VulnerabilityMatch(
+            asset_id=asset.id, cve_id="CVE-2026-81097", package_name="curl",
+            installed_version="7.81.0", fixed_version="7.81.1", affected=True,
+            match_status="potentially_affected")
+        db.add(match)
+        db.flush()
+        risk = models.RiskAssessment(asset_id=asset.id, cve_id="CVE-2026-81097",
+                                     package_name="curl", preliminary_score=45,
+                                     preliminary_level="Medium", active=True,
+                                     match_id=match.id)
+        db.add(risk)
+        db.commit()
+        db.add(models.UnifiedAnalysisRun(
+            run_id="UA-flt-1", task_type="risk_review", target_type="linux_host",
+            target_ref="edge-filter", mode="shadow", risk_id=risk.id))
+        db.add(models.UnifiedAnalysisRun(
+            run_id="UA-flt-2", task_type="device_surface", target_type="device",
+            target_ref="wrt-device", mode="shadow"))
+        db.commit()
+        risk_pk = risk.id
+        db.close()
+
+        listed = client.get("/api/unified/runs").json()
+        assert {row["run_id"] for row in listed} >= {"UA-flt-1", "UA-flt-2"}
+
+        by_risk = client.get("/api/unified/runs", params={"risk_id": risk_pk}).json()
+        assert [row["run_id"] for row in by_risk] == ["UA-flt-1"]
+
+        by_target = client.get("/api/unified/runs", params={"target_ref": "wrt-device"}).json()
+        assert [row["run_id"] for row in by_target] == ["UA-flt-2"]
+
+        by_mode = client.get("/api/unified/runs", params={"mode": "formal"}).json()
+        assert by_mode == []
+
+        combined = client.get("/api/unified/runs",
+                              params={"risk_id": risk_pk, "mode": "shadow"}).json()
+        assert [row["run_id"] for row in combined] == ["UA-flt-1"]
+
 
 # ── F1 报告修复 ──────────────────────────────────────────────────────────────
 

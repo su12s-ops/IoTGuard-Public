@@ -2,6 +2,15 @@
 
 > 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-16（Stage 9B M4.2 收尾：质量闭环验收——研判质量闭环而非 Token 优化）
 
+## 2026-10-16（Stage 9B M4.3）：核心业务主链集中建设——真实设备检测、四智能体研判与安全修复闭环（OpenWrt+Ubuntu 双真实链路打通；655 回归零失败；flag=off 维持）
+
+- **交付**：IOTGUARD_CORE_E2E_REPORT.md + backend/scripts/m43_core_e2e.py（五阶段 E2E 编排器：A OpenWrt 发现/采集/匹配/logread、B Ubuntu 采集/情报/风险、C 影子研判、D Harness 闭环、E 一致性核验；幂等可重入，38 项检查全通过，证据 reports/m43-core-e2e-*/ 本地留存）+ `GET /api/unified/runs` risk_id/target_ref 只读过滤 + AgentOps「统一编排（影子）」页签 + 风险详情「09 统一四智能体影子研判」区块
+- **真实链路 1（OpenWrt 25.12.5 @192.168.100.1）**：发现入档（DEV-59CCB87534B7）→ 操作员 SSH 只读采集（指纹钉扎 SHA256:+CaFHIb60… 与受信记录一致，固定 Collector stdin 下发）→ 上传建档（182 真实包）→ CVE 匹配真实零命中（主机线仅认 openwrt.org 公告，不合成）→ logread 证据 1304 行入库 → 影子 device_surface：**runtime 分析师以 5 工具消费真实 logread 证据**（6 发现全挂真实证据 ID，决策引用 6 真实 SE）
+- **真实链路 2（Ubuntu 24.04 @192.168.183.129）**：dpkg 采集 1790 包 → 真实情报（本地存档 588 行 + 线上 NVD/KEV/EPSS 同步 349 条）→ 377 匹配/125 真实风险 → 影子 risk_review 多轮全链成功（risk 12 = CVE-2026-63073 openssl：potentially_affected / stale_verified / static_evidence_only → scheduled_fix，门禁 pending_human_review，待审批计划 requires_approval 强制）→ Harness 调查任务 15 条证据包挂接 + 修复门禁 blocked 演示
+- **E2E 暴露并修复 3 项真实缺陷（回归锁定）**：①情报同步二次运行崩溃（autoflush=False 下同轮重复建行，二次同步 one_or_none 抛 MultipleResultsFound；改 first()+flush 并清理存量 6 行）②设备身份降级（upsert_device 弱探测轮无条件覆盖已识别身份；置信度更低时不覆盖身份字段）③设备线↔主机线证据键失配（_evidence_keys 经同 IP 资产与指纹钉扎 DeviceConnection 双向传递；修复后 C1 runtime 真实入链）
+- **回归与安全**：全量 **655 passed / 0 failed**；Mimosa 0 findings（scan-…-b7c5bff9c409）；敏感信息干净；影子零触碰正式字段（前后快照一致）；**flag=off 保持**；零设备写操作（无产物登记/无修复审批）
+- **边界（如实）**：产品内设备 SSH 采集需 Linux 采集节点（Windows 被策略拒绝，已演示边界）；OpenWrt 主机线零命中为诚实结果；Ubuntu Falco 常驻需 sudo 密码交接（stale 语义按设计工作）；本轮结束即停止
+
 ## 2026-10-16（Stage 9B M4.2 收尾）：统一四智能体质量闭环验收（遗留实验全部补齐 + Y6 反事实 2×2 修正 + Runtime Agent 正向贡献度量；650 回归零失败；flag=off 维持）
 
 - **交付**：IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md（十节收尾报告：离线核查/遗留补齐/Y6 修正/RT 正向贡献/方向四层分析/完整分母/回归扫描隔离/诚实性声明/切换准备状态）+ backend/scripts/stage9b_closure_{cases,experiment,stats}.py + backend/tests/test_closure_counterfactuals.py（13 项）；实验脚本与真值先验提交 9f9e2e6（先于任何收尾 LLM 运行）、脚手架修复 d306622、退化输出检测 5ab79e1

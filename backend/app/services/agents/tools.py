@@ -185,6 +185,10 @@ def _evidence_keys(db: Session, device_id: str) -> list[str]:
 
     SecurityEvidence.device_id 记录的是采集端上报的 hostname 或 IP；
     智能设备分析时用 device_id 查询，需要同时匹配设备 IP 与名称。
+    设备线与主机线是同一台物理机的两条档案（IP 相同）：设备键还要传递到
+    同 IP 主机线资产的自报主机名——SSH/logread 采集锚定的正是该主机名
+    （如 OpenWrt 设备线 DEV-* ↔ 主机线 OpenWrt-<hash>），否则设备面研判
+    会因证据键失配而错误地得到"无运行时证据"。
     """
     keys = {device_id}
     device = db.query(models.IotDevice).filter(
@@ -192,11 +196,29 @@ def _evidence_keys(db: Session, device_id: str) -> list[str]:
     ).first()
     if device:
         keys.update({device.device_id, device.ip, device.device_name})
+        if device.ip:
+            asset_by_ip = db.query(models.LinuxAsset).filter(
+                models.LinuxAsset.ip_address == device.ip).first()
+            if asset_by_ip is None:
+                # 主机线资产可能没有 IP 字段（操作员上传清单不含管理地址）；
+                # 指纹钉扎的 DeviceConnection（host↔asset_id）是平台自身的
+                # 权威同机绑定，经它解析到主机线资产的自报主机名。
+                connection = db.query(models.DeviceConnection).filter(
+                    models.DeviceConnection.host == device.ip).first()
+                if connection is not None and connection.asset_id:
+                    asset_by_ip = db.get(models.LinuxAsset, connection.asset_id)
+            if asset_by_ip is not None:
+                keys.update({asset_by_ip.hostname, asset_by_ip.ip_address})
     asset = db.query(models.LinuxAsset).filter(
         (models.LinuxAsset.hostname == device_id) | (models.LinuxAsset.ip_address == device_id)
     ).first()
     if asset:
         keys.update({asset.hostname, asset.ip_address})
+        if asset.ip_address:
+            device_by_ip = db.query(models.IotDevice).filter(
+                models.IotDevice.ip == asset.ip_address).first()
+            if device_by_ip:
+                keys.update({device_by_ip.device_id, device_by_ip.device_name})
     return sorted(key for key in keys if key)
 
 

@@ -53,3 +53,9 @@ export const fetchTraceSummary = () => api.get("/traces/summary").then(r => r.da
 export const fetchTraceDetail = traceId => api.get("/traces/" + traceId).then(r => r.data);
 export const fetchTraceHarness = traceId => api.get("/traces/" + traceId + "/harness").then(r => r.data);
 export const fetchTraceEvidence = traceId => api.get("/traces/" + traceId + "/evidence").then(r => r.data);
+
+// 统一四智能体编排（唯一编排器；影子运行只读展示，不改正式结论）。
+export const fetchUnifiedSpecs = () => api.get("/unified/specs").then(r => r.data);
+export const fetchUnifiedRuns = params => api.get("/unified/runs", { params }).then(r => r.data);
+export const fetchUnifiedRun = runId => api.get("/unified/runs/" + runId).then(r => r.data);
+export const fetchUnifiedComparison = runId => api.get("/unified/runs/" + runId + "/comparison").then(r => r.data);

@@ -124,3 +124,51 @@ def test_unknown_device_reports_gap_not_fabrication(session_factory):
 def test_runtime_agent_spec_registers_quality_tool():
     spec = next(s for s in specs_summary() if s["name"] == "runtime_behavior_agent")
     assert "query_runtime_data_quality" in spec["tools"]
+
+
+def test_evidence_keys_reconcile_device_and_host_lines(session_factory):
+    """回归（M4.3 真实 E2E 发现）：同一物理机的设备线档案（IotDevice，DEV-* 键）
+    与主机线资产（LinuxAsset，SSH 采集自报主机名 OpenWrt-<hash>）必须互相传递
+    证据键——logread/eBPF 证据锚定的是设备自报主机名，否则设备面研判会因键
+    失配错误得到"无运行时证据"。"""
+    from app.services.agents.tools import _evidence_keys
+
+    db = session_factory()
+    try:
+        db.add(models.LinuxAsset(hostname="OpenWrt-000c2915a8c8", ip_address="192.168.100.1",
+                                 distribution="openwrt", os_name="OpenWrt"))
+        db.add(models.IotDevice(device_id="DEV-59CCB87534B7", ip="192.168.100.1",
+                                device_name="unknown-device-192.168.100.1"))
+        db.commit()
+        # 设备键 → 传递到同 IP 主机线资产的自报主机名
+        keys_from_device = _evidence_keys(db, "DEV-59CCB87534B7")
+        assert "OpenWrt-000c2915a8c8" in keys_from_device
+        # 主机键 → 传递到同 IP 设备线档案
+        keys_from_asset = _evidence_keys(db, "OpenWrt-000c2915a8c8")
+        assert "DEV-59CCB87534B7" in keys_from_asset
+    finally:
+        db.close()
+
+
+def test_evidence_keys_resolve_via_pinned_connection_when_asset_ip_missing(session_factory):
+    """操作员上传的主机线资产可以没有 IP 字段（清单不含管理地址）；此时经
+    指纹钉扎的 DeviceConnection（host↔asset_id，平台权威同机绑定）解析。"""
+    from app.services.agents.tools import _evidence_keys
+
+    db = session_factory()
+    try:
+        asset = models.LinuxAsset(hostname="OpenWrt-000c2915a8c8", ip_address="",
+                                  distribution="openwrt", os_name="OpenWrt")
+        db.add(asset)
+        db.flush()
+        db.add(models.DeviceConnection(
+            asset_id=asset.id, label="lab", host="192.168.100.1", port=22,
+            username="root", auth_type="ssh_key", key_path_env="LINUXGUARD_DEVICE_K",
+            host_key_sha256="SHA256:" + "A" * 43, enabled=True))
+        db.add(models.IotDevice(device_id="DEV-59CCB87534B7", ip="192.168.100.1",
+                                device_name="unknown-device-192.168.100.1"))
+        db.commit()
+        keys_from_device = _evidence_keys(db, "DEV-59CCB87534B7")
+        assert "OpenWrt-000c2915a8c8" in keys_from_device
+    finally:
+        db.close()

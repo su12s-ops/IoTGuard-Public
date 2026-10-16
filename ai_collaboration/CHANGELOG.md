@@ -2,6 +2,15 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-16 — Stage 9B M4.3：核心业务主链集中建设（真实设备检测、四智能体研判与安全修复闭环；OpenWrt+Ubuntu 双真实链路打通；655 回归零失败；flag=off 维持）
+
+- **P0 OpenWrt 真实链路**：授权网段发现入档 → 操作员 SSH 只读采集（ED25519 指纹钉扎 + 固定 Collector stdin 下发，27KB 真实清单）→ 官方上传 API 建档（LinuxAsset id=2，182 真实包）→ CVE 匹配真实零命中（OpenWrt 主机线仅认 openwrt.org 公告，不可达且不合成）→ logread 证据入库（1304 行，幂等）→ 统一四智能体影子研判消费真实 logread 证据（runtime 分析师 5 工具 6 发现全挂真实证据 ID）
+- **P1/P2 Ubuntu 真实链路**：dpkg 采集（1790 包）→ 真实情报（本地存档 588 行 + NVD/KEV/EPSS 线上同步 349 条）→ 377 匹配/125 真实风险 → 影子 risk_review 多轮全链成功（CVE-2026-63073 openssl：potentially_affected 不虚判 / stale_verified 诚实降级 / static_evidence_only → scheduled_fix / 门禁 pending_human_review / 待审批计划 requires_approval 程序强制）；溯源链资产→CVE→证据 ID→四 Agent→门禁→结论→计划全程可核（43 引用证据全真实、Trace 22/22）
+- **P3 Harness 闭环（零设备写）**：调查任务只读执行+证据包挂接 / 修复前置门禁 blocked+执行 409 / 伪造审批哈希 409 / 调查计划拒绝修复式授权 / Windows 采集节点策略边界如实演示
+- **前端**：AgentOps 新增「统一编排（影子）」页签 + 风险详情「09 统一四智能体影子研判」区块（只读；`GET /api/unified/runs` 增加 risk_id/target_ref 过滤）；浏览器实测渲染通过
+- **E2E 暴露并修复 3 项真实缺陷（回归锁定）**：情报同步重复行崩溃（autoflush=False 同轮重复建行 → 二次同步 one_or_none 抛错；first()+flush）/ 设备身份降级（弱探测轮覆盖已识别身份；upsert 防降级）/ 设备线↔主机线证据键失配（logread 锚定设备自报主机名，经同 IP 资产+指纹钉扎 DeviceConnection 双向传递证据键）
+- **回归与安全**：全量 **655 passed / 0 failed**（650+5 新增）；E2E 38 项检查全通过；Mimosa 0 findings（scan-…-b7c5bff9c409，seal sha256:52fbd4fb…e18a7）；敏感信息干净；影子零触碰正式字段；交付 IOTGUARD_CORE_E2E_REPORT.md + backend/scripts/m43_core_e2e.py；本轮结束即停止
+
 ## 2026-10-16 — Stage 9B M4.2 主轮+收尾闭环：统一四智能体研判质量深化与质量闭环验收（遗留实验全部补齐；Y6 反事实修正 2×2；Runtime Agent 正向贡献度量；650 回归零失败，维持 flag=off）
 
 - **主轮（42fe3b1 实现/真值先验 + 22045b8 报告/脚本修复，补记归档）**：四 Agent 专业分工 Schema（资产三级证据分级、漏洞四专业维度含 backport、运行时逐条 relation 九态、决策四维 DimensionAssessment）+ 确定性事实层扩展（紧迫性放大因子 KEV∨公网×CVSS≥9.0、below_range、源立场冲突、public_services 预取）+ 四类决策约束/门禁 + 冲突规则 8 + 路由反向修正 + Y1–Y10 独立案例（真值表先验 42fe3b1 先于任何模型运行）；主矩阵 19 全链 impact/action 19/19、人工 5/5、幻觉 0、方向 14/19；全量 637 passed；Mimosa 0 findings

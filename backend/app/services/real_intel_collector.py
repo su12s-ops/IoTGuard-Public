@@ -353,6 +353,7 @@ def _upsert_vulnerability(db: Session, item: dict[str, Any], kev: dict[str, Any]
     if not threat:
         threat = models.ThreatIntelSource(cve_id=cve_id)
         db.add(threat)
+        db.flush()   # autoflush=False：让同会话后续查找（如多源富集）立即可见，防重复建行
     threat.is_kev = bool(kev)
     threat.kev_due_date = kev.get("dueDate", "") if kev else ""
     threat.epss_score = (epss or {}).get("epss_score", 0)

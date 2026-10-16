@@ -4,6 +4,19 @@
 
 ## 最近完成
 
+**Stage 9B M4.3：核心业务主链集中建设——真实设备检测、四智能体研判与安全修复闭环（OpenWrt+Ubuntu 双真实链路打通；影子零触碰；655 回归零失败；flag=off 维持）**（2026-10-16，报告 IOTGUARD_CORE_E2E_REPORT.md）
+- [x] P0 OpenWrt 真实链路：授权网段发现入档（IotDevice DEV-59CCB87534B7）→ 操作员 SSH 只读采集（ED25519 指纹钉扎，固定 Collector 经 stdin 下发）→ 官方上传 API 建档（182 真实包）→ CVE 匹配（真实零命中，无合成 CVE 补位）→ logread 运行时证据入库（1304 行，幂等判重）→ 统一四智能体影子研判（runtime 分析师消费真实 logread 证据，6 条发现全挂真实证据 ID）
+- [x] P1 统一四智能体进业务：Ubuntu 真实风险（risk 12 = CVE-2026-63073 openssl，装机 3.0.13-0ubuntu3.16 < 修复 3.4.7 确定性比较）影子 risk_review 多轮全链成功——potentially_affected（Canonical unavailable 不虚判 confirmed）/ stale_verified（Falco 证据 45.8h 如实降级）/ static_evidence_only → scheduled_fix（拒绝无依据升级）/ 门禁 pending_human_review 四理由 / 待审批计划（update_package+backup+restart falco，验证+回滚齐备）；溯源链 资产→CVE→匹配→原始证据 ID→四 Agent 输出→门禁→影子结论→计划 全程可核（E2/E3：43 引用证据全部真实存在、Trace 22/22）
+- [x] P2 Ubuntu 运行时取证入链：dpkg 真实采集（1790 包）→ 真实情报（本地存档 588 行 + NVD/KEV/EPSS 线上同步 349 条，fetched_at 不刷新）→ 377 匹配/125 真实风险候选；Falco 停转边界如实（sudo 密码交接项），stale 语义按设计工作
+- [x] P3 Harness 闭环：调查任务只读执行（15 条证据包挂 risk）+ 修复前置门禁（blocked+执行 409）+ 审批哈希绑定（伪造 409）+ 调查计划拒绝修复式授权（409）+ Windows 采集节点策略边界（node_platform_invalid）；零设备写操作
+- [x] 前端同链展示（复用现有页面）：AgentOps 新增「统一编排（影子）」页签（列表+十阶段进度+门禁/结论/计划/四智能体明细+正式对照）；风险详情新增「09 统一四智能体影子研判」区块（risk_id 关联+深链）；浏览器实测渲染通过；真实/合成/影子数据分层标注
+- [x] 本轮暴露并修复 3 项真实缺陷（全部回归锁定）：①情报同步二次运行崩溃（autoflush=False 下重复建行 → one_or_none 崩溃；first()+flush+存量清理）②设备身份降级（弱探测轮无条件覆盖已识别身份；防降级）③设备线↔主机线证据键失配（logread 证据锚定设备自报主机名，设备面研判查证不到；经同 IP 资产+指纹钉扎 DeviceConnection 双向传递证据键——修复后 C1 runtime 分析师真实入链）
+- [x] 回归与安全：全量 **655 passed / 0 failed**（650 基线 + 5 新增专项）；E2E 五阶段 38 项检查全通过；Mimosa **0 findings**（scan-2026-10-16T11-54-28.320Z-b7c5bff9c409，seal sha256:52fbd4fb…e18a7）；敏感信息干净；影子零触碰正式字段；**flag=off 保持**
+- [x] 边界：不切换正式入口、不退役旧编排器、未实施任何真实设备修复（无产物登记/无修复审批/无写操作）；OpenWrt 主机线零命中与产品内采集 Linux 节点依赖如实记录为主链升级项
+- [x] **本轮结束即停止**
+
+## 最近完成
+
 **Stage 9B M4.2 收尾：统一四智能体质量闭环验收（研判质量闭环而非 Token 优化；遗留实验全部补齐、Y6 反事实 2×2 修正、Runtime Agent 正向贡献度量；650 回归零失败；维持 flag=off）**（2026-10-16，报告 IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md）
 - [x] 第一部分（零 LLM 离线核查）：M4.2 主矩阵 25+6 运行完整性独立重建与对账（19 全链+5 兜底+1 simple+6 消融；432 调用/3,394,004 tokens meter 闭合；三口径差异机制解释：meter 含零 token 失败调用、逐 Agent 表=每角色末次调用）；更正主报告两处口径（E3 零方差表述、逐 Agent 计量范围）；原始产物零改动核验
 - [x] 第二部分（遗留补齐，真实 LLM，全部落真值）：E4a/E4b 两跑一致（potentially+mitigate+人工）；X2 全对（KEV 未推翻已修复）；X3 全对（stale 不驱动 immediate）；Y4/Y10 资产消融（判定不承重、校准承重——Y10 隐藏后置信度 0.62→0.70 膨胀）
