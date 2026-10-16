@@ -164,6 +164,13 @@ Y_TRUTH = {
 # 反事实对照（任务书第七部分）：Y6 去除 KEV 后，静态紧迫性失去放大因子——
 # 预期 immediate_fix 不再合法（降级 scheduled_fix）。与 Y6 主运行构成同一
 # 案例的干预对照，验证 urgency_amplifiers 机制真实驱动决策（而非偶然）。
+#
+# ⚠ SUPERSEDED（M4.2 收尾轮修正，修正原因见 stage9b_closure_cases.py 文件头）：
+# 本设计只去除 KEV，未同时去除「受影响组件公网监听 × CVSS≥9.0」通道——Y6 的
+# caddy 0.0.0.0:443 × CVSS 9.8 在 kev=False 下放大因子仍成立，「去 KEV 必降
+# scheduled_fix」的预期不成立。收尾轮改用完整 2×2 条件组合
+# （stage9b_closure_cases.Y6_CF2_TRUTH），本表仅作历史设计记录保留，不再用于
+# 新实验判定。
 Y6_COUNTERFACTUAL_CVE = "CVE-2026-81015"
 Y6_COUNTERFACTUAL_TRUTH = {
     "impact": {"confirmed_affected", "potentially_affected"},
