@@ -282,7 +282,8 @@ def execute_assignment(backend: Backend, assignment: dict) -> None:
             "output_bytes": len(text.encode("utf-8")),
         })
         log(f"结果回传完成: HTTP {status} run_status={(payload or {}).get('status')}")
-        if status != 200 or (payload or {}).get("status") != "completed":
+        accepted = {"completed"} if not assignment.get("harness_adapter") else {"awaiting_approval", "preflight_failed", "verified", "verification_required"}
+        if status != 200 or (payload or {}).get("status") not in accepted:
             raise SystemExit("本轮结果未确认入库；不得显示采集成功")
     except TimeoutError as exc:
         report_failure(backend, run_id, "collector_timeout", str(exc), False)

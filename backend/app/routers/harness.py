@@ -125,6 +125,15 @@ def verify(run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.post("/runs/{run_id}/dry-run", dependencies=[Depends(require_control)])
+def dry_run(run_id: str, db: Session = Depends(get_db)):
+    from app.services import ubuntu_repair
+    try:
+        return serialize(ubuntu_repair.queue(db, get_run(db, run_id), "dry_run"), db)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/runs/{run_id}/cancel", dependencies=[Depends(require_control)])
 def cancel(run_id: str, db: Session = Depends(get_db)):
     row = get_run(db, run_id)

@@ -1,5 +1,23 @@
 # 当前任务
 
+## Stage 9B M4.5（2026-10-16）
+
+当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。
+
+- [x] Ubuntu 适配接入原 Harness、审批哈希、资产锁、预算、授权、Trace 及认证 Linux 节点，无第二执行框架。
+- [x] noble/curl USN-8932-1 修复版 .16 复核；新读取 curl、libcurl4t64、libcurl3t64-gnutls 的安装/候选均为 .15。
+- [x] 真实 dry-run 4ef1f86fcdfc45eb9dcec9b584b3c6b5 → preflight_failed；目标 .16 不在本机索引，无 apt update/下载/包写。
+- [x] 错误哈希与预演失败正确哈希均409、未审批执行409、缺令牌401；真实计划没有成功审批或 side_effect。
+- [x] 新采集/新官方依据/原匹配器评估/前后证据/风险建议接口；不以命令成功判 fixed，不改旧风险与研判。
+- [x] 原风险详情、AgentOps、Harness 展示；隔离副本快照实验方案已准备，尚未创建副本或许可。
+- [x] Ubuntu新增34 + OpenWrt原30专项64/0；前端全套21/0；全量最终 711 passed / 0 failed（679.88秒，5个既有弃用警告）。
+- [ ] Mimosa 本轮扫描缺可用入口，插件查询空结果；不把历史封印当本轮验收。
+- [ ] 真实或隔离副本修复、快照恢复：等待用户单独批准。
+
+完成交付后停止。设备写0；无 Falco 重启、日志备份、实际回滚，无 Token/方向评分/模型/智能体数量变化。
+
+---
+
 > M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
 
 ## 当前完成：Stage 9B M4.4（2026-10-16）

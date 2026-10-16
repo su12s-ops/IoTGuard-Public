@@ -1,5 +1,19 @@
 # 最近一次开发结果
 
+## Stage 9B M4.5（2026-10-16）
+
+当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。
+
+真实链：资产1/风险126/M4.4四智能体 m44-real-841d76e9aa → 新采集0de447c11463b484871b2f8ce6504289（1790包）→ ADV-c73bcf3856244a5abc668abe17c6e95e（USN-8932-1/noble/curl .16）→ Harness4ef1f86fcdfc45eb9dcec9b584b3c6b5 / TR-20261016152210-0e5f95 → PRE-8f1b5602022b4afe901cba4bfafa9236。
+
+curl、libcurl4t64:amd64、libcurl3t64-gnutls:amd64 安装与候选均 .15；目标 .16 缺候选/摘要/元数据，apt 模拟版本未找到，preflight_failed。dpkg audit为空、无hold、快照恢复未验证。错误哈希409、预演失败正确哈希409、未审批执行409、无控制令牌401。真实计划无成功审批/side_effect；原风险全字段与历史统一研判全文摘要前后一致。
+
+成功审批、精确归档维护与写后复采/复匹配仅在测试桩；真实环境只读采集及预演。早期任务保留，最终任务以上述为准；时间戳兼容问题已修正并真实复跑。浏览器已核对真实包表、USN、失败原因、审批关闭、保持风险与待快照状态。
+
+验收专项64/0、前端全套21/0、最终全量 711 passed / 0 failed（679.88秒，5个既有弃用警告）；敏感检查 当前322文件与暂存23文件已知凭据/私钥材料模式比对无匹配；未覆盖Git历史和未知格式。Mimosa 本轮未运行，安全验收未全部满足。当前 VM 和隔离副本的包写入、Falco重启、日志备份、实际回滚均未执行；交付后停止等待隔离实验授权。
+
+---
+
 > M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
 
 ## 2026-10-16 — Stage 9B M4.4 实际交付

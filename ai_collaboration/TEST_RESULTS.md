@@ -1,5 +1,27 @@
 # 测试结果
 
+## Stage 9B M4.5（2026-10-16）
+
+当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。
+
+| 检查 | 实际结果 |
+| --- | --- |
+| M4.4参考基线 | 677 passed / 0 failed；origin/main cbce129 |
+| Ubuntu + OpenWrt专项 | 64 passed / 0 failed（Ubuntu新增34，OpenWrt原30）；扩大含Trace/M4.4专项101 passed / 0 failed |
+| 最终全量回归 | 711 passed / 0 failed（679.88秒，5个既有弃用警告） |
+| 前端 | build通过；全套Playwright21/0；真实Harness/风险/AgentOps核验 |
+| 真实dry-run | preflight_failed，三包实际.15、候选.15、USN.16不在本机索引；无索引刷新/包写 |
+| 真实门禁 | 错哈希409、预演失败正确哈希409、未审批执行409、无控制令牌401 |
+| 复检测试桩 | 缺新证据不fixed；未变/部分更新/官方不可达/中断/额外归档/摘要或身份错均停止或保持风险；审批/双许可/锁/预算验证 |
+| 不可变历史 | 全部正式风险字段和历史统一研判前后摘要相同，未重跑四智能体 |
+| Bandit1.9.4 | 新四文件无中高项；扩展9文件2574行，既有中危B108 1项（OpenWrt远端/tmp随机UUID路径）；16低危项保留，不作全局证明 |
+| Mimosa | 本轮无工具/本机入口，插件查询空；未运行，不复用M4.4封印 |
+| 敏感检查 | 当前322文件与暂存23文件已知凭据/私钥材料模式比对无匹配；未覆盖Git历史和未知格式 |
+
+最终真实任务4ef1f86fcdfc45eb9dcec9b584b3c6b5，Trace TR-20261016152210-0e5f95，PRE-8f1b5602022b4afe901cba4bfafa9236。原始证据、真实库、地址、日志和截图均不提交；本地 reports/m45-work/ 保存 full-regression-delivery.txt、frontend-all-accepted.txt、bandit-accepted.json。Mimosa缺口使安全验收未全部完成，不能宣称全局安全。
+
+---
+
 > M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
 
 ## Stage 9B M4.4（2026-10-16）

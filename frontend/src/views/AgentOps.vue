@@ -191,9 +191,9 @@
           </section>
 
           <section class="operation-section" v-if="unifiedRun.mode === 'shadow' && unifiedRun.risk_id">
-            <h2>关联 Harness 只读验证与安全门禁</h2>
-            <p v-if="!unifiedRun.harness_checks?.length">尚无关联 Harness 检查；影子计划不代表授权或执行。</p>
-            <table v-else class="data-table"><thead><tr><th>任务 / Trace</th><th>状态</th><th>审批与执行</th><th>拦截依据</th></tr></thead><tbody><tr v-for="h in unifiedRun.harness_checks" :key="h.id"><td>{{ h.id }}<p>{{ h.trace_id }}</p></td><td>{{ h.goal }} / {{ h.status }}</td><td>{{ h.approved ? '已批准' : '未批准' }}；{{ h.goal === 'investigate' ? '只读调查' : '无设备写操作' }}</td><td>{{ h.blocked_reasons.join('；') || '只读证据检查' }}</td></tr></tbody></table>
+            <h2>关联 Harness 修复、预演与安全门禁</h2>
+            <UbuntuRepairEvidence v-for="h in unifiedRun.harness_checks || []" :key="h.id" :run="h" /><p v-if="!unifiedRun.harness_checks?.length">尚无关联 Harness 检查；影子计划不代表授权或执行。</p>
+            <table v-else class="data-table"><thead><tr><th>任务 / Trace</th><th>状态</th><th>审批与执行</th><th>拦截依据</th></tr></thead><tbody><tr v-for="h in unifiedRun.harness_checks" :key="h.id"><td>{{ h.id }}<p>{{ h.trace_id }}</p></td><td>{{ h.goal }} / {{ h.status }}</td><td>{{ h.approved ? '已批准' : '未批准' }}；{{ h.goal === 'investigate' ? '只读调查' : h.result?.execution_status || '尚无执行结果' }}</td><td>{{ h.blocked_reasons.join('；') || '只读证据检查' }}</td></tr></tbody></table>
             <div class="section-head">
               <div><h2>与正式链路对照</h2>
                 <p class="operation-help">影子结论只读对照同事件正式结论；正式字段仅由正式链路写入。</p>
@@ -400,6 +400,7 @@
 <script setup>
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { ElMessage } from "element-plus";
+import UbuntuRepairEvidence from "../components/UbuntuRepairEvidence.vue";
 import DataTable from "../components/DataTable.vue";
 import DeviceControlToken from "../components/DeviceControlToken.vue";
 import {

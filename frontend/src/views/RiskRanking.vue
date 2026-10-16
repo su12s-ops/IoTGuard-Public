@@ -67,6 +67,7 @@
               <article class="risk-driver-panel"><header><h3>风险来源分解</h3><p>风险结果由技术严重度、适用性、暴露面和运行状态共同形成。</p></header><table class="data-table"><thead><tr><th>风险维度</th><th>当前状态</th><th>量化值</th><th>解释</th></tr></thead><tbody><tr v-for="driver in riskDrivers" :key="driver.label"><td><strong>{{ driver.label }}</strong></td><td>{{ driver.status }}</td><td class="mono">{{ driver.value }}</td><td>{{ driver.explanation }}</td></tr></tbody></table></article>
               <aside class="risk-evidence-panel"><h3>裁决摘要</h3><dl class="status-list"><div><dt>Ubuntu 适用性</dt><dd>{{ affectedStatusText(selectedRisk.affected_status) }}</dd></div><div><dt>服务可达性</dt><dd>{{ reachableStatusText(selectedRisk.reachable_status) }}</dd></div><div><dt>运行时验证</dt><dd>{{ runtimeStatusText(selectedRisk.runtime_status) }}</dd></div><div><dt>审计状态</dt><dd>{{ auditLabel(selectedRisk) }}</dd></div></dl><p>{{ selectedRisk.review_reason || selectedRisk.preliminary_reason || selectedRisk.decision_reason || '暂无裁决说明。' }}</p></aside>
             </div>
+            <UbuntuRepairEvidence v-for="r in selectedRepairs" :key="r.id" :run="r" /><router-link :to="{path: '/device-tasks', query: {asset: selectedRisk.asset_id, risk: selectedRisk.risk_id}}">查看或生成 Harness 修复计划</router-link>
           </template>
           <div v-else class="empty-panel">请从“风险队列”选择一条风险记录进入详情。</div>
         </el-tab-pane>
@@ -80,10 +81,11 @@ import { Connection, TrendCharts } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref, watch } from "vue";
 import { useRoute, useRouter } from "vue-router";
+import UbuntuRepairEvidence from "../components/UbuntuRepairEvidence.vue";
 import DataTable from "../components/DataTable.vue";
 import { calculateRisk, fetchBehaviorChains, fetchMatches, fetchRiskRanking, runMatching } from "../api";
 import DeviceControlToken from "../components/DeviceControlToken.vue";
-import { controlSession, errorMessage } from "../api/deviceOperations";
+import { controlSession, errorMessage, fetchHarnessRuns } from "../api/deviceOperations";
 
 const route = useRoute();
 const router = useRouter();
@@ -92,6 +94,8 @@ const loadError = ref("");
 const rows = ref([]);
 const matches = ref([]);
 const chains = ref([]);
+const harnessRuns = ref([]);
+const selectedRepairs = computed(() => harnessRuns.value.filter(r => r.risk_id === Number(selectedRiskId.value) && r.plan.adapter === "ubuntu-apt-v1"));
 const activeTab = ref(["queue", "hits", "detail"].includes(String(route.query.tab)) ? String(route.query.tab) : "queue");
 const selectedRiskId = ref(Number(route.query.risk_id) || null);
 const search = ref("");
@@ -142,6 +146,7 @@ async function load() {
       display_score: row.has_final_conclusion ? row.final_score : row.preliminary_score,
       epss_probability: Number(row.risk_factors?.exploit_likelihood?.probability ?? (Number(row.epss_score || 0) / 100))
     }));
+    harnessRuns.value = await fetchHarnessRuns();
     matches.value = matchData || [];
     chains.value = chainData || [];
     if (!selectedRiskId.value && activeTab.value === "detail") selectedRiskId.value = rows.value[0]?.risk_id || rows.value[0]?.id || null;

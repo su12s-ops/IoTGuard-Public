@@ -78,6 +78,7 @@
 
   <section v-else class="page">
     <el-card class="panel"><div class="empty">请从「CVE 工作流」列表点击某条 CVE 进入。</div></el-card>
+    <section class="detail-section" v-if="repairRuns.length"><UbuntuRepairEvidence v-for="r in repairRuns" :key="r.id" :run="r" /><router-link :to="{path: '/device-tasks', query: {run: repairRuns[0].id}}">查看完整 Harness 审批与审计</router-link></section>
   </section>
 </template>
 
@@ -87,7 +88,8 @@ import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
 import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
-import { fetchUnifiedRuns } from "../api/deviceOperations";
+import UbuntuRepairEvidence from "../components/UbuntuRepairEvidence.vue";
+import { fetchHarnessRuns, fetchUnifiedRuns } from "../api/deviceOperations";
 
 const route = useRoute();
 const router = useRouter();
@@ -164,6 +166,7 @@ const back = () => router.push("/risk");
 
 // 统一四智能体影子研判（M4.3）：按 risk_id 关联展示，只读。
 const unifiedShadowRuns = ref([]);
+const repairRuns = ref([]);
 const officialRecords = ref({ records: [], corrections: [] });
 const officialError = ref("");
 const goUnifiedRun = (runId) => router.push({ path: "/agent-ops", query: { tab: "unified", run_id: runId } });
@@ -190,6 +193,7 @@ onMounted(async () => {
   }
   const rid = Number(riskRecord.value.risk_id || 0);
   if (rid) {
+    repairRuns.value = (await fetchHarnessRuns()).filter(r => r.risk_id === rid && r.plan.adapter === "ubuntu-apt-v1");
     unifiedShadowRuns.value = await fetchUnifiedRuns({ risk_id: rid, limit: 10 }).catch(() => []);
   }
 });

@@ -169,37 +169,11 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
     if model_review:
         plan["steps"].append("expert_review")
     if goal == "repair":
-        reasons = plan["blocked_reasons"]
-        if not connection:
-            reasons.append("缺少已绑定的 OpenWrt SSH 连接")
-        if asset.distribution != "openwrt" or not asset.inventory_complete:
-            reasons.append("需要完整的 OpenWrt 资产清单")
-        if not risk or not _authorized(risk):
-            reasons.append("风险尚未通过现有审核策略")
-        try:
-            _, match = _risk_and_match(db, run)
-            item, _, _ = load_artifact(artifact_id)
-            if item["package_name"] != match.package_name or item["version"] != match.fixed_version:
-                raise ValueError("产物的组件或修复版本与风险事件不一致")
-            if match.reason_code != "openwrt_exact_affected_version" or not match.affected:
-                raise ValueError("缺少精确的 OpenWrt 受影响版本证据")
-            if item["release"] != asset.os_version or item["board_name"] != asset.device_model:
-                raise ValueError("产物不适用于当前固件版本或设备型号")
-            if item["package_manager"] != snapshot["package_managers"].get(item["package_name"]):
-                raise ValueError("产物与当前设备的软件包管理器不一致")
-            old_id = item.get("rollback_artifact_id", "")
-            old, _, _ = load_artifact(old_id)
-            if (old["package_name"] != item["package_name"] or old["version"] != snapshot["packages"].get(item["package_name"])
-                    or old["release"] != asset.os_version or old["board_name"] != asset.device_model
-                    or old["package_manager"] != item["package_manager"]):
-                raise ValueError("回退产物与当前设备的软件版本不一致")
-            plan.update(artifact_hash=digest(item), artifact={k: item[k] for k in ("id", "package_name", "version", "release", "board_name", "sha256")},
-                        rollback_artifact_id=old_id, rollback_artifact_hash=digest(old), match_fingerprint=match.evidence_fingerprint)
-        except (ValueError, OSError) as exc:
-            reasons.append(str(exc))
-        plan["model_review"] = False
-        plan["steps"] = ["collect_inventory", "validate_plan", "install_registered_package", "collect_inventory", "verify_vendor_version", "regression_check", "business_check"]
-        run.status = "blocked" if reasons else "awaiting_approval"
+        if asset.distribution == "ubuntu":
+            from app.services import ubuntu_repair
+            ubuntu_repair.enrich_plan(db, run, asset, risk, connection, plan)
+        else:
+            _openwrt_repair_plan(db, run, asset, risk, connection, snapshot, plan, artifact_id)
     else:
         run.status = "pending"
     run.plan_json, run.plan_hash = encode(plan), digest(plan)
@@ -217,6 +191,39 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
                          status="blocked", payload={"reasons": plan.get("blocked_reasons", [])})
     return run
 
+
+def _openwrt_repair_plan(db, run, asset, risk, connection, snapshot, plan, artifact_id):
+    reasons = plan["blocked_reasons"]
+    if not connection:
+        reasons.append("缺少已绑定的 OpenWrt SSH 连接")
+    if asset.distribution != "openwrt" or not asset.inventory_complete:
+        reasons.append("需要完整的 OpenWrt 资产清单")
+    if not risk or not _authorized(risk):
+        reasons.append("风险尚未通过现有审核策略")
+    try:
+        _, match = _risk_and_match(db, run)
+        item, _, _ = load_artifact(artifact_id)
+        if item["package_name"] != match.package_name or item["version"] != match.fixed_version:
+            raise ValueError("产物的组件或修复版本与风险事件不一致")
+        if match.reason_code != "openwrt_exact_affected_version" or not match.affected:
+            raise ValueError("缺少精确的 OpenWrt 受影响版本证据")
+        if item["release"] != asset.os_version or item["board_name"] != asset.device_model:
+            raise ValueError("产物不适用于当前固件版本或设备型号")
+        if item["package_manager"] != snapshot["package_managers"].get(item["package_name"]):
+            raise ValueError("产物与当前设备的软件包管理器不一致")
+        old_id = item.get("rollback_artifact_id", "")
+        old, _, _ = load_artifact(old_id)
+        if (old["package_name"] != item["package_name"] or old["version"] != snapshot["packages"].get(item["package_name"])
+                or old["release"] != asset.os_version or old["board_name"] != asset.device_model
+                or old["package_manager"] != item["package_manager"]):
+            raise ValueError("回退产物与当前设备的软件版本不一致")
+        plan.update(artifact_hash=digest(item), artifact={k: item[k] for k in ("id", "package_name", "version", "release", "board_name", "sha256")},
+                    rollback_artifact_id=old_id, rollback_artifact_hash=digest(old), match_fingerprint=match.evidence_fingerprint)
+    except (ValueError, OSError) as exc:
+        reasons.append(str(exc))
+    plan["model_review"] = False
+    plan["steps"] = ["collect_inventory", "validate_plan", "install_registered_package", "collect_inventory", "verify_vendor_version", "regression_check", "business_check"]
+    run.status = "blocked" if reasons else "awaiting_approval"
 
 def approve(db, run, plan_hash, actor, reason):
     if digest(json.loads(run.plan_json)) != plan_hash:
@@ -239,7 +246,7 @@ def approve(db, run, plan_hash, actor, reason):
 
 def cancel(db, run):
     changed = db.execute(update(models.HarnessRun).where(models.HarnessRun.id == run.id,
-        models.HarnessRun.status.in_({"pending", "awaiting_approval", "approved", "blocked", "needs_evidence", "failed"})
+        models.HarnessRun.status.in_({"pending", "awaiting_preflight", "preflight_failed", "awaiting_approval", "approved", "blocked", "needs_evidence", "failed"})
     ).values(status="cancelled"))
     if changed.rowcount != 1:
         db.rollback()
@@ -423,6 +430,9 @@ def _claim(db, run, allowed_states):
 
 def execute(db, run, verify_only=False):
     plan = json.loads(run.plan_json)
+    if plan.get("adapter") == "ubuntu-apt-v1":
+        from app.services import ubuntu_repair
+        return ubuntu_repair.queue(db, run, "verify" if verify_only else "execute")
     if plan.get("goal") == "collect":
         if verify_only:
             raise ValueError("纯采集任务不执行修复复查")
@@ -478,7 +488,7 @@ def execute(db, run, verify_only=False):
                     result["agent_review"] = tool(db, run, "expert_review", lambda: _expert_review(db, run, risk))
                     followups = {}
                     for requested in dict.fromkeys(result["agent_review"]["requested_tools"]):
-                        if requested == "collect_inventory" and connection:
+                        if requested == "collect_inventory" and connection and asset.distribution == "openwrt":
                             followups[requested] = tool(db, run, requested, lambda: _collect(db, connection))
                             run_matching(db, cve_ids=[risk.cve_id])
                         elif requested == "inspect_runtime":
@@ -545,6 +555,8 @@ def recover_interrupted(db):
     """Expired leases become inspect-only; never replay an uncertain device write."""
     cutoff = models.utcnow() - timedelta(minutes=15)
     rows = db.query(models.HarnessRun).filter(models.HarnessRun.status == "running", models.HarnessRun.updated_at < cutoff).all()
+    rows += [r for r in db.query(models.HarnessRun).filter(models.HarnessRun.status == "queued_remote",
+        models.HarnessRun.updated_at < cutoff).all() if json.loads(r.plan_json).get("adapter") == "ubuntu-apt-v1"]
     for row in rows:
         row.status, row.error = "interrupted", "执行租约已超时；先复查设备状态，禁止自动重放写操作。"
         db.query(models.HarnessAssetLock).filter_by(run_id=row.id).delete()
@@ -563,6 +575,8 @@ def rollback(db, run, plan_hash, actor, reason):
     plan = json.loads(run.plan_json)
     if plan["goal"] != "repair" or plan_hash != run.plan_hash or digest(plan) != plan_hash or run.approval_hash != plan_hash:
         raise ValueError("回退审批与原始计划不一致")
+    if plan.get("adapter") == "ubuntu-apt-v1":
+        raise ValueError("Ubuntu 回滚依据为隔离 VM 快照；恢复操作须另行批准，禁止套用 OpenWrt 降级命令")
     if not db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package").first():
         raise ValueError("任务尚未尝试修复，无需回退")
     connection = db.get(models.DeviceConnection, run.connection_id)

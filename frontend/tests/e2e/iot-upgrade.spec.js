@@ -35,6 +35,30 @@ async function token(page) {
   await page.getByLabel("设备操作令牌").fill("fixture-token");
 }
 
+test("Ubuntu dry-run exposes actual candidate gap and never offers approval or rollback", async ({ page }) => {
+  const old = "8.5.0-2ubuntu10.15", fixed = "8.5.0-2ubuntu10.16";
+  const run = { id: "fixture-ubuntu", asset_id: 1, risk_id: 1, status: "preflight_failed", attempts: 1,
+    trace_id: "TR-fixture", plan_hash: "a".repeat(64), result: { execution_status: "not_executed" }, tool_calls: [],
+    plan: { adapter: "ubuntu-apt-v1", goal: "repair", node_id: "fixture-node", steps: ["ubuntu_dry_run"],
+      identity: { hostname: "fixture-ubuntu", release: "24.04" },
+      official: { url: "https://ubuntu.com/security/notices/USN-TEST-1", notices: ["USN-TEST-1"], evidence_id: "ADV-fixture", fixed_version: fixed },
+      targets: ["curl", "libcurl4t64"].map(binary => ({ binary, source: "curl", version: old })),
+      rollback: { status: "awaiting_clone_and_restore_test" }, preflight: { ready: false,
+        candidate_versions: { curl: old, libcurl4t64: old }, issues: ["official_candidate_unavailable"], simulation: "TEST ONLY no candidate", removals: [] } } };
+  const errors = await setup(page, { "/api/assets": [{ ...asset, hostname: "fixture-ubuntu", distribution: "ubuntu" }],
+    "/api/harness/runs": [run], "/api/harness/runs/fixture-ubuntu": run });
+  await page.goto("/device-tasks?run=fixture-ubuntu");
+  await expect(page.getByRole("heading", { name: "Ubuntu 修复与复检证据" })).toBeVisible();
+  await expect(page.getByText("official_candidate_unavailable", { exact: false })).toBeVisible();
+  await expect(page.getByRole("button", { name: "审批此计划", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "审批并回退", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "执行已审批修复", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("button", { name: "只读修复预演", exact: true })).toBeDisabled();
+  await expect(page.getByRole("row").filter({ hasText: "curl / curl" })).toContainText(fixed);
+  await expect(page.getByText(/尚无修复后采集/).first()).toBeVisible();
+  expect(errors).toEqual([]);
+});
+
 test("IoT registration requires token and displays structured validation errors", async ({ page }, testInfo) => {
   const errors = await setup(page, { "/api/iot/connections": async route => {
     if (route.request().method() === "GET") return route.fulfill({ json: [] });
@@ -173,14 +197,14 @@ test("key registration submits references and binds the selected existing asset"
   await token(page);
   await page.getByRole("button", { name: "登记连接", exact: true }).click();
   await page.getByLabel("管理 IP", { exact: true }).fill("192.168.50.1");
-  await page.getByLabel("后端私钥路径变量名称", { exact: true }).fill("LINUXGUARD_DEVICE_FIXTURE_KEY");
+  await page.getByLabel("采集节点私钥路径变量名称", { exact: true }).fill("LINUXGUARD_DEVICE_FIXTURE_KEY");
   await page.getByLabel("SSH 主机 SHA256 指纹", { exact: true }).fill("SHA256:" + "A".repeat(43));
   await page.getByRole("combobox", { name: "关联已有资产", exact: true }).press("Enter");
   await page.getByRole("option", { name: asset.hostname, exact: true }).click();
   await page.getByRole("button", { name: "保存连接", exact: true }).click();
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.getByRole("row").filter({ hasText: "LINUXGUARD_DEVICE_FIXTURE_KEY" })).toContainText("ED25519 密钥");
-  await expect(page.getByRole("row").filter({ hasText: "LINUXGUARD_DEVICE_FIXTURE_KEY" })).toContainText("已关联，待 SSH 确认");
+  await expect(page.getByRole("row").filter({ hasText: "LINUXGUARD_DEVICE_FIXTURE_KEY" })).toContainText("已关联，待身份核验");
   await expect(page.getByRole("region", { name: "物联网接入概况" })).toContainText("已确认网关0");
 });
 
@@ -204,7 +228,7 @@ test("collection-only node uses persistent jobs and keeps CVE state separate", a
   const errors = await setup(page, {
     "/api/iot/capabilities": { control_configured: true, collection_only: true, discovery_enabled: false, collector_node: { id: "fixture-ubuntu", platform: "Linux" } },
     "/api/iot/connections": [connection],
-    "/api/iot/connections/1/preflight": route => route.fulfill({ json: { ready: true, checks: {}, network_attempted: false, key_loaded: false } }),
+    "/api/iot/connections/1/preflight": route => route.fulfill({ json: { ready: true, checks: { node_platform: true }, network_attempted: false, key_loaded: false } }),
     "/api/iot/collection-runs": route => {
       expect(route.request().headers()["x-control-token"]).toBe("fixture-token");
       return route.fulfill({ json: job ? [job] : [] });

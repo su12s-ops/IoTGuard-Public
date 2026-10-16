@@ -1,5 +1,17 @@
 # IoTGuard 项目长期背景与系统架构
 
+## Stage 9B M4.5（2026-10-16）
+
+当前交付基线：最新 origin/main `cbce1293b93e02d23093263c6bedcc0d8fee0992`，开发前工作区干净。唯一项目 IoTGuard-Public；System B 正式入口；LINUXGUARD_UNIFIED_PIPELINE=off；设备修复与 Ubuntu 隔离写开关均为 0。当前依据为 `IOTGUARD_REAL_REMEDIATION_E2E_REPORT.md`，下方 M4.4 及更早内容作为历史保留。
+
+Ubuntu 适配是 agent_harness 的发行版工具分支，复用原 HarnessRun、精确审批、资产锁、16次主工具预算、尝试上限和Trace，以及原认证节点传输。当前仅支持明确绑定的节点本机 Ubuntu24.04/noble；源包 curl 按官方 USN 映射实际二进制包。OpenWrt 授权和登记产物回退规则保持。
+
+状态链：awaiting_preflight → 只读预演 → 观察进入新计划哈希 → awaiting_approval（预演通过才开放）→ 独立审批 + 原风险授权 + 双写开关 + 克隆许可 → 节点重核 → 精确白名单归档维护 → 新采集/官方重取/原匹配器纯评估 → 风险更新建议。许可绑定资产、machine-id、计划、快照恢复证明、操作员和有效期，后端和节点分别核验。中断不重放，Ubuntu 回滚需虚拟化快照另行批准。
+
+旧 RiskAssessment、VulnerabilityMatch、UnifiedAnalysisRun 只读；新证据与结果写 Harness，满足版本也只建议 fixed_pending_human_acceptance，业务回归待隔离实验。本机当前索引无 .16，不能据此推断官方仓库全局不存在修复包。本轮 Mimosa 不可运行，安全验收未全部满足。
+
+---
+
 > M4.4 实现提交：`c7ca5a3e2a558b52799c4b113643e25ab3ac44c7`（已推送）；最终报告提交以本文件最新 Git 记录为准。
 
 ## Stage 9B M4.4 当前产品边界

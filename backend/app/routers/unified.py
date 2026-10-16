@@ -148,6 +148,7 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
             if (plan.get("shadow_candidate") or {}).get("run_id") == row.run_id:
                 linked.append({"id": run.id, "status": run.status, "trace_id": run.trace_id,
                     "goal": plan.get("goal"), "plan_hash": run.plan_hash,
+                    "asset_id": run.asset_id, "plan": plan, "approved_by": run.approved_by,
                     "approved": bool(run.approval_hash and run.approval_hash == run.plan_hash),
                     "blocked_reasons": plan.get("blocked_reasons", []),
                     "result": json.loads(run.result_json or "{}")})

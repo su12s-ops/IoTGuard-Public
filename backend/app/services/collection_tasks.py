@@ -340,6 +340,9 @@ def claim_for_node(db, node_id: str, node_platform: str):
     run = (db.query(models.HarnessRun)
            .filter(models.HarnessRun.status == "queued_remote").order_by(models.HarnessRun.created_at)
            .first())
+    if run is not None and json.loads(run.plan_json).get("adapter") == "ubuntu-apt-v1":
+        from app.services import ubuntu_repair
+        return ubuntu_repair.claim(db, run, node_id)
     if run is None or json.loads(run.plan_json).get("goal") != "collect":
         return None
     connection, asset, script = validate_plan(db, run)
@@ -388,6 +391,9 @@ def submit_result(db, run_id: str, payload: dict):
     stale inventory.
     """
     run = db.get(models.HarnessRun, run_id)
+    if run is not None and json.loads(run.plan_json).get("adapter") == "ubuntu-apt-v1":
+        from app.services import ubuntu_repair
+        return ubuntu_repair.submit(db, run, payload)
     if not run or json.loads(run.plan_json).get("goal") != "collect":
         raise ValueError("采集任务不存在")
     audit = json.loads(run.result_json)

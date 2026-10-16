@@ -274,9 +274,9 @@ def evidence_for_trace(db: Session, trace_id: str) -> dict[str, Any]:
             evidence_rows.append({"evidence_id": ref, "resolved": bool(record), "evidence_type": "official_advisory",
                 "source": record.source_url if record else "", "description": record.evidence_status if record else "",
                 "content_sha256": record.content_sha256 if record else ""})
-        elif ref.startswith("INV-"):
+        elif ref.startswith(("INV-", "PRE-")):
             record = db.query(models.CollectionEvidence).filter_by(evidence_id=ref).first()
-            evidence_rows.append({"evidence_id": ref, "resolved": bool(record), "evidence_type": "inventory",
+            evidence_rows.append({"evidence_id": ref, "resolved": bool(record), "evidence_type": "ubuntu_preflight" if ref.startswith("PRE-") else "inventory",
                 "asset_id": record.asset_id if record else None, "source": "fixed_collector",
                 "content_sha256": record.content_sha256 if record else ""})
     return {"trace_id": trace_id, "evidence": evidence_rows, "cves": cve_rows,
