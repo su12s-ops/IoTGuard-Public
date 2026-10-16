@@ -2,6 +2,19 @@
 
 > 重要版本变化，新条目置顶。格式：日期 / Commit / 变更。
 
+## 2026-10-16 — Stage 9B M4.2 主轮+收尾闭环：统一四智能体研判质量深化与质量闭环验收（遗留实验全部补齐；Y6 反事实修正 2×2；Runtime Agent 正向贡献度量；650 回归零失败，维持 flag=off）
+
+- **主轮（42fe3b1 实现/真值先验 + 22045b8 报告/脚本修复，补记归档）**：四 Agent 专业分工 Schema（资产三级证据分级、漏洞四专业维度含 backport、运行时逐条 relation 九态、决策四维 DimensionAssessment）+ 确定性事实层扩展（紧迫性放大因子 KEV∨公网×CVSS≥9.0、below_range、源立场冲突、public_services 预取）+ 四类决策约束/门禁 + 冲突规则 8 + 路由反向修正 + Y1–Y10 独立案例（真值表先验 42fe3b1 先于任何模型运行）；主矩阵 19 全链 impact/action 19/19、人工 5/5、幻觉 0、方向 14/19；全量 637 passed；Mimosa 0 findings
+- **收尾（9f9e2e6 先验设计 → d306622 脚手架修复 → 5ab79e1 退化检测 → 收尾提交）**：
+  - 离线核查：31 运行/432 调用/3,394,004 tokens 全对账；三口径差异机制解释（meter 含零 token 失败调用 10 次；逐 Agent 表=每角色末次调用，差 202 次为覆盖语义）；更正主报告两处口径（E3 零方差=LLM 4/4；逐 Agent 表范围）
+  - 遗留补齐（真实 LLM 全落真值）：E4a/E4b 两跑一致 potentially+mitigate+人工；X2 全对（KEV 未虚判）；X3 全对（stale 不驱动 immediate）；Y4/Y10 资产消融=判定不承重、校准承重（Y10 隐藏后置信度 0.62→0.70 膨胀）
+  - Y6 反事实修正：原单因素设计 SUPERSEDED 留档；新 2×2 四格先验真值先于实验；确定性放大因子断言 4/4 PASS；LLM 处置与因子存在性一一对应（kev0_pub1 证伪「去 KEV 必降」；kev0_pub0 确定性门禁拦下 immediate）
+  - Runtime Agent 正向贡献（RT-A/B/C/D 同构反事实，rt2- 最终样本）：完整管线 impact/action 4/4（方向 3/4）；RT-D 隐藏运行时分析师后崩为 insufficient=承重实证；RT-B/RT-C 程序事实已足够；RT-A 贡献=新鲜度核实、关联偏保守如实记录
+  - 方向四层分析：E1 封顶/方向分离双向实证；E5「监控过期→降风险」混同确认（方向最弱项，改进需另建评分规范）；全部偏差无一起无依据升级
+  - 缺陷（全部回归锁定+污染集留档+受影响运行重跑）：Y Fixture 证据层时间戳为空（预存，已记录 Y 结论不受影响）/ RT 心跳 120s 竞态 / 运行时分析师 Schema 回显退化检测
+- **回归与安全**：全量 **650 passed / 0 failed**（637+13 终态复跑）；Mimosa 深度扫描 **0 findings**（scan-2026-10-16T06-22-58.264Z-997fe0409b11，seal sha256:9d3c421e…de2d0a，123 依赖包）；敏感信息干净；shadow 零触碰；累计真实成本 ≈7.51M tokens（meter，含重试）
+- **边界**：`LINUXGUARD_UNIFIED_PIPELINE=off` 保持；不删旧编排器；不启动真实设备 Shadow；切换准备状态=候选具备（人工决策）；交付 IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md + stage9b_closure_{cases,experiment,stats}.py + test_closure_counterfactuals.py（13 项）；本轮结束即停止
+
 ## 2026-10-15 — Stage 9B M4.1：统一四智能体研判校准与成本治理（影响判定首次达标；成本/处置差一步，维持 flag=off）
 
 - **第一部分 统计口径修正（离线零 LLM，新脚本 backend/scripts/stage9b_calibration_stats.py）**：M4 全部 20 次运行重建五类口径——全链 LLM 14 / 程序兜底 3（**实为 E3a×2+E3b×1，修正 M4 报告"E3a 三次"误记**）/ 消融 1 / simple 2；LLM-only 修正口径：影响 85.7%（原混合 88.2%）、处置 57.1%（原 64.7%）——兜底判定不得混入 LLM 准确率；耗时口径澄清（7.6s=76.0s/10 事件全量口径；104.1s 合并口径=9.46s/事件）；调用双口径如实（meter 258=237 评审+21 消融；client 246）；原始存档与真值零改动

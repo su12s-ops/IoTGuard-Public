@@ -1,6 +1,28 @@
 # 测试结果
 
-> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-15
+> 记录最近测试口径与结果，与 CI 保持一致。最后更新：2026-10-16
+
+## Stage 9B M4.2 收尾闭环轮（2026-10-16；实验证据 backend/reports/stage9b-closure/ 本地留存，stage9b-quality/ 原始产物零改动）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归 | **650 passed / 0 failed**（8m16s；637 M4.2 基线 + 13 项收尾专项 tests/test_closure_counterfactuals.py：Y6 2×2 四格放大因子断言走 build_evidence_prep_packet 真实路径/四格静态事实一致/真值不变量/旧设计 SUPERSEDED 留档/RT 四条件同构性与干预点/证据层时间戳回归锁（RT 新鲜≤1h、Y 非空）；终态 HEAD=5ab79e1 复跑零回归） |
+| 离线核查（stage9b_closure_stats.py，零 LLM） | M4.2 主矩阵 25+6 全部对账（19 全链+5 兜底+1 simple+6 消融）；三口径对账闭合：meter 432 调用/3,394,004 tokens（主矩阵 348+消融 84）、client 级 338（差 10=零 token 失败调用）、逐 Agent 230（差 202=agents_log 每角色末次调用语义）；更正主报告两处口径（E3 零方差=LLM 4/4；逐 Agent 表计量范围） |
+| 遗留补齐（真实 LLM，收尾 qc-*/abl2-*，全部落真值） | E4a/E4b 两跑完全一致 potentially_affected+mitigate+人工（方向 downgrade_minor 双跑一致保守偏差）；X2 not_affected+monitor 全对（KEV 未虚判）；X3 potentially+scheduled 全对；Y4/Y10 资产消融全对且暴露校准承重（Y10 隐藏后置信度 0.62→0.70、暴露面 0.4→0.65） |
+| Y6 反事实 2×2（cf2-*，四格独立库） | 确定性放大因子断言 **4/4 PASS**；LLM 处置与因子存在性一一对应：kev1_pub1/kev1_pub0/kev0_pub1（原单因素设计证伪格）→ immediate_fix，kev0_pub0 → scheduled_fix（确定性门禁端到端拦下）；方向仅 kev0_pub1 一例偏差 |
+| RT 正向贡献（rt2-* 最终样本，rt- 污染集留档） | 完整管线 impact/action **4/4 全对**（方向 3/4，RT-A downgrade_minor 偏差）；隐藏 runtime_analyst：RT-B/RT-C 不变（程序事实已足够）、**RT-D 崩为 insufficient+collect（impact 出真值）=承重实证**；RT-A 分析师新鲜度核实 verified/fresh 成立、关联语义偏保守（suspicious_unlinked vs 设计预期 cve_related）如实记录 |
+| 收尾成本（meter 口径） | 33 运行文件 514 调用 / 3,754,203 tokens（26 有效全链 + 7 被取代首跑=5 外部故障+2 模型 Schema 回显退化，全部留盘）；含 M4.2 原始累计 ≈7.51M tokens / 1005 调用 |
+| 缺陷修复（本轮暴露） | ①Y Fixture 证据层时间戳为空（预存；已记录 Y 运行无真值依赖 freshness，结论不受影响）②RT 传感器心跳 120s 竞态 ③运行时分析师 Schema 回显退化输出检测——均回归锁定；污染集 rt- 留档，rt2- 重跑为最终样本 |
+| Mimosa 深度扫描 | **0 findings**（scan-2026-10-16T06-22-58.264Z-997fe0409b11，seal sha256:9d3c421e…de2d0a，123 依赖包，离线公告 1 包 2 条同 M4.2 交付态） |
+| 敏感信息/shadow 隔离 | 无凭据字面量；.env 不入库（仅空值占位 example）；收尾运行全部 shadow/sink=None；**flag=off 保持** |
+
+## Stage 9B M4.2 主轮（2026-10-16 交付，补记归档；实验证据 backend/reports/stage9b-quality{,-smoke}/ 本地留存）
+
+| 项 | 结果 |
+| --- | --- |
+| 全量回归 | **637 passed / 0 failed**（589 M4.1 基线 + 48 项 M4.2 专项 test_quality_deepening.py，零回归） |
+| 主矩阵（真实 LLM） | 25 运行：19 全链（impact 19/19、action 19/19、方向 14/19、人工 5/5、幻觉 0）+ 5 兜底 + 1 simple；Y1–Y10 10/10 案例全对；E3 LLM 4/4 零方差（收尾轮口径更正：另有 2 兜底落真值）；收尾轮补记逐 Agent 表=每角色末次调用口径 |
+| 收尾轮口径更正 | 主报告 §3.2/§7「E3 六跑全部 not_affected+monitor」应读作「6/6 落真值；LLM 口径 4/4 零方差 not_affected+monitor；2 兜底 insufficient+collect」 |
 
 ## Stage 9B M4.1 校准轮（2026-10-15；实验证据 backend/reports/stage9b-unified-calibration{,-supplement}/ 本地留存）
 

@@ -1,6 +1,22 @@
 # 最近一次开发结果
 
-> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-15（Stage 9B M4.1：统一四智能体研判校准与成本治理）
+> 本仓库（IoTGuard-Public）为唯一正式开发仓库；每完成一个任务在此归档摘要并提交。最后更新：2026-10-16（Stage 9B M4.2 收尾：质量闭环验收——研判质量闭环而非 Token 优化）
+
+## 2026-10-16（Stage 9B M4.2 收尾）：统一四智能体质量闭环验收（遗留实验全部补齐 + Y6 反事实 2×2 修正 + Runtime Agent 正向贡献度量；650 回归零失败；flag=off 维持）
+
+- **交付**：IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md（十节收尾报告：离线核查/遗留补齐/Y6 修正/RT 正向贡献/方向四层分析/完整分母/回归扫描隔离/诚实性声明/切换准备状态）+ backend/scripts/stage9b_closure_{cases,experiment,stats}.py + backend/tests/test_closure_counterfactuals.py（13 项）；实验脚本与真值先验提交 9f9e2e6（先于任何收尾 LLM 运行）、脚手架修复 d306622、退化输出检测 5ab79e1
+- **第一部分（离线核查，零 LLM）**：M4.2 主矩阵完整性独立重建——25 主矩阵+6 消融全部对账（19 全链+5 兜底+1 simple+6 消融）；432 调用/3,394,004 tokens meter 口径闭合（client 级 338 差 10=零 token 失败调用；逐 Agent 230 差 202=agents_log 每角色末次调用语义，定向复议/补查覆盖同名条目）；**更正主报告两处口径**（E3「六跑全 not_affected+monitor 零方差」实为 LLM 4/4 零方差+2 兜底落真值；逐 Agent 表计量范围需标注）；原始 31 文件零改动核验
+- **第二部分（遗留补齐，真实 LLM，全部落真值）**：E4a/E4b 复验两跑完全一致（potentially_affected+mitigate+人工——厂商冲突语义在 LLM 层生效；方向 downgrade_minor 双跑一致保守偏差）；X2 复验 not_affected+monitor 全对（KEV 未推翻已修复事实）；X3 复验 potentially+scheduled 全对（过期证据不驱动 immediate）；Y4/Y10 资产调查员消融完成——**判定不承重、校准承重**（Y10 隐藏后置信度 0.62→0.70、暴露面 0.4→0.65 膨胀，证据分级纪律约束决策置信度）
+- **第三部分（Y6 反事实修正）**：原单因素设计（仅去 KEV）标注 SUPERSEDED 保留——caddy 公网×CVSS9.8 通道下去 KEV 放大因子仍成立；新 2×2（KEV×公网高危）四格先验真值：确定性放大因子断言 **4/4 PASS**，LLM 处置与因子存在性**一一对应**（kev0_pub1 格 immediate 保持=原设计预期被证伪；kev0_pub0 格 immediate 被确定性门禁拦下=端到端正-反对照）
+- **第四部分（Runtime Agent 正向贡献，RT-A/B/C/D 同构反事实）**：四条件共用相同设备/CVE/静态事实、仅运行时层不同；最终样本（rt2-）完整管线 impact/action **4/4 全对**（方向 3/4）；**RT-D（无监控）隐藏运行时分析师后决策崩为 insufficient（承重实证）**；RT-B/RT-C 不承重（freshness 分桶与覆盖状态为程序事实）；RT-A 分析师贡献=新鲜度核实（verified/fresh）、关联语义偏保守（suspicious_unlinked vs 设计预期 cve_related）如实记录
+- **本轮暴露并修复 2 项脚手架缺陷（回归锁定+受影响运行重跑，污染集留档）**：①Y Fixture 事件缺 timestamp 键→主矩阵全部 Y 案例证据层时间戳为空（RuntimeEvent.occurred_at 一直正确；已记录 Y 运行无真值依赖 freshness，19+3 结论不受影响）；②RT 传感器心跳 120s 竞态（M4 已修的同类 E/X/Y 竞态未继承到新 Fixture）。另增运行时分析师 Schema 回显退化输出检测（rt2-RT-A 两次命中的随机失效模式）
+- **回归与安全**：全量 **650 passed / 0 failed**（637 基线+13 收尾专项，终态复跑零回归）；Mimosa 深度扫描 **0 findings**（scan-2026-10-16T06-22-58.264Z-997fe0409b11，seal sha256:9d3c421e…de2d0a，123 依赖包）；敏感信息干净（无凭据字面量，.env 不入库）；shadow 全程零触碰（收尾运行全部 shadow/sink=None）；**flag=off 保持**
+- **诚实记录**：收尾 33 运行文件=26 有效全链+7 被取代首跑（5 外部故障+2 模型退化），全部留盘不删除；累计真实成本 meter 口径 ≈7.51M tokens/1005 调用（含重试与故障成本）；E5「监控过期→方向下调」混同确认为方向通道最弱项（改进需另建评分规范版本，本轮不动原始实验）
+- **切换准备状态：候选具备，建议启动真实设备 Shadow 验证（人工决策）**；本轮不设 flag=on、不删旧编排器、不启动 Shadow，到此停止
+
+## 2026-10-16（Stage 9B M4.2 主轮，补记）：统一四智能体研判质量深化（上轮交付，报告 IOT_UNIFIED_FOUR_AGENT_QUALITY_REPORT.md；其 ai_collaboration 归档在本轮补记）
+
+- 四 Agent 专业分工 Schema 深化 + 四维分层研判 + E2/E3a/E1/X2 整改 + Y1–Y10 独立案例 10/10 全对；主矩阵 25 运行中 19 全链 LLM 评审 impact/action 19/19、人工路由 5/5、引用幻觉 0、方向 14/19（偏差全保守/口径项）；System B 同库 Y 案例 10/10 同对（统一链优势集中在分层语义/边界案例/可解释性，代价 ≈10× token 如实呈现）；实现与先验真值表提交 42fe3b1 先于实验数据入库；全量 637 passed；Mimosa 深度扫描 0 findings（scan-2026-10-16T02-26-27.410Z-4d6db1efbac3）；维持 flag=off。遗留中断项（E4 复验/X2/X3 复验/反事实/2 项 asset 消融）全部由本轮收尾补齐
 
 ## 2026-10-15（Stage 9B M4.1）：统一四智能体研判校准与成本治理（口径修正+五类缺陷修复+证据预取；影响判定首次达标，成本/处置差一步，flag=off 维持）
 
