@@ -157,7 +157,12 @@ def coordinator(packet, *, direction="maintain", priority="low", action="monitor
 def test_case_a_fixed_version_is_excluded_and_matching_is_idempotent(session_factory):
     db = session_factory()
     try:
-        seed_asset_vuln(db, installed="3.0.2-0ubuntu1.18", fixed="3.0.2-0ubuntu1.18")
+        _, vuln = seed_asset_vuln(db, installed="3.0.2-0ubuntu1.18", fixed="3.0.2-0ubuntu1.18")
+        # A distro fixed conclusion requires a release-scoped official record.
+        from app.services.vulnerability_intelligence.canonical_provider import CanonicalProvider
+        CanonicalProvider().store(db, {"id": vuln.cve_id}, "openssl", "jammy", "released", "3.0.2-0ubuntu1.18")
+        vuln.cve_id += ":jammy:openssl"
+        db.commit()
         assert run_matching(db) == 1
         assert run_matching(db) == 1
         match = db.query(models.VulnerabilityMatch).one()

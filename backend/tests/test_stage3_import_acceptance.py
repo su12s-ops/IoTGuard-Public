@@ -111,7 +111,7 @@ synthetic-service|443|tcp|0.0.0.0|synthetic-service
         db.commit()
         run_matching(db)
         match = db.query(models.VulnerabilityMatch).filter_by(asset_id=linux["id"]).one()
-        assert match.reason_code == "installed_version_below_fixed"
+        assert match.reason_code == "upstream_range_unverified_by_vendor"
         assert match.match_status == "potentially_affected"
         assert db.query(models.LinuxAsset).count() == 2
 

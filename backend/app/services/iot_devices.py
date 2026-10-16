@@ -11,7 +11,7 @@ from pathlib import Path
 
 from app import models
 from app.services import device_access
-from app.services.asset_parser import parse_asset_text, save_parsed_asset
+from app.services.asset_parser import parse_asset_text, save_parsed_asset, record_collection_evidence
 from app.services.device_access import (allowed_networks, allowed_host, open_connection, run_fixed_script,
     connection_signature, DeviceOperationError)
 
@@ -77,6 +77,28 @@ def collect_openwrt(db, connection, *, commit=True, audit=None, on_authenticated
     finally:
         client.close()
     audit.update(collector_exit_status=0, remote_execution_status="exited", output_sha256=hashlib.sha256(text.encode("utf-8")).hexdigest(), output_bytes=len(text.encode("utf-8")))
+    return ingest_openwrt_inventory(db, connection, text, audit=audit, commit=commit)
+
+
+def ingest_openwrt_inventory(db, connection, text, *, audit=None, commit=True,
+                             execution_node=None, ssh_attestation=None):
+    """Validate and ingest one collector snapshot into the bound asset only.
+
+    Shared by the backend-local collection path and by submitted collection-node
+    results. ``ssh_attestation`` records who verified the pinned host identity;
+    submission without a verified attestation is refused server-side.
+    """
+    audit = audit if audit is not None else {}
+    if ssh_attestation is not None:
+        audit.update(ssh_host_identity="verified" if ssh_attestation.get("host_fingerprint_verified") else "unverified",
+                     ssh_authentication=ssh_attestation.get("ssh_authentication") or "unknown",
+                     execution_node=execution_node or "")
+        if not ssh_attestation.get("host_fingerprint_verified"):
+            raise DeviceOperationError("host_identity_not_attested",
+                                       "采集节点未核验 SSH 主机指纹；结果不作为新采集入库")
+    existing = db.get(models.LinuxAsset, connection.asset_id) if connection.asset_id else None
+    if not existing or existing.distribution != "openwrt":
+        raise DeviceOperationError("asset_binding_required", "真实采集必须先绑定已有 OpenWrt 资产")
     parsed = parse_asset_text(text)
     parsed.inventory_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
     audit["package_parse_stats"] = parsed.package_parse_stats
@@ -103,11 +125,15 @@ def collect_openwrt(db, connection, *, commit=True, audit=None, on_authenticated
     metadata = json.loads(parsed.inventory_metadata_json)
     metadata.update(source="openwrt_ssh", connection_id=connection.id,
                     connection_signature=connection_signature(connection), node=device_access.collector_node(),
-                    ssh_identity_verified_by_platform=True, collector_sha256=audit["collector_sha256"],
+                    ssh_identity_verified_by_platform=ssh_attestation is None,
+                    execution_node=execution_node or "",
+                    collector_sha256=audit["collector_sha256"],
                     collection_run_id=audit.get("run_id"), started_at=audit.get("started_at"),
                     timestamp_basis="backend_received_at", cve_applicability="not_evaluated_for_this_snapshot",
                     previous_inventory_sha256=existing.inventory_sha256)
     parsed.inventory_collected_at = models.utcnow()
+    parsed.inventory_metadata_json = json.dumps(metadata, ensure_ascii=False)
+    metadata["inventory_evidence_id"] = record_collection_evidence(db, existing.id, text, audit)
     parsed.inventory_metadata_json = json.dumps(metadata, ensure_ascii=False)
     if not parsed.mac_address:
         parsed.hostname += "-" + hashlib.sha256(connection.host_key_sha256.encode()).hexdigest()[:12]

@@ -497,6 +497,44 @@ class HarnessToolCall(Base):
 # ── eBPF 运行时安全证据（阶段二：eBPF → Evidence → 数据库 → API → 智能体） ────
 
 
+class CollectionEvidence(Base):
+    __tablename__ = "collection_evidence"
+    id = Column(Integer, primary_key=True)
+    evidence_id = Column(String(64), unique=True, nullable=False)
+    run_id = Column(String(64), index=True)
+    asset_id = Column(Integer, ForeignKey("linux_asset.id"), index=True)
+    content_sha256 = Column(String(64), nullable=False)
+    raw_text = Column(Text, nullable=False)
+    collected_at = Column(DateTime, default=utcnow)
+
+
+class OfficialCveRecord(Base):
+    """Append-only official response or failed fetch; never a runtime event."""
+    __tablename__ = "official_cve_record"
+    id = Column(Integer, primary_key=True)
+    evidence_id = Column(String(64), unique=True, nullable=False)
+    cve_id = Column(String(64), index=True, nullable=False)
+    source_url = Column(Text, nullable=False)
+    content_sha256 = Column(String(64), default="")
+    raw_json = Column(Text, default="{}")
+    evidence_status = Column(String(64), nullable=False)
+    error = Column(Text, default="")
+    fetched_at = Column(DateTime, default=utcnow)
+
+
+class ApplicabilityCorrection(Base):
+    __tablename__ = "applicability_correction"
+    id = Column(Integer, primary_key=True)
+    asset_id = Column(Integer, ForeignKey("linux_asset.id"), index=True)
+    risk_id = Column(Integer, ForeignKey("risk_assessment.id"), index=True)
+    official_evidence_id = Column(String(64), index=True)
+    before_json = Column(Text, default="{}")
+    after_json = Column(Text, default="{}")
+    historical_run_ids_json = Column(Text, default="[]")
+    reason = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow)
+
+
 class SecurityEvidence(Base):
     """eBPF / Falco / Tetragon 事件的统一安全证据层。
 

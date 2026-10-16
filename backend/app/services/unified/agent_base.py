@@ -73,6 +73,8 @@ class UsageMeter:
 
 def triage_extra_fields(parsed: dict[str, Any], output_model: type[BaseModel]) -> tuple[dict[str, Any], list[str]]:
     """顶层未知键 → notes（CF6 根因修复）。返回（清洗后的 dict, 预分拣记录）。"""
+    if parsed.get("type") == "object" and isinstance(parsed.get("properties"), dict) and ("$defs" in parsed or "title" in parsed):
+        return {"notes": ["schema_echo_not_analysis"]}, []
     allowed = set(output_model.model_fields.keys())
     extra_keys = [key for key in parsed if key not in allowed]
     if not extra_keys:
@@ -286,9 +288,12 @@ class UnifiedToolLoopAgent:
         for attempt in range(max_attempts):
             if parsed:
                 try:
+                    if "schema_echo_not_analysis" in (parsed.get("notes") or []):
+                        last_error = "返回了 JSON Schema，而非调查结果；请根据已取得的真实证据输出字段值，不能回显 properties/$defs/type"
+                        raise ValueError(last_error)
                     validated = self.spec.output_model.model_validate(parsed)
                     return validated.model_dump(), None
-                except ValidationError as exc:
+                except (ValidationError, ValueError) as exc:
                     last_error = validation_error_summary(exc)
             else:
                 last_error = ("输出为空对象（无任何字段）；必须输出完整结构化结果，"

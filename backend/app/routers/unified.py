@@ -140,7 +140,19 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id).one_or_none()
     if row is None:
         raise HTTPException(404, "运行不存在")
-    return _serialize_run(row)
+    result = _serialize_run(row)
+    linked = []
+    if row.risk_id:
+        for run in db.query(models.HarnessRun).filter_by(risk_id=row.risk_id).order_by(models.HarnessRun.created_at.desc()).limit(100):
+            plan = json.loads(run.plan_json or "{}")
+            if (plan.get("shadow_candidate") or {}).get("run_id") == row.run_id:
+                linked.append({"id": run.id, "status": run.status, "trace_id": run.trace_id,
+                    "goal": plan.get("goal"), "plan_hash": run.plan_hash,
+                    "approved": bool(run.approval_hash and run.approval_hash == run.plan_hash),
+                    "blocked_reasons": plan.get("blocked_reasons", []),
+                    "result": json.loads(run.result_json or "{}")})
+    result["harness_checks"] = linked
+    return result
 
 
 @router.get("/runs/{run_id}/comparison")

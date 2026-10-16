@@ -384,7 +384,7 @@ def _source_texts(db: Session, cve_id: str, release: str,
 
     bundle = dict(get_source_bundle(db, cve_id, release=release, package_name=package_name))
     advisories = db.query(models.OpenWrtAdvisory).filter_by(
-        cve_id=cve_id.rsplit(":", 1)[0] if ":" in cve_id else cve_id).all()
+        cve_id=cve_id.split(":", 1)[0]).all()
     if advisories:
         bundle["openwrt_advisory"] = {
             "source": "openwrt_advisory", "status": "operator_supplied",
@@ -451,9 +451,16 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
     public_services: list[dict[str, Any]] = []
     if target_ref:
         profile = T.tool_query_device_profile(db, host=target_ref)
+        asset_row = db.query(models.LinuxAsset).filter(
+            (models.LinuxAsset.hostname == target_ref) | (models.LinuxAsset.ip_address == target_ref)).first()
         if profile.get("found"):
             public_services = _public_services(db, target_ref)
             asset_facts = {
+                "inventory_provenance": ({"sha256": asset_row.inventory_sha256,
+                    "collected_at": str(asset_row.inventory_collected_at),
+                    "identity_source": asset_row.identity_source,
+                    **{k: v for k, v in json.loads(asset_row.inventory_metadata_json or "{}").items()
+                        if k in {"inventory_evidence_id", "collection_run_id", "execution_node", "package_sources", "openssl_implementation", "apt_policy"}}} if asset_row else {}),
                 "profile": {key: profile.get(key) for key in
                             ("device_id", "device_type", "vendor", "model",
                              "firmware_version", "os", "ip")},
@@ -495,7 +502,12 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
                 "note": "确定性版本比较（is_version_less）；装机不低于修复版本即语义为已修复",
             }
         # 分支声明核对需要 release 口径的情报（cve_id 形如 CVE-xxxx:release）
-        release = cve_id.rsplit(":", 1)[1] if ":" in cve_id else ""
+        release = cve_id.split(":")[1] if ":" in cve_id else ""
+        asset = db.query(models.LinuxAsset).filter(
+            (models.LinuxAsset.hostname == target_ref) | (models.LinuxAsset.ip_address == target_ref)).first()
+        if not release and asset and asset.distribution == "ubuntu":
+            from app.services.matching_engine import _asset_codename
+            release = _asset_codename(asset)
         texts, bundle = ({}, {})
         if cve_id:
             texts, bundle = _source_texts(db, cve_id, release=release,
@@ -514,6 +526,9 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
             for name, entry in (bundle or {}).items() if isinstance(entry, dict)
         }
         vendor_patch = detect_vendor_patch_semantics(bundle or {}, installed)
+        if asset and asset.distribution == "ubuntu" and not vendor_patch.get("release_status"):
+            version_compare = {**version_compare, "result": "unknown",
+                "note": "Ubuntu 上游版本比较仅是候选线索，缺少对应发行版官方记录；不能确认受影响或已修复"}
         if (vendor_patch.get("release_status") == "not_affected"
                 and version_compare.get("result") == "affected"):
             # backport 场景：上游口径的版本比较与厂商 release 口径声明相左——

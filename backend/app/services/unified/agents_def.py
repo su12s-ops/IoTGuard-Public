@@ -42,6 +42,11 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
 
     if not cve_id:
         return {"error": "缺少 cve_id"}
+    parts = cve_id.split(":")
+    if len(parts) > 1 and not release:
+        release = parts[1]
+    if len(parts) > 2 and not package_name:
+        package_name = parts[2]
     vulnerability = db.query(models.VulnerabilityInfo).filter_by(cve_id=cve_id).one_or_none()
     bundle = get_source_bundle(db, cve_id, release=release, package_name=package_name)
     advisories = db.query(models.OpenWrtAdvisory).filter_by(cve_id=cve_id).all()

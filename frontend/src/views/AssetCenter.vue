@@ -111,7 +111,7 @@
             <el-table-column prop="installed_version" label="已安装版本" min-width="190" />
             <el-table-column prop="fixed_version" label="修复版本" min-width="190" />
             <el-table-column label="命中结论" width="110">
-              <template #default="{ row }"><span class="status-label" :class="row.affected ? 'is-high' : 'is-muted'">{{ row.affected ? '已命中' : '未命中' }}</span></template>
+              <template #default="{ row }"><span class="status-label" :class="row.affected ? 'is-high' : 'is-muted'">{{ ({ affected: '官方确认受影响', potentially_affected: '候选待核验', under_investigation: '官方调查中', unknown: '依据不足', fixed: '已修复', not_affected: '不受影响', not_applicable: '不适用' })[row.match_status] || row.match_status }}</span></template>
             </el-table-column>
           </DataTable>
           <el-empty v-if="!detailMatches.length" description="当前资产没有漏洞命中记录" />
@@ -128,7 +128,7 @@
         <el-tab-pane label="历史采集" name="history">
           <div class="state-note">
             <strong>当前资产快照</strong>
-            <span>现有接口仅提供当前有效快照，尚未返回可比较的历史采集批次。</span>
+            <span>当前原始证据：{{ detail.inventory_metadata?.inventory_evidence_id || "历史上传清单（无本轮采集证据）" }}</span><span>采集时间：{{ detail.inventory_collected_at || "未记录" }}；执行节点：{{ detail.inventory_metadata?.execution_node || "未记录" }}</span><span>SHA256：{{ detail.inventory_sha256 || "未记录" }}</span><span>身份来源：{{ detail.identity_source }}；历史批次通过「物联网接入 → 采集记录」查询。</span>
           </div>
         </el-tab-pane>
       </el-tabs>

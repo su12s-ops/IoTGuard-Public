@@ -21,6 +21,7 @@ class CreateRun(BaseModel):
     goal: Literal["collect", "investigate", "repair"] = "investigate"
     artifact_id: str = Field(default="", max_length=64)
     model_review: bool = False
+    shadow_run_id: str = Field(default="", max_length=128)
 
 
 class Approval(BaseModel):

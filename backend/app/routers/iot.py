@@ -15,6 +15,16 @@ from app.database import get_db
 from app.services import trace_service as tracing
 from app.routers.assets import serialize_asset
 from app.services.device_access import allowed_host, allowed_networks, require_control, connection_signature, collector_node, collection_only_mode
+from fastapi import Request
+import hmac
+import os
+
+
+def require_collection_node(request: Request):
+    expected = os.getenv("LINUXGUARD_COLLECTION_NODE_TOKEN", "")
+    supplied = request.headers.get("X-Collection-Node-Token", "")
+    if not expected or not hmac.compare_digest(expected.encode(), supplied.encode()):
+        raise HTTPException(401, "采集节点认证失败")
 from app.services.iot_devices import collect_openwrt, discover
 from app.services import collection_tasks
 
@@ -89,7 +99,10 @@ def connection_dict(row, db=None):
     value = {name: getattr(row, name) for name in ("id", "asset_id", "label", "adapter", "host", "port", "username", "auth_type", "credential_env", "key_path_env", "key_passphrase_env", "host_key_sha256", "enabled")}
     asset = db.get(models.LinuxAsset, row.asset_id) if db is not None and row.asset_id else None
     metadata = json.loads(asset.inventory_metadata_json or "{}") if asset else {}
-    value["identity_verified"] = bool(row.enabled and asset and asset.identity_source == "pinned_ssh_inventory"
+    local_node = bool(asset and asset.identity_source == "authenticated_collection_node"
+        and collection_tasks.is_node_local(asset) and metadata.get("execution_node") == collection_tasks.remote_node_id())
+    value["identity_source"] = asset.identity_source if asset else ""
+    value["identity_verified"] = bool(row.enabled and asset and (asset.identity_source == "pinned_ssh_inventory" or local_node)
         and metadata.get("connection_signature") == connection_signature(row))
     return value
 
@@ -98,8 +111,8 @@ def validate_asset_binding(db, asset_id, connection_id=None):
     if asset_id is None:
         return
     asset = db.get(models.LinuxAsset, asset_id)
-    if not asset or asset.distribution != "openwrt":
-        raise HTTPException(400, "须选择已登记的 OpenWrt 资产")
+    if not asset or asset.distribution not in {"openwrt", "ubuntu"} or (collection_only_mode() and asset.distribution != "openwrt"):
+        raise HTTPException(400, "须选择已登记的 OpenWrt/Ubuntu 资产；联调模式限 OpenWrt")
     bound = db.query(models.DeviceConnection).filter_by(asset_id=asset_id).first()
     if bound and bound.id != connection_id:
         raise HTTPException(409, "所选资产已绑定其他连接")
@@ -114,6 +127,7 @@ def capabilities():
             "control_configured": bool(os.getenv("LINUXGUARD_CONTROL_TOKEN")), "max_discovery_addresses": 128,
             "repair_execution_enabled": not collection_only_mode() and os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1",
             "collection_only": collection_only_mode(), "discovery_enabled": not collection_only_mode(), "collector_node": collector_node(),
+            "remote_collection_node": {"id": collection_tasks.remote_node_id(), "registered": bool(collection_tasks.remote_node_id())},
             # OS 能力画像（增量）：异构 OS 的能力边界如实声明，供前端与联调判断
             "os_capability_profiles": {
                 "linux/openwrt": {"discovery": "supported", "protocol_fingerprint": "supported",
@@ -188,6 +202,14 @@ def collect(connection_id: int, db: Session = Depends(get_db)):
         collection_tasks.execute(db, run)
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
+    if run.status == "queued_remote":
+        # Windows 开发节点不执行设备 SSH；任务已转交登记的 Linux 采集节点，
+        # 由节点领取执行。此处不返回资产数据——采集尚未发生，不以旧清单充数。
+        result_data = json.loads(run.result_json) if run.result_json else {}
+        queued_for = result_data.get("queued_for_node", "")
+        return {"collection_run": collection_tasks.serialize(db, run),
+                "delegated": True, "queued_for_node": queued_for,
+                "message": "采集任务已转交 Linux 采集节点领取执行；请通过任务状态查询结果。"}
     if run.status != "completed":
         raise HTTPException(400, {"message": run.error, "run_id": run.id, "status": run.status,
                                   "error_code": json.loads(run.result_json).get("error_code")})
@@ -286,6 +308,55 @@ def execute_collection(run_id: str, db: Session = Depends(get_db)):
         return collection_tasks.serialize(db, collection_tasks.execute(db, run))
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+class CollectionResultInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    node_id: str = Field(pattern=r"^[A-Za-z0-9_.\-]{1,64}$")
+    node_platform: str = Field(default="", max_length=32)
+    local_hostname: str = Field(default="", max_length=128)
+    status: Literal["succeeded", "failed"]
+    host_fingerprint_verified: bool = False
+    ssh_authentication: str = Field(default="", max_length=32)
+    collector_sha256: str = Field(default="", max_length=64)
+    inventory_text: str = Field(default="", max_length=2_000_000)
+    output_sha256: str = Field(default="", max_length=64)
+    output_bytes: int = Field(default=0, ge=0, le=2_000_000)
+    error_code: str = Field(default="", max_length=64)
+    detail: str = Field(default="", max_length=400)
+
+
+@router.get("/collection-node/claim", dependencies=[Depends(require_collection_node)])
+def collection_node_claim(node_id: str, node_platform: str = "", db: Session = Depends(get_db)):
+    """Linux 采集节点拉取一个已转交的采集任务（原子领取）。
+
+    只回传环境变量名与钉扎指纹，私钥材料永远不离开节点自身；
+    节点身份必须与后端登记一致且节点运行于 Linux。
+    """
+    try:
+        assignment = collection_tasks.claim_for_node(db, node_id, node_platform)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return {"assignment": assignment}
+
+
+@router.post("/collection-node/results/{run_id}", dependencies=[Depends(require_collection_node)])
+def collection_node_result(run_id: str, payload: CollectionResultInput, db: Session = Depends(get_db)):
+    """采集节点回传执行结果；成功走与本地采集完全相同的入库与身份核验路径。"""
+    try:
+        run = collection_tasks.submit_result(db, run_id, payload.model_dump())
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return collection_tasks.serialize(db, run)
+
+
+@router.get("/collection-evidence/{evidence_id}", dependencies=[Depends(require_control)])
+def collection_evidence(evidence_id: str, db: Session = Depends(get_db)):
+    row = db.query(models.CollectionEvidence).filter_by(evidence_id=evidence_id).first()
+    if not row:
+        raise HTTPException(404, "原始采集证据不存在")
+    return {"evidence_id": row.evidence_id, "asset_id": row.asset_id, "run_id": row.run_id,
+        "content_sha256": row.content_sha256, "collected_at": row.collected_at, "raw_text": row.raw_text}
 
 
 @router.post("/discovery", dependencies=[Depends(require_control)])

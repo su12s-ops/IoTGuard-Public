@@ -126,7 +126,7 @@ def _risk_and_match(db, run, require_active=True):
 
 
 def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", model_review=False,
-               trace_id=""):
+               trace_id="", shadow_run_id=""):
     if device_access.collection_only_mode() and goal != "collect":
         raise ValueError("联调采集模式只允许纯采集任务，不允许调查、复核或修复")
     if goal == "collect":
@@ -153,9 +153,17 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
             "agent_recommended_action": risk.recommended_action if risk else "",
             "agent_evidence_ids": json.loads(risk.review_evidence_ids or "[]") if risk else [],
             "review_hash": review_signature(risk) if risk else "",
-            "steps": ["collect_inventory" if connection else "inspect_inventory", "inspect_runtime", "inspect_evidence"],
+            "steps": ["collect_inventory" if connection and asset.distribution == "openwrt" else "inspect_inventory", "inspect_runtime", "inspect_evidence"],
             "blocked_reasons": [], "limits": {"max_tool_calls": 16, "max_read_attempts": 3, "reserved_rollback_calls": 6},
             "artifact_id": artifact_id}
+    if shadow_run_id:
+        candidate = db.query(models.UnifiedAnalysisRun).filter_by(run_id=shadow_run_id).first()
+        if not candidate or candidate.mode != "shadow" or candidate.status != "completed" or candidate.risk_id != risk_id or not risk_id:
+            raise ValueError("影子候选计划须已完成且属于同一风险；不能作为修复授权")
+        candidate_plan = json.loads(candidate.plan_json or "{}")
+        plan["shadow_candidate"] = {"run_id": shadow_run_id, "trace_id": candidate.trace_id,
+            "plan_sha256": digest(candidate_plan), "original_evidence_ids": candidate_plan.get("original_evidence_ids", []),
+            "authorization": "none"}
     run = models.HarnessRun(id=uuid.uuid4().hex, asset_id=asset_id, risk_id=risk_id,
                             connection_id=connection.id if connection else None, snapshot_json=encode(snapshot))
     if model_review:
@@ -451,7 +459,10 @@ def execute(db, run, verify_only=False):
         if connection and connection_signature(connection) != plan["connection_hash"]:
             raise ValueError("设备连接已变化，必须重新创建并审批计划")
         if not repair:
-            snapshot = tool(db, run, "collect_inventory", lambda: _collect(db, connection)) if connection else tool(db, run, "inspect_inventory", lambda: inventory(asset))
+            # The existing device Harness collector is OpenWrt-specific. Ubuntu
+            # investigation consumes the separately authenticated node snapshot;
+            # it must never run the OpenWrt script on a Linux host.
+            snapshot = tool(db, run, "collect_inventory", lambda: _collect(db, connection)) if connection and asset.distribution == "openwrt" else tool(db, run, "inspect_inventory", lambda: inventory(asset))
             evidence = tool(db, run, "inspect_runtime", lambda: coverage(db, asset.id))
             result = {"inventory": snapshot, "runtime_coverage": evidence, "missing_evidence": []}
             if not snapshot["complete"]:

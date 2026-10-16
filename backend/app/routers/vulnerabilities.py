@@ -15,6 +15,36 @@ from app.services.vulnerability_intelligence.service import get_source_bundle
 
 router = APIRouter(prefix="/vulnerabilities", tags=["Vulnerabilities"])
 
+from pydantic import BaseModel, Field
+from app.services.device_access import require_control
+from app.services.canonical_official import verify_and_correct
+
+
+class OfficialVerificationInput(BaseModel):
+    cve_ids: list[str] = Field(min_length=1, max_length=200)
+
+
+@router.post("/official/verify", dependencies=[Depends(require_control)])
+def verify_official(payload: OfficialVerificationInput, db: Session = Depends(get_db)):
+    return verify_and_correct(db, payload.cve_ids)
+
+
+@router.get("/official/records")
+def official_records(cve_id: str, db: Session = Depends(get_db)):
+    from app.services.vulnerability_intelligence.service import base_cve_id
+    import json
+    cve = base_cve_id(cve_id)
+    records = db.query(models.OfficialCveRecord).filter_by(cve_id=cve).order_by(models.OfficialCveRecord.id.desc()).limit(200).all()
+    ids = [r.evidence_id for r in records]
+    corrections = db.query(models.ApplicabilityCorrection).filter(models.ApplicabilityCorrection.official_evidence_id.in_(ids)).all()
+    return {"records": [{"evidence_id": r.evidence_id, "source_url": r.source_url,
+        "content_sha256": r.content_sha256, "evidence_status": r.evidence_status,
+        "fetched_at": r.fetched_at, "error": r.error, "record": json.loads(r.raw_json)} for r in records],
+        "corrections": [{"id": c.id, "asset_id": c.asset_id, "risk_id": c.risk_id,
+            "official_evidence_id": c.official_evidence_id, "before": json.loads(c.before_json),
+            "after": json.loads(c.after_json), "historical_run_ids": json.loads(c.historical_run_ids_json),
+            "reason": c.reason, "created_at": c.created_at} for c in corrections]}
+
 
 def serialize_vulnerability(vuln: models.VulnerabilityInfo, db: Session | None = None):
     parts = vuln.cve_id.split(":")

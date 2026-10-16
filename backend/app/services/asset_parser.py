@@ -43,6 +43,20 @@ class ParsedAsset:
 SECTION_RE = re.compile(r"^===== ([A-Z0-9_]+) =====$")
 
 
+def record_collection_evidence(db, asset_id, text, audit):
+    import hashlib
+    run_id = audit.get("run_id")
+    if not run_id:
+        return ""
+    evidence_id = "INV-" + run_id
+    if not db.query(models.CollectionEvidence).filter_by(evidence_id=evidence_id).first():
+        db.add(models.CollectionEvidence(evidence_id=evidence_id, run_id=run_id, asset_id=asset_id,
+            content_sha256=hashlib.sha256(text.encode()).hexdigest(), raw_text=text))
+        db.flush()
+    audit["inventory_evidence_id"] = evidence_id
+    return evidence_id
+
+
 def normalize_mac(value: str) -> str:
     value = value.strip().lower()
     if value and (not re.fullmatch(r"(?:[0-9a-f]{2}:){5}[0-9a-f]{2}", value)
@@ -266,7 +280,10 @@ def parse_asset_text(text: str) -> ParsedAsset:
     parsed.inventory_metadata_json = json.dumps({"format": "sectioned_text", "package_parse_stats": stats,
         "package_metadata": parsed.package_metadata,
         "device_board": board if parsed.distribution == "openwrt" else None,
-        "package_details_available": detail_lines is not None}, ensure_ascii=False)
+        "package_details_available": detail_lines is not None,
+        "package_sources": sections.get("PACKAGE_SOURCES", []),
+        "openssl_implementation": sections.get("OPENSSL_IMPLEMENTATION", []),
+        "apt_policy": sections.get("APT_POLICY", [])}, ensure_ascii=False)
     return parsed
 
 

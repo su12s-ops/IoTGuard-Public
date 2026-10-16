@@ -55,6 +55,11 @@
 
     <section class="detail-section"><header><span>08</span><div><h2>审计记录</h2><p>Audit Policy、人工审核和证据缺口</p></div></header><table class="data-table"><thead><tr><th>审计项</th><th>结果</th><th>说明</th></tr></thead><tbody><tr><td>自动审计策略</td><td>{{ riskRecord.human_review_required ? "转人工审核" : "通过" }}</td><td>{{ (riskRecord.audit_policy_reasons || []).join("；") || "无阻断策略" }}</td></tr><tr><td>冲突复议</td><td>{{ riskRecord.review_conflicts?.length ? "存在冲突" : "无冲突" }}</td><td>{{ (riskRecord.review_conflicts || []).join("；") || "-" }}</td></tr><tr><td>证据完整性</td><td>{{ riskRecord.review_missing_evidence?.length ? "存在缺口" : "完整" }}</td><td>{{ (riskRecord.review_missing_evidence || []).join("；") || "-" }}</td></tr><tr><td>人工审计</td><td>{{ riskRecord.review_status || "待研判" }}</td><td>{{ riskRecord.human_review_required ? "必须由人工逐条确认" : "未触发人工门禁" }}</td></tr></tbody></table></section>
 
+    <section class="detail-section" v-if="officialRecords.records.length || officialError"><header><span>核验</span><div><h2>官方适用性与纠正记录</h2><p>发行版官方记录优先于上游通用版本范围；历史影子结果保留。</p></div></header>
+      <el-alert v-if="officialError" :title="officialError" type="error" :closable="false" />
+      <el-alert v-for="c in officialRecords.corrections.filter(c => c.asset_id === chain.asset.id)" :key="c.id" :title="'纠正 #' + c.id + '：' + c.before.match_status + ' → ' + c.after.match_status + '；旧计划仅供历史审计，不得执行。'" type="warning" :closable="false" />
+      <table class="data-table"><thead><tr><th>原始证据</th><th>状态 / 获取时间</th><th>官方来源与摘要</th></tr></thead><tbody><tr v-for="record in officialRecords.records" :key="record.evidence_id"><td>{{ record.evidence_id }}</td><td>{{ record.evidence_status }} / {{ record.fetched_at }}<p>{{ record.error }}</p></td><td><a :href="record.source_url" target="_blank" rel="noopener noreferrer">Canonical 原始记录</a><p class="mono">{{ record.content_sha256 }}</p></td></tr></tbody></table>
+    </section>
     <section class="detail-section" v-if="unifiedShadowRuns.length"><header><span>09</span><div><h2>统一四智能体影子研判</h2><p>LangGraph 唯一编排器的影子运行（只读对照，不改变上方正式结论）</p></div><span class="status-label is-info">影子</span></header>
       <table class="data-table"><thead><tr><th>运行</th><th>任务</th><th>模式</th><th>状态</th><th>Trace</th><th>完成时间</th><th></th></tr></thead><tbody>
         <tr v-for="run in unifiedShadowRuns" :key="run.run_id">
@@ -81,7 +86,7 @@ import { ArrowLeft, CopyDocument } from "@element-plus/icons-vue";
 import { ElMessage } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
+import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
 import { fetchUnifiedRuns } from "../api/deviceOperations";
 
 const route = useRoute();
@@ -159,6 +164,8 @@ const back = () => router.push("/risk");
 
 // 统一四智能体影子研判（M4.3）：按 risk_id 关联展示，只读。
 const unifiedShadowRuns = ref([]);
+const officialRecords = ref({ records: [], corrections: [] });
+const officialError = ref("");
 const goUnifiedRun = (runId) => router.push({ path: "/agent-ops", query: { tab: "unified", run_id: runId } });
 
 const copy = async (text) => {
@@ -175,6 +182,11 @@ onMounted(async () => {
     vulnerabilityDetail.value = await fetchVulnerability(chain.value.intelligence.cve_id).catch(() => ({}));
     cveEvidence.value = await fetchCveRuntimeEvidence(chain.value.intelligence.cve_id, chain.value.asset.id)
       .catch(() => null);
+  }
+  const cve = route.params.cveId || chain.value?.intelligence?.cve_id || vulnerabilityDetail.value.cve_id;
+  if (cve) {
+    try { officialRecords.value = (await api.get("/vulnerabilities/official/records", { params: { cve_id: cve } })).data; }
+    catch { officialError.value = "官方证据记录读取失败，请刷新后复核；当前不可宣称已完成官方核验。"; }
   }
   const rid = Number(riskRecord.value.risk_id || 0);
   if (rid) {

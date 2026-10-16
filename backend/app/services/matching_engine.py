@@ -19,14 +19,7 @@ from app.services.vulnerability_intelligence.service import (
 )
 
 
-RELEASE_CODENAMES = {
-    "14.04": "trusty",
-    "16.04": "xenial",
-    "18.04": "bionic",
-    "20.04": "focal",
-    "22.04": "jammy",
-    "24.04": "noble",
-}
+from app.services.ubuntu_security_collector import RELEASE_CODENAMES
 
 # 发行版适用性记录在前端/证据里的展示名；reason_code 前缀取 source 本身
 VENDOR_LABELS = {
@@ -58,6 +51,35 @@ def _fingerprint(payload: dict) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
+UNVERIFIED_UPSTREAM_REASON = "upstream_range_unverified_by_vendor"
+# 上游 CPE 修复版本来自其他发行分支；Ubuntu 以回移植方式发版，跨分支版本比较
+# 既可能误报（分支内版本低但回移植已修复）也可能误报（新分支版本高但补丁未回移植）。
+UNVERIFIED_UPSTREAM_CONFIDENCE = 0.55
+
+
+def _annotate_unverified_upstream(values: dict, package_name: str, installed: str) -> None:
+    """Mark version-range conclusions made without a vendor applicability record.
+
+    When Canonical publishes no status for (release, package), the upstream/NVD
+    range cannot distinguish a backport branch from an upstream branch. Keep the
+    conservative match_status, but state the evidence gap explicitly instead of
+    presenting a vendor-verified conclusion.
+    """
+    if values.get("match_status") not in {"potentially_affected", "fixed"}:
+        return
+    caveat = (
+        f"缺 {package_name} 在该发行版的厂商适用性记录（Canonical per-release 状态缺失）；"
+        f"Ubuntu 采用回移植发版，安装版本 {installed or '未知'} 与上游修复版本的比较不能替代发行版公告，"
+        "需导入官方适用性记录后复核。"
+    )
+    values["reason_code"] = UNVERIFIED_UPSTREAM_REASON
+    values["confidence"] = UNVERIFIED_UPSTREAM_CONFIDENCE
+    values["match_reason"] = f"{values.get('match_reason', '')} {caveat}".strip()
+    # A higher upstream version also cannot prove a distro patch is installed.
+    if values["match_status"] == "fixed":
+        values.update(match_status="unknown", affected=True)
+
+
 def _evaluate_match(
     asset: models.LinuxAsset,
     vulnerability: models.VulnerabilityInfo,
@@ -72,7 +94,8 @@ def _evaluate_match(
         source_name = (canonical.get("source") or "canonical").lower()
         vendor, os_label = VENDOR_LABELS.get(source_name, (source_name or "vendor", ""))
         reason_prefix = source_name or "canonical"
-        fixed = (canonical.get("fixed_version") or fixed).strip()
+        # Never inherit an upstream fixed version into a different distro branch.
+        fixed = (canonical.get("fixed_version") or "").strip()
         status = canonical.get("status", "under_investigation")
         if status == "not_affected":
             return {
@@ -219,6 +242,8 @@ def run_matching(db: Session, cve_ids: list[str] | None = None, *, asset_id: int
             key = (asset.id, vulnerability.cve_id, package_name)
             seen.add(key)
             values = _evaluate_match(asset, vulnerability, packages.get(package_name), canonical)
+            if distribution == "ubuntu" and canonical is None:
+                _annotate_unverified_upstream(values, package_name, values["installed_version"])
             values["evidence_fingerprint"] = _fingerprint({
                 "asset_id": asset.id,
                 "cve_id": vulnerability.cve_id,

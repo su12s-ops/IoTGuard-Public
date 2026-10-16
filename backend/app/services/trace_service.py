@@ -268,5 +268,16 @@ def evidence_for_trace(db: Session, trace_id: str) -> dict[str, Any]:
                              "cvss_score": row.cvss_score if row else 0,
                              "cvss_severity": row.cvss_severity if row else "",
                              "fixed_version": row.fixed_version if row else ""})
+    for ref in refs:
+        if ref.startswith("ADV-"):
+            record = db.query(models.OfficialCveRecord).filter_by(evidence_id=ref).first()
+            evidence_rows.append({"evidence_id": ref, "resolved": bool(record), "evidence_type": "official_advisory",
+                "source": record.source_url if record else "", "description": record.evidence_status if record else "",
+                "content_sha256": record.content_sha256 if record else ""})
+        elif ref.startswith("INV-"):
+            record = db.query(models.CollectionEvidence).filter_by(evidence_id=ref).first()
+            evidence_rows.append({"evidence_id": ref, "resolved": bool(record), "evidence_type": "inventory",
+                "asset_id": record.asset_id if record else None, "source": "fixed_collector",
+                "content_sha256": record.content_sha256 if record else ""})
     return {"trace_id": trace_id, "evidence": evidence_rows, "cves": cve_rows,
             "note": "unresolved = 事件引用但库中不存在（如实呈现，不剔除不伪造）"}

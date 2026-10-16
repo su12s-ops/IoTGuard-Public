@@ -42,6 +42,23 @@ BUSINESS="${BUSINESS_LEVEL:-normal}"
     rpm -qa --queryformat '%{NAME}|%{VERSION}-%{RELEASE}|%{ARCH}\n'
   fi
   echo
+  echo "===== PACKAGE_SOURCES ====="
+  if command -v dpkg-query >/dev/null 2>&1; then
+    dpkg-query -W -f='${binary:Package}|${source:Package}|${source:Version}\n' 2>/dev/null || true
+  fi
+  echo
+  echo "===== OPENSSL_IMPLEMENTATION ====="
+  command -v openssl 2>/dev/null || true
+  openssl version -a 2>/dev/null || true
+  if [ -x /usr/bin/openssl ]; then
+    readlink -f /usr/bin/openssl
+    dpkg-query -S /usr/bin/openssl 2>/dev/null || true
+    ldd /usr/bin/openssl 2>/dev/null || true
+  fi
+  echo
+  echo "===== APT_POLICY ====="
+  apt-cache policy openssl libssl3t64 sudo curl openssh-server systemd 2>/dev/null || true
+  echo
   echo "===== OPEN_PORTS ====="
   ss -tulnp 2>/dev/null || true
   echo
@@ -60,4 +77,4 @@ BUSINESS="${BUSINESS_LEVEL:-normal}"
   fi
 } > "$OUTPUT"
 
-echo "Asset inventory written to $OUTPUT"
+if [ "$OUTPUT" != /dev/stdout ]; then echo "Asset inventory written to $OUTPUT"; fi

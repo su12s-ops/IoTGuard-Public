@@ -67,7 +67,7 @@ def _count_intelligence_conflicts(db: Session, candidates: list[dict[str, Any]])
         try:
             from app.services.unified.evidence_prep import collect_stances
             from app.services.vulnerability_intelligence.service import get_source_bundle
-            release = cve_id.rsplit(":", 1)[1] if ":" in cve_id else ""
+            release = cve_id.split(":")[1] if ":" in cve_id else ""
             bundle = get_source_bundle(db, cve_id, release=release,
                                        package_name=candidate.get("package_name", ""))
             stances = collect_stances(bundle)

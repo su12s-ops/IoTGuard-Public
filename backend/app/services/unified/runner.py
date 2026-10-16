@@ -73,7 +73,8 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      client_factory: ClientFactory = default_client_factory,
                      sink: PersistSink | None = None,
                      run_deadline_s: float = 900.0,
-                     ablation_mask: frozenset[str] = frozenset()) -> models.UnifiedAnalysisRun:
+                     ablation_mask: frozenset[str] = frozenset(),
+                     force_full_review: bool = False) -> models.UnifiedAnalysisRun:
     """同步执行一次统一编排（worker 线程/测试/实验共用）。
 
     ablation_mask（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策
@@ -100,7 +101,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
     ctx = RunContext(
         db_factory=SessionLocal, trace_id=run_row.trace_id, meter=meter,
         client_factory=client_factory, risk=risk, run_deadline_s=run_deadline_s,
-        ablation_mask=frozenset(ablation_mask))
+        ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review and run_row.mode == "shadow")
     if risk is not None:
         baseline_ids = json.loads(risk.evidence_packet_json or "{}") if risk.evidence_packet_json else {}
         ctx.packet_evidence_ids = {
@@ -115,7 +116,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
             raise ValueError("risk_review 任务缺少有效风险事件")
         compiled = build_graph(ctx)
         # 简单分层不进图：0 次 LLM 直通
-        probe = routing_probe(db, run_row, risk)
+        probe = None if ctx.force_full_review else routing_probe(db, run_row, risk)
         if probe is not None:
             state = probe
             state = _simple_tier_state(state)

@@ -95,6 +95,7 @@ class RunContext:
     client_factory: ClientFactory | None = None
     risk: models.RiskAssessment | None = None
     packet_evidence_ids: set[str] = field(default_factory=set)
+    force_full_review: bool = False
     run_deadline_s: float = 900.0
     agent_logs: dict[str, Any] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
@@ -286,6 +287,11 @@ def node_prepare(ctx: RunContext):
             routing = routing_mod.decide_routing(
                 db, state.task_type, state.target_ref, state.target_type,
                 risk=risk, capability_marks=marks, candidates=candidates)
+            if ctx.force_full_review and state.mode == "shadow":
+                routing.tier = "standard"
+                routing.include_asset = routing.include_vulnerability = routing.include_runtime = routing.include_decision = True
+                routing.skipped_agents = []
+                routing.reason = "隔离真实业务验收：显式完整四角色；不改变正式风险或全局分层"
             baseline = _baseline_snapshot(db, state, risk, candidates)
             ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
                      payload={"stage": "prepare", "routing": routing.model_dump(),
@@ -315,6 +321,16 @@ def node_prepare_evidence(ctx: RunContext):
         try:
             packet = evidence_prep.build_evidence_prep_packet(
                 db, state.target_ref, state.target_type, state.candidate_context)
+            inventory_id = (packet.asset_facts.get("inventory_provenance") or {}).get("inventory_evidence_id")
+            if inventory_id:
+                ctx.packet_evidence_ids.add(inventory_id)
+            for candidate in packet.candidates:
+                for source in candidate.source_bundle.values():
+                    value = source.get("value") or {}
+                    records = value.get("records", [value]) if isinstance(value, dict) else []
+                    for record in records:
+                        if record.get("evidence_id"):
+                            ctx.packet_evidence_ids.add(record["evidence_id"])
             ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
                      payload={"stage": "prepare_evidence",
                               "as_of": packet.as_of,
@@ -360,6 +376,7 @@ def _asset_prep_context(state: UnifiedAnalysisState) -> str:
     return (
         f"{_prep_header(state)}"
         f"资产画像: {json.dumps(facts.get('profile') or {}, ensure_ascii=False)}\n"
+        f"真实清单身份与原始证据: {json.dumps(facts.get('inventory_provenance') or {}, ensure_ascii=False)}\n"
         f"服务暴露面: {json.dumps(facts.get('services') or [], ensure_ascii=False)}\n"
         f"组件清单(截断={facts.get('components_truncated')}): "
         f"{json.dumps((facts.get('components') or [])[:20], ensure_ascii=False)}\n"
@@ -568,6 +585,19 @@ def _vulnerability_evidence_validator(ctx: RunContext):
             if isinstance(finding, dict):
                 cited.update(finding.get("supporting_evidence_ids") or [])
         unknown = sorted(cited - known)
+        # A source can refresh while the run is active. Accept an actual stored
+        # official snapshot only for this run's candidate CVE; fabricated and
+        # unrelated official IDs remain rejected.
+        if unknown and ctx.risk is not None:
+            db = ctx.session()
+            try:
+                actual = {row.evidence_id for row in db.query(models.OfficialCveRecord).filter(
+                    models.OfficialCveRecord.evidence_id.in_(unknown),
+                    models.OfficialCveRecord.cve_id == ctx.risk.cve_id.split(":")[0],
+                    models.OfficialCveRecord.evidence_status == "available").all()}
+                unknown = sorted(set(unknown) - actual)
+            finally:
+                db.close()
         if unknown:
             errors.append(f"引用了证据包之外的分析师自造证据 ID（防幻觉校验失败）: {unknown[:5]}")
         return errors
@@ -866,6 +896,9 @@ def node_decide(ctx: RunContext):
             "实质性改变关键事实时才调整结论/置信度并在 reason 说明改变点；不要重复申请；\n"
             "10. 给出候选修复计划 response_plan：只能使用白名单动作，必须包含回滚计划与验证条件；"
             "计划只能待审批（requires_approval=true），不得生成 shell；\n"
+            "分别标明漏洞修复、风险缓解、采集器健康恢复、只读验证和回滚准备；"
+            "修复只针对候选实际源包/已安装二进制包，使用同发行版官方修复版本；"
+            "不要把 Falco 重启描述为 CVE 修复。rationale 说明前置条件与可能影响。\n"
             "11. 任一专家角色缺失（degraded_roles 非空，或 semantic_ablation_masked "
             "标注的实验性隐藏）时如实声明并在 reason 中说明影响。"
         )
@@ -1071,7 +1104,16 @@ def _decision_known_ids(state: UnifiedAnalysisState) -> set[str]:
     """决策者可引用的证据全集：事件证据包 + 运行时证据 + 预取证据清单 +
     各专家报告已引用项。"""
     known: set[str] = set(state.baseline.get("packet_evidence_ids") or [])
+    inventory_id = ((_prep(state).get("asset_facts") or {}).get("inventory_provenance") or {}).get("inventory_evidence_id")
+    if inventory_id:
+        known.add(inventory_id)
     known.update((_prep(state).get("runtime_facts") or {}).get("evidence_ids") or [])
+    for candidate in (_prep(state).get("candidates") or []):
+        for source in (candidate.get("source_bundle") or {}).values():
+            value = source.get("value") or {}
+            for record in value.get("records", [value]) if isinstance(value, dict) else []:
+                if record.get("evidence_id"):
+                    known.add(record["evidence_id"])
     runtime = state.runtime or state.runtime_program_fallback or {}
     known.update(runtime.get("evidence_ids") or [])
     for finding in runtime.get("findings") or []:
@@ -1174,7 +1216,8 @@ def node_finalize(ctx: RunContext):
                 state.investigation, state.vulnerability, state.runtime or state.runtime_program_fallback)
         plan = (state.decision or {}).get("response_plan") or {}
         if plan:
-            plan = dict(plan)
+            from app.services.unified.plan_guard import annotate_plan
+            plan = annotate_plan(snapshot, dict(plan), sorted(_decision_known_ids(state)))
             plan["requires_approval"] = True   # 程序强制：LLM 计划永远待审批
             final["plan"] = plan
             final["plan_execution_mode"] = "pending_approval"

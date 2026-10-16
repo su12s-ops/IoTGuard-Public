@@ -157,6 +157,7 @@
           <section class="operation-section">
             <div class="section-head"><div><h2>四智能体执行明细（证据消费可追溯）</h2></div></div>
             <DataTable :rows="unifiedAgentRows">
+              <el-table-column type="expand"><template #default="{ row }"><pre style="white-space: pre-wrap; overflow-wrap: anywhere; max-height: 420px; overflow: auto">{{ JSON.stringify(row.output, null, 2) }}</pre></template></el-table-column>
               <el-table-column prop="name" label="智能体" min-width="180" />
               <el-table-column label="状态" width="90"><template #default="{ row }">{{ row.status || '—' }}</template></el-table-column>
               <el-table-column label="工具调用" min-width="280"><template #default="{ row }">{{ (row.tool_calls || []).join('、') || '—' }}</template></el-table-column>
@@ -166,12 +167,15 @@
 
           <section class="operation-section" v-if="unifiedPlanActions.length">
             <div class="section-head"><div><h2>待审批处置计划（requires_approval 由程序强制）</h2></div></div>
+            <p v-if="unifiedRun.plan?.technical_gate">技术依据门禁：{{ unifiedRun.plan.technical_gate.status }}；{{ unifiedRun.plan.technical_gate.reasons.join('、') || '仍需人工审批' }}；未执行，未授予 Harness 授权。</p>
+            <p v-if="unifiedRun.plan?.original_evidence_ids?.length" class="cell-sub">原始依据：{{ unifiedRun.plan.original_evidence_ids.join('、') }}</p>
             <el-row :gutter="12">
               <el-col :span="8">
                 <h3 class="drawer-section-title">建议动作（白名单）</h3>
                 <el-descriptions :column="1" border size="small">
                   <el-descriptions-item v-for="(a, i) in unifiedPlanActions" :key="i" :label="a.action">
                     {{ a.target || a.package || '' }} {{ a.params ? JSON.stringify(a.params) : '' }}
+                    <div class="cell-sub">{{ ({ vulnerability_fix: '漏洞修复', risk_mitigation: '风险缓解', collector_health_recovery: '采集器健康恢复', rollback_preparation: '回滚准备', verification: '只读验证' })[unifiedRun.plan?.action_classification?.[i]?.category] || '待分类复核' }} · {{ a.rationale }}</div>
                   </el-descriptions-item>
                 </el-descriptions>
               </el-col>
@@ -187,6 +191,9 @@
           </section>
 
           <section class="operation-section" v-if="unifiedRun.mode === 'shadow' && unifiedRun.risk_id">
+            <h2>关联 Harness 只读验证与安全门禁</h2>
+            <p v-if="!unifiedRun.harness_checks?.length">尚无关联 Harness 检查；影子计划不代表授权或执行。</p>
+            <table v-else class="data-table"><thead><tr><th>任务 / Trace</th><th>状态</th><th>审批与执行</th><th>拦截依据</th></tr></thead><tbody><tr v-for="h in unifiedRun.harness_checks" :key="h.id"><td>{{ h.id }}<p>{{ h.trace_id }}</p></td><td>{{ h.goal }} / {{ h.status }}</td><td>{{ h.approved ? '已批准' : '未批准' }}；{{ h.goal === 'investigate' ? '只读调查' : '无设备写操作' }}</td><td>{{ h.blocked_reasons.join('；') || '只读证据检查' }}</td></tr></tbody></table>
             <div class="section-head">
               <div><h2>与正式链路对照</h2>
                 <p class="operation-help">影子结论只读对照同事件正式结论；正式字段仅由正式链路写入。</p>
@@ -507,12 +514,17 @@ const unifiedVerdict = computed(() => {
 });
 const unifiedPlanActions = computed(() => unifiedRun.value?.plan?.actions || []);
 const unifiedAgentRows = computed(() =>
-  Object.entries(unifiedRun.value?.agents || {}).map(([name, log]) => ({
-    name,
-    status: log.status,
-    tool_calls: (log.tool_calls || []).map(c => c.name || c),
-    evidence_ids: (log.output?.supporting_evidence_ids) || (log.output?.evidence_ids) || [],
-  })));
+  Object.entries(unifiedRun.value?.agents || {}).map(([name, log]) => {
+    const key = { asset_investigator: 'investigation', vulnerability_analyst: 'vulnerability', runtime_analyst: 'runtime', decision_planner: 'decision' }[name];
+    const output = log.output || unifiedRun.value?.[key] || {};
+    const evidence = new Set([...(output.supporting_evidence_ids || []), ...(output.evidence_ids || [])]);
+    for (const item of [...(output.findings || []), ...(output.verdicts || [])]) {
+      for (const id of item.supporting_evidence_ids || []) evidence.add(id);
+      if (item.evidence_id) evidence.add(item.evidence_id);
+    }
+    return { name, status: log.status, output,
+      tool_calls: (log.tool_calls || []).map(c => c.name || c), evidence_ids: [...evidence] };
+  }));
 
 async function loadUnifiedRuns() {
   unifiedLoading.value = true;
