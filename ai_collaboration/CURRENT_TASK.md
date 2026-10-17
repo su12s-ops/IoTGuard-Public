@@ -1,5 +1,13 @@
 # 当前任务
 
+## 模型切换 GLM-5.3-Flash（2026-10-17，M4.7 交付后用户指令）
+
+- [x] 切换四智能体 LLM 为 BigModel GLM-5.3-Flash：套餐计费走 Anthropic Messages 协议端点，OpenAI 兼容端点不在套餐内（1113），已按协议适配（AnthropicProtocolChatClient + autogen Anthropic 分支 + DEEPSEEK_API_PROTOCOL 分发；anthropic 锁 <1.0）。
+- [x] 连通性检查：统一链纯文本/工具调用/工具结果往返、System B 生产形态（UserMessage+json_output）全部通过。
+- [x] 护栏实测校准：HTTP 60→400s、单智能体 150→900s、全程 900→3600s（GLM 完整报告单调用 120-165s；thinking 关闭实测更慢，保留默认）。
+- [x] 真实四智能体 shadow smoke 验证（风险12，全四角色）；协议专项测试 12 项；全量回归见 TEST_RESULTS。
+- 边界：变量名沿用 DEEPSEEK_*；密钥仅存本地 .env；flag=off、双修复写开关 0 维持。
+
 ## Stage 9B M4.7（2026-10-17）
 
 当前依据：`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`。开发前 HEAD=`fa3b474`；工作区含上轮遗留两处演示令牌改动与验收草稿（本轮收编并完成）。正式入口仍是 System B；统一 flag=off；双修复写开关 0。

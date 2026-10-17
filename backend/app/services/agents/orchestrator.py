@@ -33,12 +33,8 @@ ClientFactory = Callable[[], ChatClient]
 
 
 def default_client_factory() -> ChatClient:
-    from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("未配置 DEEPSEEK_API_KEY，无法调用智能体 LLM")
-    from app.services.agents.base import DeepSeekChatClient
-    return DeepSeekChatClient(model=DEEPSEEK_MODEL, api_key=DEEPSEEK_API_KEY,
-                              base_url=DEEPSEEK_BASE_URL)
+    from app.services.agents.base import build_llm_client
+    return build_llm_client()
 
 
 def new_run_id() -> str:

@@ -1,5 +1,18 @@
 # 测试结果
 
+## 模型切换 GLM-5.3-Flash（2026-10-17，M4.7 后续）
+
+| 验证 | 已确认结果 |
+| --- | --- |
+| 最终全量 | **742 passed / 0 failed**（580.98秒，5既有警告；M4.7 基线 730 + 12 项协议专项） |
+| 协议专项 | `test_llm_protocol_clients.py` 12/12：消息转换（system 提取/tool_use/tool_result 合并/交替）、thinking 块处理、usage 映射、协议分发、System B 双分支 |
+| 统一链专项 | unified pipeline+adapter+protocol 87/0；smoke 前置 63/0 |
+| 连通性（真实调用） | 统一链：纯文本 JSON ✓（8.2s）、工具调用 ✓（check_host 正确参数）、工具结果往返 ✓；System B 生产形态 UserMessage+json_output ✓（2.7s，干净 JSON+真实 usage） |
+| 真实四智能体 smoke | 风险12 shadow `m47-glm-smoke4`：**4/4 角色 succeeded**、19 调用/325,405 tokens/2506s（护栏内，预算未触界）、判定 `not_affected/downgrade_major/monitor/0.85`（与 DeepSeek 基线同对象结论一致）、正式字段零触碰 |
+| 护栏校准依据 | 长输出实测：完整报告单调用 120-165s（133k prompt 仅 19.5s，瓶颈为生成而非上下文；thinking=off 实测更慢 164s vs 120s，保留模型默认）→ HTTP 400s/单智能体 900s/全程 3600s |
+| 迭代留档 | smoke1/2/3 为护栏校准过程样本（60s 超时全降级→150s 局部→480s 局部），全部保留于 `reports/m47-work/glm-smoke/`，未筛选删除 |
+| 边界 | 密钥仅存 gitignored `backend/.env`；tracked 文件敏感扫描 0 命中；flag=off、双修复写开关 0 维持 |
+
 ## Stage 9B M4.7（2026-10-17）
 
 基线`fa3b474`；M4.6参考729/0。本轮围绕P0阻断项、W47连续shadow、隔离副本迁移演练与必要回归。

@@ -16,7 +16,13 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.config import DATA_DIR, DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
+from app.config import (
+    DATA_DIR,
+    DEEPSEEK_API_KEY,
+    DEEPSEEK_API_PROTOCOL,
+    DEEPSEEK_BASE_URL,
+    DEEPSEEK_MODEL,
+)
 from app.services.ebpf_event_collector import load_runtime_events
 from app.services.reachability import analyze_reachability
 from app.services.risk_engine import risk_level
@@ -308,6 +314,25 @@ def _configured() -> bool:
 
 def _create_model_client():
     from autogen_core.models import ModelInfo
+
+    if DEEPSEEK_API_PROTOCOL == "anthropic":
+        # BigModel GLM 套餐等 Anthropic Messages 协议计费端点
+        from autogen_ext.models.anthropic import AnthropicChatCompletionClient
+
+        return AnthropicChatCompletionClient(
+            model=DEEPSEEK_MODEL,
+            api_key=DEEPSEEK_API_KEY,
+            base_url=DEEPSEEK_BASE_URL.rstrip("/"),
+            temperature=0.1,
+            timeout=400.0,
+            model_info=ModelInfo(
+                vision=False,
+                function_calling=True,
+                json_output=True,
+                structured_output=False,
+                family="glm",
+            ),
+        )
     from autogen_ext.models.openai import OpenAIChatCompletionClient
 
     return OpenAIChatCompletionClient(

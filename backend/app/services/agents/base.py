@@ -97,6 +97,127 @@ class DeepSeekChatClient:
                 "model": self._model, "usage": usage}
 
 
+class AnthropicProtocolChatClient:
+    """真实客户端：Anthropic Messages 协议端点（BigModel GLM 套餐计费路径等）。
+
+    对外保持与 DeepSeekChatClient 完全一致的 complete(messages, tools) 契约，
+    内部完成 OpenAI 风格消息/工具 ↔ Anthropic 协议的双向转换：
+    - system 首消息 → 独立 system 字段；
+    - assistant.tool_calls → assistant 轮 tool_use 内容块；
+    - role=tool 结果 → user 轮 tool_result 内容块（相邻合并保持轮次交替）；
+    - 响应中 text 块拼接为 content，tool_use 块还原为工具调用，
+      thinking 块不计入 content（推理与结论分离，不丢弃也不冒充结论）。
+    """
+
+    def __init__(self, model: str, api_key: str, base_url: str, timeout: int = 400,
+                 max_retries: int = 1, max_tokens: int = 32768,
+                 thinking: dict[str, Any] | None = None):
+        import anthropic
+        self._model = model
+        self._max_tokens = max_tokens
+        self._thinking = thinking
+        # timeout 默认 400s：GLM 等模型生成完整结构化报告（5-15k 输出 tokens，
+        # 实测 ~120-165s/报告）加上排队抖动，DeepSeek 时代的 60s 会系统性超时。
+        # max_retries=1：与 DeepSeekChatClient 相同的限流退化策略
+        self._client = anthropic.Anthropic(api_key=api_key, base_url=base_url.rstrip("/"),
+                                           timeout=timeout, max_retries=max_retries)
+
+    def _convert_messages(self, messages) -> tuple[str, list[dict[str, Any]]]:
+        system_parts: list[str] = []
+        turns: list[dict[str, Any]] = []
+        for message in messages:
+            role, content = message.get("role"), message.get("content")
+            if role == "system":
+                if content:
+                    system_parts.append(str(content))
+            elif role == "assistant":
+                blocks: list[dict[str, Any]] = []
+                if content:
+                    blocks.append({"type": "text", "text": str(content)})
+                for call in message.get("tool_calls") or []:
+                    function = call.get("function") or {}
+                    try:
+                        arguments = json.loads(function.get("arguments") or "{}")
+                    except json.JSONDecodeError:
+                        arguments = {}
+                    blocks.append({"type": "tool_use", "id": call.get("id") or "",
+                                   "name": function.get("name") or "", "input": arguments})
+                turns.append({"role": "assistant",
+                              "content": blocks or [{"type": "text", "text": ""}]})
+            elif role == "tool":
+                turns.append({"role": "user", "content": [{
+                    "type": "tool_result", "tool_use_id": message.get("tool_call_id") or "",
+                    "content": str(content or "")}]})
+            else:
+                turns.append({"role": "user", "content": str(content or "")})
+        merged: list[dict[str, Any]] = []
+        for turn in turns:
+            if merged and merged[-1]["role"] == turn["role"]:
+                if isinstance(merged[-1]["content"], list) and isinstance(turn["content"], list):
+                    merged[-1]["content"].extend(turn["content"])
+                elif isinstance(merged[-1]["content"], str) and isinstance(turn["content"], str):
+                    merged[-1]["content"] += "\n" + turn["content"]
+                else:
+                    merged.append(turn)
+            else:
+                merged.append(turn)
+        return "\n".join(system_parts), merged
+
+    def complete(self, messages, tools=None):
+        system, turns = self._convert_messages(messages)
+        kwargs: dict[str, Any] = {
+            "model": self._model, "max_tokens": self._max_tokens,
+            "messages": turns, "temperature": 0.1,
+        }
+        if system:
+            kwargs["system"] = system
+        if self._thinking is not None:
+            kwargs["thinking"] = self._thinking
+        if tools:
+            kwargs["tools"] = [{"name": tool["name"], "description": tool["description"],
+                                "input_schema": tool["parameters"]} for tool in tools]
+        response = self._client.messages.create(**kwargs)
+        text_parts: list[str] = []
+        tool_calls: list[dict[str, Any]] = []
+        for block in response.content or []:
+            block_type = getattr(block, "type", None)
+            if block_type == "text":
+                text_parts.append(block.text)
+            elif block_type == "tool_use":
+                tool_calls.append({"id": block.id, "name": block.name,
+                                   "arguments": dict(block.input or {})})
+        usage = None
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            prompt = getattr(raw_usage, "input_tokens", None)
+            completion = getattr(raw_usage, "output_tokens", None)
+            total = prompt + completion if prompt is not None and completion is not None else None
+            usage = {"prompt_tokens": prompt, "completion_tokens": completion,
+                     "total_tokens": total}
+        return {"content": "".join(text_parts) or None, "tool_calls": tool_calls,
+                "model": self._model, "usage": usage}
+
+
+def build_llm_client():
+    """按 DEEPSEEK_API_PROTOCOL（openai|anthropic）构造真实 LLM 客户端。"""
+    from app import config
+    if not config.DEEPSEEK_API_KEY:
+        raise RuntimeError("未配置 DEEPSEEK_API_KEY，无法调用智能体 LLM")
+    protocol = getattr(config, "DEEPSEEK_API_PROTOCOL", "openai").strip().lower()
+    if protocol == "anthropic":
+        thinking = ({"type": "disabled"}
+                    if getattr(config, "DEEPSEEK_THINKING", "").strip().lower() == "off"
+                    else None)
+        return AnthropicProtocolChatClient(model=config.DEEPSEEK_MODEL,
+                                           api_key=config.DEEPSEEK_API_KEY,
+                                           base_url=config.DEEPSEEK_BASE_URL,
+                                           thinking=thinking)
+    if protocol != "openai":
+        raise RuntimeError(f"不支持的 DEEPSEEK_API_PROTOCOL：{protocol}")
+    return DeepSeekChatClient(model=config.DEEPSEEK_MODEL, api_key=config.DEEPSEEK_API_KEY,
+                              base_url=config.DEEPSEEK_BASE_URL)
+
+
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 

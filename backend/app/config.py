@@ -27,6 +27,11 @@ NVD_API_KEY = os.getenv("NVD_API_KEY", "")
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
 DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
 DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
+# LLM 端点协议：openai（OpenAI 兼容 /chat/completions）| anthropic（Messages 协议，
+# 如 BigModel GLM 套餐计费端点 /api/anthropic）。变量名沿用 DEEPSEEK_* 保持零迁移成本。
+DEEPSEEK_API_PROTOCOL = os.getenv("DEEPSEEK_API_PROTOCOL", "openai")
+# 可选：anthropic 协议下关闭模型思考（off=禁用；默认空=沿用模型默认行为）
+DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "")
 
 # Stage 9B：统一四智能体编排开关（off=零行为变化 / shadow=影子对照 / on=正式入口）
 UNIFIED_PIPELINE_MODE = os.getenv("LINUXGUARD_UNIFIED_PIPELINE", "off").strip().lower()

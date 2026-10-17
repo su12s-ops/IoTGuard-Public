@@ -96,13 +96,14 @@ class RunContext:
     risk: models.RiskAssessment | None = None
     packet_evidence_ids: set[str] = field(default_factory=set)
     force_full_review: bool = False
-    run_deadline_s: float = 900.0
+    run_deadline_s: float = 3600.0   # 与 BudgetState.run_deadline_s 同步（生成速度护栏）
     agent_logs: dict[str, Any] = field(default_factory=dict)
     _lock: threading.Lock = field(default_factory=threading.Lock)
     _started: float = field(default_factory=time.monotonic)
     persisted_stage: dict[str, str] = field(default_factory=dict)
-    # 深度控制（测试可注入）
-    agent_budget_s: float = 150.0
+    # 深度控制（测试可注入）；与 BudgetState.agent_deadline_s 同步——GLM-5.3
+    # 等模型生成完整结构化报告单调用可超 120s，多轮工具+重试需要更长护栏
+    agent_budget_s: float = 900.0
     # 语义消融（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策输入
     # （角色本身照常执行；这是「贡献度量」钩子，不是失败/降级路径）
     ablation_mask: frozenset[str] = frozenset()

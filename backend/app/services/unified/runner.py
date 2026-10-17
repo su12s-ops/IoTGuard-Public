@@ -72,7 +72,7 @@ def _simple_tier_state(state: UnifiedAnalysisState) -> UnifiedAnalysisState:
 def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      client_factory: ClientFactory = default_client_factory,
                      sink: PersistSink | None = None,
-                     run_deadline_s: float = 900.0,
+                     run_deadline_s: float = 3600.0,
                      ablation_mask: frozenset[str] = frozenset(),
                      force_full_review: bool = False,
                      investigation_goal: str = "") -> models.UnifiedAnalysisRun:

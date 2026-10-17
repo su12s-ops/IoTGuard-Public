@@ -26,6 +26,7 @@ from app.services.agents.base import (
     AgentTool,
     ChatClient,
     DeepSeekChatClient,  # noqa: F401  (re-export: 统一编排器的真实客户端)
+    build_llm_client,
     parse_structured_output,
 )
 
@@ -323,9 +324,5 @@ def _brief(output: dict[str, Any], limit: int = 160) -> str:
 
 
 def default_client_factory() -> ChatClient:
-    """与生产一致的 DeepSeek 客户端（复用 System A 客户端实现）。"""
-    from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
-    if not DEEPSEEK_API_KEY:
-        raise RuntimeError("未配置 DEEPSEEK_API_KEY，无法调用智能体 LLM")
-    return DeepSeekChatClient(model=DEEPSEEK_MODEL, api_key=DEEPSEEK_API_KEY,
-                              base_url=DEEPSEEK_BASE_URL)
+    """与生产一致的真实 LLM 客户端（按 DEEPSEEK_API_PROTOCOL 选择协议实现）。"""
+    return build_llm_client()

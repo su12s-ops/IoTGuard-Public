@@ -71,8 +71,10 @@ class RoutingDecision(BaseModel):
 class BudgetState(BaseModel):
     model_config = ConfigDict(extra="ignore")
     max_llm_calls: int = 40
-    agent_deadline_s: float = 150.0
-    run_deadline_s: float = 900.0
+    # 时限为上层护栏（非目标）：GLM-5.3 等模型生成完整结构化报告单调用
+    # 实测约 120-165s，多轮工具+重试需要更长护栏（DeepSeek 时代 150/900 偏紧）。
+    agent_deadline_s: float = 900.0
+    run_deadline_s: float = 3600.0
     follow_up_rounds: int = 1
     rereview_rounds: int = 1
 

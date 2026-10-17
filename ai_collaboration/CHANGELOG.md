@@ -1,5 +1,14 @@
 # 变更日志
 
+## 模型切换：DeepSeek → BigModel GLM-5.3-Flash（2026-10-17，M4.7 后续）
+
+- 用户指令一次性切换四智能体 LLM；实测发现智谱套餐计费走 Anthropic Messages 协议端点（`/api/anthropic` 200），OpenAI 兼容 `/api/paas/v4` 不在套餐内（429/1113），遂适配协议而非仅换配置。
+- 新增 `AnthropicProtocolChatClient`（`agents/base.py`，与 DeepSeekChatClient 同 complete 契约：system 提取、tool_calls↔tool_use、role=tool→tool_result 合并、thinking 块不计 content、usage 映射）+ `build_llm_client` 按 `DEEPSEEK_API_PROTOCOL`（openai|anthropic）分发；统一链/System A 两处工厂接入。
+- System B `_create_model_client` 增加 autogen `AnthropicChatCompletionClient` 分支（`anthropic>=0.48,<1.0` 锁定：1.x 移除 temperature 会同时破坏两套栈）；requirements 更新 `autogen-ext[openai,anthropic]`。
+- 实测校准护栏：GLM 生成完整结构化报告单调用约 120-165s（长输出为主因，133k prompt 仅 19.5s；关闭思考实测更慢 164s vs 120s，保留模型默认并留 `DEEPSEEK_THINKING=off` 旋钮）→ HTTP 超时 60→400s、单智能体预算 150→900s、全程 900→3600s。
+- 连通性验证：统一链纯文本/工具调用/工具结果往返全通；System B 生产形态（UserMessage+json_output）通；真实四智能体 shadow smoke 全四角色成功（见交付说明）；正式字段零触碰。
+- 变量名保留 `DEEPSEEK_*`（零迁移成本），`.env.example` 已注明语义与套餐计费边界；密钥仅存 gitignored `backend/.env`。
+
 ## Stage 9B M4.7（2026-10-17）：统一四智能体正式业务接管验收
 
 - 基线`fa3b474`推进；不重建架构、不新增Agent、不扩展Harness；仅验证持续真实运行并关闭接管阻断项。报告`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`。
