@@ -25,7 +25,7 @@ from app.services.matching_engine import run_matching
 from app.services.remediation_engine import generate_remediation_tasks
 from app.services.risk_engine import calculate_risk
 from app.services.ubuntu_security_collector import sync_ubuntu_asset_intelligence
-from app.services.agent_group_chat import generate_and_save_report
+from app.services.unified.adapter import generate_and_save_report_unified as generate_and_save_report
 
 router = APIRouter(prefix="/demo", tags=["Demo"])
 
@@ -758,7 +758,7 @@ def demo_start(db: Session = Depends(get_db)):
             _progress["current_step"] = "四智能体联合研判（核验证据并形成裁定…）"
             _progress["current_agent"] = "analysis"
             try:
-                from app.services.agent_group_chat import generate_and_save_report as _ai_report
+                from app.services.unified.adapter import generate_and_save_report_unified as _ai_report
 
                 ai_result = _ai_report(session)
                 ai_status = ai_result.get("status", "failed")

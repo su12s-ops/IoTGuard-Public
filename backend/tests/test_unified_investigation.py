@@ -93,7 +93,7 @@ def test_corrupt_raw_evidence_blocks_reanalysis(case):
         I.resume(db, item)
 
 
-def test_same_facts_reanalysis_caps_confidence_and_preserves_formal(case, monkeypatch):
+def test_same_facts_preserves_raw_confidence_and_formal(case, monkeypatch):
     from app.services.unified import runner
     db, row, conn = case
     item = proposal(db); complete(db, item, conn)
@@ -103,10 +103,12 @@ def test_same_facts_reanalysis_caps_confidence_and_preserves_formal(case, monkey
         state = json.loads(row.state_json)
         state["decision"]["verdicts"][0]["confidence"] = .99
         child.state_json, child.status = json.dumps(state), "completed"
+        child.decision_json = json.dumps(state["decision"])
         db.commit()
     monkeypatch.setattr(runner, "run_unified_sync", fake_run)
     child = I.resume(db, item)
-    assert json.loads(child.decision_json)["verdicts"][0]["confidence"] == .5
+    assert json.loads(child.decision_json)["verdicts"][0]["confidence"] == .99
+    assert json.loads(item.result_json)["model_variance_only"] is True
     assert json.loads(item.result_json)["substantive_update"] is False
     assert db.query(models.RiskAssessment).one().review_status == before
     assert I.resume(db, item).run_id == child.run_id
@@ -119,14 +121,47 @@ def test_new_package_version_is_substantive(case):
     assert I.fingerprint(before) != I.fingerprint(I.evidence_view(db, conn.asset_id))
 
 
+def test_formal_resume_keeps_formal_trace_and_publishes_current_report(case, monkeypatch):
+    from app.services.unified import runner
+    from app.services.unified.adapter import formal_sink
+    from app.services.unified.state import UnifiedAnalysisState
+    db, parent, connection = case
+    monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
+    parent.mode = "formal"
+    state = json.loads(parent.state_json)
+    state["mode"] = "formal"
+    state["object_id"] = f"risk-{parent.risk_id}"
+    parent.state_json = json.dumps(state)
+    risk = db.get(models.RiskAssessment, parent.risk_id)
+    risk.review_status = "pending_human_review"
+    risk.device_context_json = json.dumps({"unified_run_id": parent.run_id})
+    db.commit()
+    item = proposal(db)
+    complete(db, item, connection)
+    def run(db, child, **kwargs):
+        assert child.mode == "formal" and kwargs["sink"] is formal_sink
+        current = UnifiedAnalysisState.model_validate(state)
+        current.run_id = child.run_id
+        current.final = {"policy": {"status": "pending_human_review", "reasons": ["fixture_hold"], "adjustment": 0}}
+        child.state_json = current.model_dump_json()
+        child.decision_json = json.dumps(current.decision)
+        child.status = "completed"
+        formal_sink(db, child, current)
+    monkeypatch.setattr(runner, "run_unified_sync", run)
+    child = I.resume(db, item)
+    first = db.query(models.TraceEvent).filter_by(trace_id=child.trace_id, event_type="task_started").one()
+    assert json.loads(first.payload_json)["mode"] == "formal"
+    assert db.query(models.AnalysisReport).order_by(models.AnalysisReport.id.desc()).first().review_run_id == child.run_id
+
+
 def test_official_writer_and_shadow_sink_fail_closed(case, monkeypatch):
     from app.services.unified.adapter import formal_sink
     from app.services.unified.runner import run_unified_sync
-    from app.services.event_review_pipeline import _persist_event_result
+    import importlib
     db, row, conn = case
     state = empty_state(row.run_id, row.task_type, row.target_ref, "linux_host", "shadow")
     monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
-    with pytest.raises(ValueError, match="system_b_formal_writer_disabled"): _persist_event_result(db, "bad", {})
+    with pytest.raises(ModuleNotFoundError): importlib.import_module("app.services.event_review_pipeline")
     with pytest.raises(ValueError, match="formal_source_required"): formal_sink(db, row, state)
     with pytest.raises(ValueError, match="shadow_sink_forbidden"): run_unified_sync(db, row, sink=formal_sink)
 
@@ -153,7 +188,7 @@ def test_candidate_uses_current_version_and_keeps_history(case):
 
 
 def test_linux_tools_keep_inventory_completeness_and_cve_scope(case):
-    from app.services.agents import tools
+    from app.services import agent_tools as tools
     db, row, conn = case
     risk = db.get(models.RiskAssessment, row.risk_id)
     db.add(models.VulnerabilityMatch(asset_id=conn.asset_id, cve_id=risk.cve_id + ":noble:curl", package_name="curl"))

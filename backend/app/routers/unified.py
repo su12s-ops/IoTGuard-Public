@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import threading
+import os
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
@@ -105,7 +106,8 @@ def resume_investigation(request_id: str, db: Session = Depends(get_db)):
                 current.result_json = json.dumps({"error": type(exc).__name__})
                 session.commit()
     threading.Thread(target=worker, daemon=True).start()
-    return {"id": item.id, "status": "resume_requested", "mode": "shadow"}
+    parent = db.query(models.UnifiedAnalysisRun).filter_by(run_id=item.source_run_id).one()
+    return {"id": item.id, "status": "resume_requested", "mode": parent.mode}
 
 
 class UnifiedAnalyzeInput(BaseModel):
@@ -133,8 +135,14 @@ def unified_specs():
         "topology": STAGE_TOPOLOGY,
         "task_types": list(TASK_TYPES),
         "formal_entry": "/api/analysis",
-        "formal_writer": "unified" if config.UNIFIED_PIPELINE_MODE == "on" else "system_b",
-        "note": "统一四角色复用 LangGraph；off/shadow 下正式业务仍由 System B 提供。",
+        "formal_writer": "unified" if config.UNIFIED_PIPELINE_MODE == "on" else "disabled",
+        "pid": os.getpid(),
+        "device_repair_enabled": os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1",
+        "ubuntu_lab_repair_enabled": os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") == "1",
+        "migration_contract": "m5-native-review-v2",
+        "formal_batch_default": 1,
+        "formal_batch_max": 4,
+        "note": "统一四角色复用 LangGraph；mode!=on 时正式业务 fail-closed，旧 LLM 已退役。",
     }
 
 
@@ -182,6 +190,7 @@ def _serialize_run(row: models.UnifiedAnalysisRun, include_state: bool = True) -
     state = json.loads(row.state_json or "{}")
     payload = {
         "run_id": row.run_id, "task_type": row.task_type,
+        "trace_id": row.trace_id,
         "target_type": row.target_type, "target_ref": row.target_ref,
         "mode": row.mode, "status": row.status,
         "pipeline_version": row.pipeline_version,
@@ -213,7 +222,7 @@ def list_runs(limit: int = 20, mode: str = "", risk_id: int = 0,
               target_ref: str = "", db: Session = Depends(get_db)):
     """运行列表（只读）。risk_id/target_ref 供风险详情与资产页关联展示。"""
     query = db.query(models.UnifiedAnalysisRun).order_by(models.UnifiedAnalysisRun.id.desc())
-    if mode in {"shadow", "formal"}:
+    if mode in {"shadow", "formal", "historical"}:
         query = query.filter(models.UnifiedAnalysisRun.mode == mode)
     if risk_id:
         query = query.filter(models.UnifiedAnalysisRun.risk_id == risk_id)

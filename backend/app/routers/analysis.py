@@ -3,33 +3,30 @@
 import json
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import config, models, schemas
 from app.database import get_db, recover_stale_running
 from app.services.device_access import require_control
-from app.services.agent_group_chat import (
-    PIPELINE_VERSION,
-    generate_and_save_report,
-    latest_analysis,
-    preflight_check,
-    review_status,
-    _explain_candidate_selection,
-    apply_human_review,
-)
+from app.services.review_common import apply_human_review, explain_candidate_selection as _explain_candidate_selection
+from app.services.review_common import preflight_check as _preflight_check
+from app.services.review_common.read_model import latest_analysis, review_status
+from app.services.unified.adapter import UNIFIED_ADAPTER_VERSION as PIPELINE_VERSION
 
 
-def _review_entrypoint(db: Session, run_id: str, background: bool = True) -> dict:
-    """正式研判入口（Stage 9B 切换点）。
+def preflight_check(db):
+    return _preflight_check(db, PIPELINE_VERSION)
 
-    LINUXGUARD_UNIFIED_PIPELINE=on → 统一四智能体编排器（兼容响应契约）；
-    off/shadow → System B 原链路（零行为变化）。
-    """
-    if getattr(config, "UNIFIED_PIPELINE_MODE", "off") == "on":
-        from app.services.unified.adapter import generate_and_save_report_unified
-        return generate_and_save_report_unified(db, run_id=run_id, background=background)
-    return generate_and_save_report(db, run_id=run_id, background=background)
+
+def _review_entrypoint(db: Session, run_id: str, background: bool = True, **kwargs) -> dict:
+    if config.UNIFIED_PIPELINE_MODE != "on":
+        raise HTTPException(503, "formal_unified_mode_required; legacy LLM retired")
+    from app.services.unified.adapter import generate_and_save_report_unified
+    try:
+        return generate_and_save_report_unified(db, run_id=run_id, background=background, **kwargs)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
 
 
 router = APIRouter(prefix="/analysis", tags=["Multi-Agent Review"])
@@ -137,15 +134,19 @@ def preflight(db: Session = Depends(get_db)):
 # 任务式接口（推荐）
 # ═══════════════════════════════════════════════════════════════════════════
 
-@router.post("/runs")
-def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
+@router.post("/runs", dependencies=[Depends(require_control)])
+def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1,
+               investigation_goal: str = Query(default="", max_length=2000), db: Session = Depends(get_db)):
     """启动一次四智能体联合研判任务（后台执行）。
 
     返回 run_id 和当前状态，前端应轮询 GET /runs/{run_id} 获取进度。
     若候选为 0，快速返回 no_candidates 状态（不调用模型）。
     """
-    # 先恢复超时的 running 状态
-    recovered = recover_stale_running(max_minutes=30)
+    if config.UNIFIED_PIPELINE_MODE != "on":
+        raise HTTPException(503, "formal_unified_mode_required; legacy LLM retired")
+    # Recovery is an explicit maintenance operation. A long live model call is
+    # not a crashed worker and must not be reset by another HTTP request.
+    recovered = 0
 
     retry_reset_count = 0
     if retry_failed:
@@ -189,7 +190,8 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
     # 启动后台研判
     import uuid as _uuid
     run_id = _uuid.uuid4().hex[:12]
-    result = _review_entrypoint(db, run_id, background=True)
+    result = _review_entrypoint(db, run_id, background=True, risk_id=risk_id, batch_size=batch_size,
+                               investigation_goal=investigation_goal)
 
     return {
         "run_id": result.get("run_id", run_id),
@@ -200,7 +202,7 @@ def create_run(retry_failed: bool = False, db: Session = Depends(get_db)):
         "total_risks_in_db": result.get("total_risks_in_db", 0),
         "skipped_objects": result.get("skipped_objects", []),
         "selected_object_ids": result.get("selected_object_ids", []),
-        # 回显实际执行的管线版本（统一编排器或 System B 原链路）
+        # 回显唯一统一编排器版本
         "pipeline_version": result.get("pipeline_version", PIPELINE_VERSION),
         "current_stage": result.get("current_stage", "candidate_preflight"),
         "model_called": True,
@@ -269,7 +271,7 @@ def list_runs(limit: int = 10, db: Session = Depends(get_db)):
 def human_review(risk_id: int, payload: schemas.HumanReviewRequest, db: Session = Depends(get_db)):
     """Apply the final human decision for one risk event only."""
     try:
-        risk = apply_human_review(db, risk_id, payload.decision, payload.reason)
+        risk = apply_human_review(db, risk_id, payload.decision, payload.reason, payload.actor, payload.expected_status)
     except ValueError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
@@ -286,12 +288,12 @@ def human_review(risk_id: int, payload: schemas.HumanReviewRequest, db: Session 
 # 同步接口（向后兼容）
 # ═══════════════════════════════════════════════════════════════════════════
 
-@router.post("/run")
+@router.post("/run", dependencies=[Depends(require_control)])
 def run_analysis(db: Session = Depends(get_db)):
     """【向后兼容】启动一次四智能体联合研判（同步等待完成）。
 
     与 POST /runs 调用同一个核心入口（Stage 9B 起经 _review_entrypoint
-    按开关选择统一编排器或 System B 原链路）。
+    在 on 模式调用唯一统一编排器）。
     新代码请使用 POST /runs + GET /runs/{run_id} 任务式接口。
     """
     try:
@@ -388,3 +390,44 @@ def _reset_latest_failed_objects(db: Session) -> int:
     if reset_count:
         db.commit()
     return reset_count
+
+
+@router.get("/risks/{risk_id}/governance")
+def risk_governance(risk_id: int, db: Session = Depends(get_db)):
+    from app.services.review_common.governance import explanation
+    risk = db.get(models.RiskAssessment, risk_id)
+    if not risk:
+        raise HTTPException(404, "risk_not_found")
+    return explanation(db, risk)
+
+
+@router.post("/risks/{risk_id}/historical-adjudication", dependencies=[Depends(require_control)])
+def historical_adjudication(risk_id: int, payload: schemas.HistoricalAdjudicationRequest, db: Session = Depends(get_db)):
+    from app.services.review_common.human_review import adjudicate_history
+    try:
+        risk = adjudicate_history(db, risk_id, **payload.model_dump())
+        return {"risk_id": risk.id, "active": risk.active, "review_status": risk.review_status,
+                "decision_recorded": payload.decision, "repair_authorization": False}
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/risks/{risk_id}/historical-analysis", dependencies=[Depends(require_control)])
+def historical_analysis(risk_id: int, db: Session = Depends(get_db)):
+    from app.services.review_common.governance import correction, historical_draft_sink
+    from app.services.unified import runner
+    if config.UNIFIED_PIPELINE_MODE != "on":
+        raise HTTPException(503, "formal_unified_mode_required")
+    risk = db.get(models.RiskAssessment, risk_id)
+    if not risk or risk.active or not correction(db, risk):
+        raise HTTPException(409, "inactive_corrected_risk_required")
+    if db.query(models.UnifiedAnalysisRun).filter_by(risk_id=risk_id, status="running").first():
+        raise HTTPException(409, "historical_analysis_already_running")
+    asset = db.get(models.LinuxAsset, risk.asset_id)
+    run = runner.start_unified_run(task_type="risk_review", target_type="linux_host",
+        target_ref=asset.hostname, risk_id=risk_id, mode="historical", sink=historical_draft_sink,
+        force_full_review=True, investigation_goal=(
+            "原生历史风险纠正：历史 Critical 为待纠正基线，不是当前官方风险。精确官方 not_affected 独立解释；"
+            "综合 USN 其他 CVE 的更新版本不是本 CVE 专属修复版本。保留旧记录，只填写归档建议稿，"
+            "不得重新激活、代替操作员确认或授予修复资格。分开解释静态/运行时/官方覆盖/模型方差。"))
+    return {"run_id": run.run_id, "trace_id": run.trace_id, "mode": "historical", "operator_confirmed": False}

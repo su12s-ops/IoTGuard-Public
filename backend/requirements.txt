@@ -6,11 +6,8 @@ paramiko>=3.4
 python-multipart>=0.0.20
 pytest>=8.3
 docker>=7.0
-pyautogen>=0.7
-autogen-ext[openai,anthropic]>=0.7
 openai>=1.0
-# autogen-ext 的 Anthropic 客户端面向经典 0.x Messages API（temperature 等参数）；
-# 1.x 移除了这些参数会同时破坏两套客户端，锁定 <1.0。
+# Unified agent_infra Messages client uses the pinned Anthropic 0.x API.
 anthropic>=0.48,<1.0
 tiktoken>=0.8
 python-dotenv>=1.0

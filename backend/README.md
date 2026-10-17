@@ -11,17 +11,22 @@ python scripts\sync_real_intel.py --keyword linux --days 30 --limit 100
 python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## DeepSeek Agents
+## Unified four-agent production
 
 Set the key in the backend process environment. Do not put it in frontend files.
 
 ```powershell
 $env:DEEPSEEK_API_KEY = "your-key"
 $env:DEEPSEEK_MODEL = "deepseek-v4-flash"
+$env:LINUXGUARD_UNIFIED_PIPELINE = "on"
+$env:LINUXGUARD_ENABLE_DEVICE_REPAIR = "0"
+$env:LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR = "0"
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-The experts request bounded evidence tools through the persistent device-task Harness. Device writes use administrator-registered artifacts and fixed adapters after exact-plan approval; model-generated shell is never executed. Version matching and verification remain deterministic.
+The sole LangGraph pipeline uses asset_investigator → vulnerability_analyst ∥ runtime_analyst → decision_planner. POST /api/analysis/runs requires the control token, processes one object by default (maximum four), and never falls back to a retired LLM pipeline. off/shadow disable formal analysis.
+
+Investigation requests require separate authorization for the existing fixed read-only collector. Fresh INV evidence can resume the same formal pipeline. Historical inactive objects use /api/analysis/risks/{id}/historical-analysis for drafts and /historical-adjudication for an authorized operator decision; drafts never reactivate a risk. See IOTGUARD_M5_MIGRATION_CONTRACT_V2.md at the repository root. Device writes remain independently gated by exact-plan approval and both write switches.
 
 ## Key Endpoints
 

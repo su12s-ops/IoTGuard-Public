@@ -302,11 +302,11 @@ def node_prepare(ctx: RunContext):
             routing = routing_mod.decide_routing(
                 db, state.task_type, state.target_ref, state.target_type,
                 risk=risk, capability_marks=marks, candidates=candidates)
-            if ctx.force_full_review and state.mode == "shadow":
+            if ctx.force_full_review:
                 routing.tier = "standard"
                 routing.include_asset = routing.include_vulnerability = routing.include_runtime = routing.include_decision = True
                 routing.skipped_agents = []
-                routing.reason = "隔离真实业务验收：显式完整四角色；不改变正式风险或全局分层"
+                routing.reason = "显式完整四角色研判；程序聚合与人审门禁独立执行"
             baseline = _baseline_snapshot(db, state, risk, candidates)
             ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
                      payload={"stage": "prepare", "routing": routing.model_dump(),
@@ -593,12 +593,20 @@ def _runtime_evidence_validator(ctx: RunContext):
     return validate
 
 
-def _vulnerability_evidence_validator(ctx: RunContext):
+def _vulnerability_evidence_validator(ctx: RunContext, state=None):
     def validate(output: dict[str, Any]) -> list[str]:
         known = set(ctx.packet_evidence_ids)
-        if not known:
-            return []
         errors: list[str] = []
+        candidates = ((state.evidence_prep or {}).get("candidates") or []) if state else []
+        for candidate in candidates:
+            if (candidate.get("vendor_patch") or {}).get("release_status") != "not_affected":
+                continue
+            for finding in output.get("findings") or []:
+                if finding.get("cve_id", "").split(":")[0] == candidate.get("cve_id", "").split(":")[0]:
+                    if finding.get("fixed_version") or finding.get("version_impact") == "fixed":
+                        errors.append("精确官方 not_affected：无本 CVE 专属修复版本；不得将综合 USN 版本解释为该 CVE 已修复")
+        if not known:
+            return errors
         cited: set[str] = set()
         for finding in output.get("findings") or []:
             if isinstance(finding, dict):
@@ -656,13 +664,14 @@ def node_analyze_vulnerability(ctx: RunContext):
             "- advisory_specificity：本结论依据的是厂商精确公告（release 作用域）还是"
             " NVD 通用候选匹配——两者矛盾时厂商精确公告优先，但必须在 "
             "intelligence_conflicts 如实记录。\n"
-            "适用性结论只有四种：已修复（fixed）/不受影响（not_affected）/可能受影响"
-            "（potentially_affected）/证据不足（insufficient_evidence）——不存在第五种"
-            "「保守起见当受影响」；证据不足就写 insufficient_evidence。"
+            "applicability 只能为 confirmed_affected / potentially_affected / not_affected / insufficient_evidence。"
+            "fixed 仅属于 version_impact，不能当作 applicability 枚举。官方精确发行版、源包、版本和授权清单"
+            "足够时可确认静态受影响；触发条件与实际利用另外表达，缺少利用痕迹不否定静态适用性。"
+            "branch_check 未定或冲突必须保留，不能通过提高置信度消除分歧。"
             + _vulnerability_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, VULNERABILITY_ANALYST_SPEC, context_text,
-                                           validate_fn=_vulnerability_evidence_validator(ctx))
+                                           validate_fn=_vulnerability_evidence_validator(ctx, state))
         update: dict[str, Any] = {"stage_status": state.record_stage(
             "analyze_vulnerability", "failed" if degraded else "succeeded")}
         if output is not None:
@@ -951,9 +960,6 @@ def node_decide(ctx: RunContext):
                                            validate_fn=combined_validator)
         update: dict[str, Any] = {"stage_status": state.record_stage("decide", "succeeded")}
         if output is not None:
-            if state.follow_ups_used and state.decision:
-                from app.services.unified.investigation import clamp_confidence
-                clamp_confidence(state.decision, output)
             update["decision"] = output
         else:
             # 程序兜底（继承 System B fail-safe）：保留角色降级信息，不虚构裁定。
@@ -1237,8 +1243,6 @@ def node_execute_follow_ups(ctx: RunContext):
                                                       validate_fn=validator)
             entry: dict[str, Any] = {"agent": spec.name, "question": request.get("question", "")}
             if output is not None:
-                from app.services.unified.investigation import clamp_confidence
-                clamp_confidence(previous, output)
                 entry["output"] = output
             else:
                 entry["error"] = degraded_reason
@@ -1257,7 +1261,7 @@ def node_finalize(ctx: RunContext):
         # requests collection. Persisted rows are idempotent and never dispatch.
         db = ctx.session()
         try:
-            from app.services.unified.investigation import propose, clamp_confidence
+            from app.services.unified.investigation import propose
             for request in (state.decision or {}).get("follow_up_requests") or []:
                 if request.get("collection_capability") == "inventory":
                     try:
@@ -1268,17 +1272,23 @@ def node_finalize(ctx: RunContext):
             if link:
                 from app.services.unified.investigation import evidence_view, substantive_change
                 if not substantive_change(json.loads(link.before_json), evidence_view(db, link.asset_id)):
-                    parent = db.query(models.UnifiedAnalysisRun).filter_by(run_id=link.source_run_id).one()
-                    old = json.loads(parent.state_json)
-                    for key in ("investigation", "vulnerability", "runtime", "decision"):
-                        report = getattr(state, key)
-                        clamp_confidence(old.get(key), report)
+                    # Same facts: retain raw outputs and require review of variance.
+                    state.final["model_variance_only"] = True
         finally:
             db.close()
         snapshot = state.model_dump()
         final: dict[str, Any] = {"pipeline_version": PIPELINE_VERSION}
         if state.task_type == TASK_RISK_REVIEW:
             policy = audit_policy.apply_unified_audit_policy(snapshot)
+            if state.mode == "historical":
+                policy.status = "pending_human_review"
+                policy.final_score = policy.final_level = None
+                policy.reasons.append("historical_draft_requires_operator_adjudication")
+            if state.final.get("model_variance_only"):
+                policy.status = "pending_human_review"
+                policy.final_score = policy.final_level = None
+                policy.reasons.append("same_facts_model_variance_not_new_evidence")
+                final["model_variance_only"] = True
             final["policy"] = policy.model_dump()
         else:
             final["aggregate"] = aggregator.aggregate_device_risk(
@@ -1287,6 +1297,10 @@ def node_finalize(ctx: RunContext):
         if plan:
             from app.services.unified.plan_guard import annotate_plan
             plan = annotate_plan(snapshot, dict(plan), sorted(_decision_known_ids(state)))
+            if (plan.get("technical_gate") or {}).get("status") == "blocked" and final.get("policy"):
+                final["policy"]["status"] = "pending_human_review"
+                final["policy"]["final_score"] = final["policy"]["final_level"] = None
+                final["policy"]["reasons"].append("candidate_plan_technical_gate_blocked")
             plan["requires_approval"] = True   # 程序强制：LLM 计划永远待审批
             final["plan"] = plan
             final["plan_execution_mode"] = "pending_approval"

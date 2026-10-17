@@ -358,7 +358,11 @@ class VerdictItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
     object_id: str
     impact_status: ImpactStatus = "insufficient_evidence"
-    risk_direction: RiskDirection = "maintain"
+    risk_direction: RiskDirection = Field(default="maintain", description="风险相对于输入 baseline 的变化；upgrade=风险上升，downgrade=风险下降，与软件包升级无关")
+    risk_baseline_ref: str = Field(default="input.baseline", description="风险变化比较的明确基线")
+    risk_change_basis: str = Field(default="", description="新事实及其相对于基线的影响；同事实重跑差异是模型方差")
+    package_change: Literal["none", "upgrade", "downgrade", "replace", "undetermined"] = "undetermined"
+    confidence_explanation: dict[str, str] = Field(default_factory=dict, description="分别解释 static_applicability/runtime_quality/official_coverage/model_variance")
     recommended_action: RecommendedAction = "monitor"
     recommended_priority: Literal["critical", "high", "medium", "low"] = "medium"
     confidence: float = Field(ge=0, le=1, default=0.5)

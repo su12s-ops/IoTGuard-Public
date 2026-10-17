@@ -14,8 +14,8 @@ IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检�
 ┌──────────────┐    SSH(paramiko) │   ├─ discovery_pipeline  发现闭环│
 │ collector/   │ ◀─────────────── │   ├─ device_inventory    设备指纹│
 │ eBPF/资产采集 │   固定脚本+SHA审计 │   ├─ matching_engine      CVE匹配│
-└──────────────┘                  │   ├─ agents/ + event_review     │
-                                  │   │    四智能体（两套管线）       │
+└──────────────┘                  │   ├─ unified/ + review_common     │
+                                  │   │    LangGraph 统一四角色       │
 ┌──────────────┐                  │   ├─ agent_harness       修复Harness│
 │ simulator/   │ ◀── 真实协议探测 ── │   └─ ebpf_event_collector 证据层│
 │ SmartCam-X1  │                  └───────────────┬───────────────┘
@@ -29,7 +29,7 @@ IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检�
 
 | 目录 | 内容 |
 |---|---|
-| `backend/` | FastAPI 后端：`app/routers`（API）、`app/services`（业务服务，含智能体/Harness/发现闭环）、`app/models.py`（30+ 表模型）、`tests/`（341 项 pytest）、`scripts/`（初始化/联调/同步脚本） |
+| `backend/` | FastAPI 后端：`app/routers`（API）、`app/services`（业务服务，含智能体/Harness/发现闭环）、`app/models.py`（30+ 表模型）、`tests/`（隔离 pytest 回归）、`scripts/`（初始化/联调/同步脚本） |
 | `frontend/` | Vue 3 + Element Plus + ECharts 前端：16 个业务视图（资产/设备/扫描/智能体/风险/修复/报告），Playwright e2e |
 | `collector/` | 设备侧采集脚本：bpftrace eBPF 探针（execve/tcp_connect/openat）、OpenWrt/Linux 只读资产采集器、Falco 规则 |
 | `simulator/` | SmartCam-X1 摄像头模拟器：真实监听 SSH/MQTT/HTTP/RTSP 四协议，用于发现闭环联调 |
@@ -87,7 +87,7 @@ cd frontend && npm run test:e2e
 - **资产发现闭环**：授权网段 TCP 扫描 → `DeviceObservation`（含处理状态机）→ 协议级指纹（SSH/HTTP(S)/RTSP/MQTT 真实报文 + 身份置信度）→ `IotDevice/Service/Component` 建档 → 设备级 CVE 匹配；DHCP 被动观察按 MAC 优先关联
 - **多源 CVE 情报**：NVD / CISA KEV / EPSS / Canonical / 麒麟五源，源隔离缓存 + TTL + 内容指纹
 - **双路线匹配引擎**：主机线（发行版适用性压制通用数据）与设备线（厂商公告精确版本优先，NVD 通用仅候选）；OpenWrt 精确版本匹配
-- **四智能体（两套）**：主机逐风险专家研判管线（evidence/impact/runtime/coordinator）；设备编排管线 DEVICE→VULNERABILITY→RUNTIME→RISK→REMEDIATION→VERIFY（RISK/VERIFY 纯程序步骤）
+- **唯一统一四智能体**：asset_investigator → vulnerability_analyst ∥ runtime_analyst → decision_planner；正式入口 `/api/analysis`，off/shadow 拒绝正式请求，没有旧 LLM fallback。风险对象级人审、只读授权补证、新 INV 再研判与 inactive 历史归档裁定见 [M5 迁移契约](IOTGUARD_M5_MIGRATION_CONTRACT_V2.md)
 - **Agent Harness**：计划哈希审批、资产锁、工具调用预算、产物 SHA256 注册表、独立回滚、租约恢复；每次工具调用与 LLM 调用均有审计记录
 - **eBPF 运行时取证**：bpftrace 探针（进程/网络/文件）→ 统一 SecurityEvidence 证据层 → 智能体消费；LSM 策略默认只观察
 - **修复工作流**：确定性授权（高危自动结论永不放行）、MQTT 匿名接入真实修复状态机（备份→修复→重探→回滚）；设备侧修复默认关闭

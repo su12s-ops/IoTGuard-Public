@@ -11,13 +11,16 @@ def snapshot(db):
             for row in db.query(models.RiskAssessment).order_by(models.RiskAssessment.id)]
     # JSON normalized types make a saved and reopened manifest equivalent.
     rows = json.loads(json.dumps(rows, default=str))
-    return {"version": "formal-migration-v1", "mode": config.UNIFIED_PIPELINE_MODE,
-        "formal_entry": "/api/analysis", "current_writer": "unified" if config.UNIFIED_PIPELINE_MODE == "on" else "system_b",
+    return {"version": "formal-migration-v1", "migration_contract": "m5-native-review-v2",
+        "original_contract_preserved": "IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md#77",
+        "global_q1_q8_signoff_block": False, "object_review_holds_preserved": True,
+        "mode": config.UNIFIED_PIPELINE_MODE,
+        "formal_entry": "/api/analysis", "current_writer": "unified" if config.UNIFIED_PIPELINE_MODE == "on" else "disabled",
         "risk_rows": rows, "snapshot_hash": fingerprint(rows),
         "shadow_promotion_allowed": False,
         "prerequisites": ["独立正式迁移审批", "完成 Mimosa 安全验收", "停止接收新正式任务并排空旧 worker",
             "保存一致性数据库备份及本清单", "确认只启动一种模式的正式 worker"],
-        "rollback": "停止统一正式任务并排空 worker；审核本快照的逐字段差异，人工授权恢复正式字段；保留所有新旧审计及 Trace，再以 off 重启 System B。仅改 flag 不会还原已写结论。"}
+        "rollback": "停止统一正式任务并排空 worker；审核本快照的逐字段差异，人工授权恢复正式字段；保留所有新旧审计及 Trace，按已验证的版本与一致性数据库恢复程序恢复部署（含审计增量归档）。仅改 flag 不会还原已写结论。"}
 
 
 def rollback_plan(db, manifest):

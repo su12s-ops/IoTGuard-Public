@@ -347,7 +347,7 @@ def test_batch_endpoint_contract(client, control_headers):
 def test_runtime_agent_tools_unaffected(session_factory):
     db = session_factory()
     try:
-        from app.services.agents import tools as T
+        from app.services import agent_tools as T
         _upload(db, [_event(hostname="host-a", pid=1), _event(hostname="host-a", pid=2)])
         rows = T.tool_query_process_evidence(db, device_id="host-a")
         assert rows["count"] == 2 and all(r["evidence_id"].startswith("SE-") for r in rows["events"])

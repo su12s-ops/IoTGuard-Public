@@ -3,7 +3,8 @@ from sqlalchemy.orm import Session
 
 from app import models, schemas
 from app.database import get_db
-from app.services.remediation_engine import generate_remediation_tasks
+from app.services.remediation_engine import generate_remediation_tasks, _authorized
+from app.services.device_access import require_control
 
 router = APIRouter(prefix="/remediation", tags=["Remediation"])
 
@@ -51,11 +52,15 @@ def tasks(db: Session = Depends(get_db)):
     return rows
 
 
-@router.patch("/tasks/{task_id}")
+@router.patch("/tasks/{task_id}", dependencies=[Depends(require_control)])
 def update_task(task_id: int, payload: schemas.TaskStatusUpdate, db: Session = Depends(get_db)):
     task = db.get(models.RemediationTask, task_id)
     if not task:
         raise HTTPException(status_code=404, detail="Task not found")
+    from app.services.review_common.governance import execution_allowed
+    risk = db.get(models.RiskAssessment, task.risk_id) if task.risk_id else None
+    if task.status == "invalidated" or not execution_allowed(db, risk) or not _authorized(risk):
+        raise HTTPException(409, "risk_or_remediation_authorization_invalid")
     asset = db.get(models.LinuxAsset, task.asset_id)
     if asset and asset.distribution == "openwrt":
         raise HTTPException(409, "OpenWrt 修复状态由设备任务的执行、版本、漏洞回归和业务复查更新，不能手动修改。")

@@ -130,27 +130,25 @@ def test_dashboard_summary_reflects_seeded_data(client, session_factory):
     assert data["top_vulnerabilities"][0]["cve_id"] == "CVE-2099-0001"
 
 
-def test_update_remediation_task_status(client, session_factory):
+def test_update_remediation_task_status(client, session_factory, control_headers):
     seed_sample_data(session_factory)
 
-    response = client.patch("/api/remediation/tasks/1", json={"status": "verified"})
+    response = client.patch("/api/remediation/tasks/1", json={"status": "verified"}, headers=control_headers)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "verified"
+    assert response.status_code == 409  # unbound task cannot bypass risk authorization
 
 
-def test_update_remediation_task_to_blocked(client, session_factory):
+def test_update_remediation_task_to_blocked(client, session_factory, control_headers):
     seed_sample_data(session_factory)
 
-    response = client.patch("/api/remediation/tasks/1", json={"status": "blocked"})
+    response = client.patch("/api/remediation/tasks/1", json={"status": "blocked"}, headers=control_headers)
 
-    assert response.status_code == 200
-    assert response.json()["status"] == "blocked"
+    assert response.status_code == 409  # unbound task cannot change the risk state
 
 
-def test_reject_invalid_remediation_status(client, session_factory):
+def test_reject_invalid_remediation_status(client, session_factory, control_headers):
     seed_sample_data(session_factory)
 
-    response = client.patch("/api/remediation/tasks/1", json={"status": "done"})
+    response = client.patch("/api/remediation/tasks/1", json={"status": "done"}, headers=control_headers)
 
     assert response.status_code == 422

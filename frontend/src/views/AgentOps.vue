@@ -11,88 +11,19 @@
     <el-alert v-if="error" :title="error" type="error" show-icon :closable="false" role="alert" />
     <DeviceControlToken />
     <el-tabs v-model="tab">
-      <el-tab-pane label="四智能体分析" name="agents">
-        <section class="operation-section">
-          <div class="section-head">
-            <div>
-              <h2>发起编排分析</h2>
-              <p class="operation-help">四个智能体各用专属工具读取真实数据（设备画像 / CVE·KEV·EPSS / eBPF 证据 / 白名单修复方案）；RISK 与 VERIFY 由程序确定性完成。</p>
-            </div>
-          </div>
-          <el-form label-position="top" class="upgrade-form-grid" @submit.prevent="startAnalysis">
-            <el-form-item label="目标（二选一）">
-              <el-select v-model="analysisForm.target" filterable allow-create placeholder="选择设备或输入主机名" style="width: 100%">
-                <el-option v-for="d in devices" :key="d.device_id" :value="d.device_id" :label="`${d.device_name}（${d.device_id}）`" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="目标类型">
-              <el-radio-group v-model="analysisForm.targetType">
-                <el-radio value="device">智能设备</el-radio>
-                <el-radio value="host">Linux 主机</el-radio>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="执行">
-              <el-button type="primary" native-type="submit" :disabled="!canOperate || !analysisForm.target" :loading="starting">开始分析</el-button>
-            </el-form-item>
-          </el-form>
-        </section>
-
-        <section class="operation-section" v-if="agentRun">
-          <div class="section-head">
-            <div><h2>运行 {{ agentRun.run_id }}</h2><p>目标 {{ agentRun.target_ref }} · 状态 <el-tag size="small" :type="statusTag(agentRun.status)">{{ agentRun.status }}</el-tag></p></div>
-            <el-button size="small" :loading="polling" @click="refreshAgentRun">轮询刷新</el-button>
-          </div>
-          <el-steps :active="stageActive" finish-status="success" align-center style="margin: 8px 0 14px">
-            <el-step v-for="stage in stageOrder" :key="stage" :title="stage" :status="stepStatus(agentRun.stages[stage])" />
-          </el-steps>
-          <el-row :gutter="12">
-            <el-col :span="12"><el-descriptions title="风险结论（程序聚合）" :column="1" border size="small">
-              <el-descriptions-item label="优先级">{{ agentRun.risk.priority || '—' }}（{{ agentRun.risk.risk_score ?? '—' }} 分）</el-descriptions-item>
-              <el-descriptions-item label="运行时等级">{{ agentRun.risk.runtime_level || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="依据">{{ agentRun.risk.rationale || '—' }}</el-descriptions-item>
-            </el-descriptions></el-col>
-            <el-col :span="12"><el-descriptions title="修复方案（白名单动作）" :column="1" border size="small">
-              <el-descriptions-item v-for="(action, i) in agentRun.remediation.actions || []" :key="i" :label="action.action">
-                {{ action.target }} — {{ action.rationale }}
-              </el-descriptions-item>
-              <el-descriptions-item v-if="!(agentRun.remediation.actions || []).length" label="动作">无</el-descriptions-item>
-            </el-descriptions></el-col>
-          </el-row>
-          <h3 class="drawer-section-title">智能体执行明细（各自专属工具）</h3>
-          <DataTable :rows="agentRows">
-            <el-table-column prop="name" label="智能体" min-width="220" />
-            <el-table-column label="状态" width="100"><template #default="{ row }">{{ row.status }}</template></el-table-column>
-            <el-table-column label="工具调用" min-width="260"><template #default="{ row }">{{ (row.tool_calls || []).map(c => c.name).join('、') || '—' }}</template></el-table-column>
-            <el-table-column prop="latency_ms" label="耗时(ms)" width="100" />
-            <el-table-column label="错误" min-width="180"><template #default="{ row }">{{ row.error || '—' }}</template></el-table-column>
-          </DataTable>
-        </section>
-
-        <section class="operation-section">
-          <div class="section-head"><div><h2>历史运行</h2></div></div>
-          <DataTable :rows="agentHistory">
-            <el-table-column prop="run_id" label="运行" min-width="200" />
-            <el-table-column prop="target_ref" label="目标" min-width="150" />
-            <el-table-column label="状态" width="110"><template #default="{ row }"><el-tag size="small" :type="statusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
-            <el-table-column prop="created_at" label="创建时间" min-width="180"><template #default="{ row }">{{ formatTime(row.created_at) }}</template></el-table-column>
-            <el-table-column label="操作" width="110"><template #default="{ row }"><el-button size="small" @click="viewAgentRun(row.run_id)">查看</el-button></template></el-table-column>
-          </DataTable>
-        </section>
-      </el-tab-pane>
-
-      <el-tab-pane label="统一编排（影子）" name="unified">
+      <el-tab-pane label="统一四智能体" name="unified">
         <el-alert type="warning" :closable="false" show-icon style="margin-bottom: 12px"
-          title="影子研判：统一四智能体在隔离入口运行，单独保存影子结论与调查审计，不改变正式风险结论；补证须授权固定只读采集，影子计划不授予修复权限；正式入口仍由现有管线提供。" />
+          title="正式研判由唯一四智能体提供；建议、实际人工审核与修复审批独立记录。补证须授权固定只读采集。" />
         <section class="operation-section">
           <div class="section-head">
             <div>
-              <h2>影子运行列表</h2>
-              <p class="operation-help">业务链：资产 → 候选 CVE → 原始证据 → 四智能体输出 → 确定性门禁 → 影子结论 → 待审批计划；每条运行可追溯到原始证据 ID。</p>
+              <h2>统一四智能体运行记录</h2>
+              <p class="operation-help">业务链：资产 → 候选 CVE → 原始证据 → 四智能体输出 → 确定性门禁 → 正式结论或人工审核 → 待审批计划；每条运行可追溯到原始证据 ID。</p>
             </div>
             <el-select v-model="unifiedFilter.mode" size="small" style="width: 140px" @change="loadUnifiedRuns">
               <el-option value="" label="全部模式" />
               <el-option value="shadow" label="仅影子" />
-              <el-option value="formal" label="仅正式" />
+              <el-option value="formal" label="仅正式" /><el-option value="historical" label="历史建议稿" />
             </el-select>
           </div>
           <el-alert v-if="!unifiedLoading && unifiedRuns.length === 0" title="暂无统一编排运行" type="info" :closable="false" />
@@ -102,7 +33,7 @@
             <el-table-column prop="target_ref" label="目标" min-width="160" />
             <el-table-column label="模式" width="90">
               <template #default="{ row }">
-                <el-tag size="small" :type="row.mode === 'shadow' ? 'warning' : 'success'">{{ row.mode === 'shadow' ? '影子' : '正式' }}</el-tag>
+                <el-tag size="small" :type="row.mode === 'shadow' ? 'warning' : 'success'">{{ row.mode === 'shadow' ? '影子' : row.mode === 'historical' ? '历史建议稿' : '正式' }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="状态" width="100"><template #default="{ row }"><el-tag size="small" :type="statusTag(row.status)">{{ row.status }}</el-tag></template></el-table-column>
@@ -117,7 +48,7 @@
             <div class="section-head">
               <div>
                 <h2>运行 {{ unifiedRun.run_id }}
-                  <el-tag size="small" :type="unifiedRun.mode === 'shadow' ? 'warning' : 'success'" style="margin-left: 6px">{{ unifiedRun.mode === 'shadow' ? '影子研判' : '正式' }}</el-tag>
+                  <el-tag size="small" :type="unifiedRun.mode === 'shadow' ? 'warning' : 'success'" style="margin-left: 6px">{{ unifiedRun.mode === 'shadow' ? '影子研判' : unifiedRun.mode === 'historical' ? '历史建议稿' : '正式' }}</el-tag>
                 </h2>
                 <p class="operation-help">{{ unifiedRun.task_type }} · {{ unifiedRun.target_type }} {{ unifiedRun.target_ref }}
                   · 管线 {{ unifiedRun.pipeline_version }} · 状态 {{ unifiedRun.status }}{{ unifiedRun.error ? ' · ' + unifiedRun.error : '' }}</p>
@@ -142,8 +73,8 @@
                 </el-descriptions>
               </el-col>
               <el-col :span="12">
-                <el-descriptions title="影子结论（不写正式字段）" :column="1" border size="small">
-                  <el-descriptions-item label="影响判定">{{ unifiedVerdict.impact_status || '—' }}</el-descriptions-item>
+                <el-descriptions :title="unifiedRun.mode === 'formal' ? '正式研判与人审门禁' : unifiedRun.mode === 'historical' ? '历史归档建议稿（待操作员裁定）' : '历史影子结论'" :column="1" border size="small">
+                  <el-descriptions-item label="风险变化与基线">{{ unifiedVerdict.risk_direction }} / {{ unifiedVerdict.risk_baseline_ref }}：{{ unifiedVerdict.risk_change_basis }}</el-descriptions-item><el-descriptions-item label="软件包方向">{{ unifiedRun.plan?.package_change || unifiedVerdict.package_change || "undetermined" }}</el-descriptions-item><el-descriptions-item label="置信度分层解释">{{ JSON.stringify(unifiedVerdict.confidence_explanation || {}) }}</el-descriptions-item><el-descriptions-item label="影响判定">{{ unifiedVerdict.impact_status || '—' }}</el-descriptions-item>
                   <el-descriptions-item label="建议处置">{{ unifiedVerdict.recommended_action || '—' }}（优先级 {{ unifiedVerdict.recommended_priority || '—' }}，置信度 {{ unifiedVerdict.confidence ?? '—' }}）</el-descriptions-item>
                   <el-descriptions-item label="证据有效性">{{ unifiedVerdict.runtime_evidence_validity || '—' }} / 紧迫度依据 {{ unifiedVerdict.urgency_basis || '—' }}</el-descriptions-item>
                   <el-descriptions-item label="引用证据">{{ (unifiedVerdict.supporting_evidence_ids || []).join('、') || '—' }}</el-descriptions-item>
@@ -166,8 +97,8 @@
           </section>
 
           <section class="operation-section" v-if="unifiedRun.investigations?.length">
-            <h2>主动补证与再研判（影子）</h2>
-            <p>授权仅允许该资产的固定清单采集，不授予修复权限。清单不能解决运行时缺口；无实质更新时置信度不得提高。</p>
+            <h2>主动补证与再研判</h2>
+            <p>授权仅允许该资产的固定清单采集，不授予修复权限。清单不能解决运行时缺口；相同事实重跑的置信度差异保留为模型方差，不构成新的风险变化。</p>
             <el-form inline>
               <el-form-item label="已登记连接 ID"><el-input-number v-model="investigationForm.connection_id" :min="1" /></el-form-item>
               <el-form-item label="授权人"><el-input v-model="investigationForm.actor" /></el-form-item>
@@ -424,7 +355,7 @@ import DataTable from "../components/DataTable.vue";
 import DeviceControlToken from "../components/DeviceControlToken.vue";
 import {
   controlSession, errorMessage, fetchDevices,
-  startAgentAnalysis, fetchAgentRuns, fetchAgentRun,
+
   startMqttWorkflow, fetchWorkflowRuns, fetchWorkflowRun,
   fetchTraces, fetchTraceSummary, fetchTraceDetail, fetchTraceHarness, fetchTraceEvidence,
   fetchUnifiedRuns, fetchUnifiedRun, fetchUnifiedComparison, authorizeInvestigation, resumeInvestigation
@@ -434,18 +365,13 @@ import { useRouter, useRoute } from "vue-router";
 const router = useRouter();
 const route = useRoute();
 
-const tab = ref("agents");
+const tab = ref("unified");
 const loading = ref(false);
 const error = ref("");
 const devices = ref([]);
-const agentHistory = ref([]);
 const workflowHistory = ref([]);
-const agentRun = ref(null);
 const workflow = ref(null);
-const starting = ref(false);
 const startingWorkflow = ref(false);
-const polling = ref(false);
-let timer = null;
 const analysisForm = reactive({ target: "", targetType: "device" });
 const workflowForm = reactive({ host: "", port: 1883 });
 const canOperate = computed(() => Boolean(controlSession.token));
@@ -459,17 +385,11 @@ async function authorizeEvidence(item) {
 async function resumeEvidence(item) {
   try {
     await resumeInvestigation(item.id);
-    ElMessage.success("已请求影子再研判，请刷新查看进度");
+    ElMessage.success("已请求四智能体再研判，请刷新查看进度");
     await viewUnifiedRun(unifiedRun.value.run_id);
   } catch (e) { error.value = errorMessage(e); }
 }
-const stageOrder = ["DEVICE", "VULNERABILITY", "RUNTIME", "RISK", "REMEDIATION", "VERIFY"];
-const agentRows = computed(() => Object.entries(agentRun.value?.agents || {}).map(([name, log]) => ({ name, ...log })));
-const stageActive = computed(() => {
-  const stages = agentRun.value?.stages || {};
-  const done = stageOrder.filter(s => ["succeeded", "failed"].includes(stages[s]?.status)).length;
-  return agentRun.value?.status === "completed" || agentRun.value?.status === "failed" ? stageOrder.length : done;
-});
+
 
 const statusTag = value => ({ completed: "success", RESOLVED: "success", succeeded: "success", failed: "danger", FAILED: "danger", ROLLBACK: "warning", running: "primary", REMEDIATING: "primary", VERIFYING: "primary", DETECTED: "info" }[value] || "info");
 const stepStatus = entry => ({ succeeded: "success", failed: "error", running: "process", pending: "wait" }[entry?.status] || "wait");
@@ -478,40 +398,9 @@ const formatTime = value => value ? new Date(value).toLocaleString("zh-CN") : "�
 async function load() {
   loading.value = true; error.value = "";
   try {
-    [devices.value, agentHistory.value, workflowHistory.value] = await Promise.all([fetchDevices(), fetchAgentRuns(), fetchWorkflowRuns()]);
+    [devices.value, workflowHistory.value] = await Promise.all([fetchDevices(), fetchWorkflowRuns()]);
   } catch (e) { error.value = errorMessage(e); } finally { loading.value = false; }
 }
-
-async function startAnalysis() {
-  starting.value = true; error.value = "";
-  try {
-    const payload = analysisForm.targetType === "device"
-      ? { device_id: analysisForm.target } : { hostname: analysisForm.target };
-    const result = await startAgentAnalysis(payload);
-    ElMessage.success("编排已启动：" + result.run_id);
-    await viewAgentRun(result.run_id);
-    if (result.trace_id) { tab.value = "traces"; await viewTrace(result.trace_id); }
-  } catch (e) { error.value = errorMessage(e); } finally { starting.value = false; }
-}
-
-async function viewAgentRun(runId) {
-  agentRun.value = await fetchAgentRun(runId);
-  if (agentRun.value.status === "running") startPolling();
-}
-
-function startPolling() {
-  stopPolling();
-  timer = window.setInterval(async () => {
-    polling.value = true;
-    try {
-      agentRun.value = await fetchAgentRun(agentRun.value.run_id);
-      if (agentRun.value.status !== "running") { stopPolling(); await load(); await loadTraceOverview(); }
-    } catch { stopPolling(); }
-    polling.value = false;
-  }, 3000);
-}
-function stopPolling() { if (timer) { window.clearInterval(timer); timer = null; } }
-async function refreshAgentRun() { if (agentRun.value) agentRun.value = await fetchAgentRun(agentRun.value.run_id); }
 
 async function startWorkflow() {
   startingWorkflow.value = true; error.value = "";
@@ -534,7 +423,7 @@ const unifiedLoading = ref(false);
 const unifiedRuns = ref([]);
 const unifiedRun = ref(null);
 const unifiedComparison = ref(null);
-const unifiedFilter = reactive({ mode: "shadow" });
+const unifiedFilter = reactive({ mode: "formal" });
 const unifiedStageOrder = ["prepare", "prepare_evidence", "investigate_asset", "analyze_vulnerability",
   "analyze_runtime", "detect_conflicts", "directed_rereview", "decide", "execute_follow_ups", "finalize"];
 const unifiedStageActive = computed(() => {
@@ -659,7 +548,7 @@ onMounted(async () => {
     if (route.query.run_id) await viewUnifiedRun(String(route.query.run_id));
   }
 });
-onUnmounted(stopPolling);
+
 </script>
 
 <style scoped>

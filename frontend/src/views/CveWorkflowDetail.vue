@@ -1,11 +1,12 @@
 <template>
   <section class="page cve-detail-page" v-if="chain">
-    <header class="cve-header"><el-button :icon="ArrowLeft" @click="back">返回风险列表</el-button><div class="cve-identity"><span class="section-kicker">VULNERABILITY RECORD</span><h1>{{ chain.intelligence.cve_id }}</h1><p>{{ vulnerabilityDetail.title || chain.intelligence.title || "Linux 软件包漏洞研判记录" }}</p></div><span class="severity-block" :class="lvlClass(displayLevel)">{{ riskLevelText(displayLevel) }}</span></header>
-    <section class="cve-metrics"><div><span>风险分</span><strong>{{ displayScore }}</strong></div><div><span>CVSS</span><strong>{{ Number(vulnerabilityDetail.cvss_score || chain.intelligence.cvss_score || 0).toFixed(1) }}</strong></div><div><span>EPSS</span><strong>{{ epssDisplay }}</strong></div><div><span>KEV</span><strong>{{ vulnerabilityDetail.is_kev || chain.intelligence.is_kev ? "是" : "否" }}</strong></div><div><span>受影响资产</span><strong>1</strong></div><div><span>Ubuntu 状态</span><strong>{{ chain.matching.affected ? "受影响" : "未命中" }}</strong></div></section>
+    <header class="cve-header"><el-button :icon="ArrowLeft" @click="back">返回风险列表</el-button><div class="cve-identity"><span class="section-kicker">VULNERABILITY RECORD</span><h1>{{ chain.intelligence.cve_id }}</h1><p>{{ vulnerabilityDetail.title || chain.intelligence.title || "Linux 软件包漏洞研判记录" }}</p></div><span class="severity-block" :class="lvlClass(displayLevel)">{{ (archivedCorrected ? "历史基线 / " : "") + riskLevelText(displayLevel) }}</span></header>
+    <el-alert v-if="archivedCorrected" :title="`历史 inactive 对象：当前精确官方判断为不受影响。Critical 等级及分数仅为保留的历史错误基线；旧修复建议失效。归档状态：${historicalDecision || '等待授权操作员裁定'}。`" type="warning" :closable="false" />
+    <section class="cve-metrics"><div><span>{{ archivedCorrected ? "历史基线分" : "风险分" }}</span><strong>{{ displayScore }}</strong></div><div><span>CVSS</span><strong>{{ Number(vulnerabilityDetail.cvss_score || chain.intelligence.cvss_score || 0).toFixed(1) }}</strong></div><div><span>EPSS</span><strong>{{ epssDisplay }}</strong></div><div><span>KEV</span><strong>{{ vulnerabilityDetail.is_kev || chain.intelligence.is_kev ? "是" : "否" }}</strong></div><div><span>受影响资产</span><strong>1</strong></div><div><span>Ubuntu 状态</span><strong>{{ archivedCorrected ? "官方不受影响" : chain.matching.affected ? "受影响" : "未命中" }}</strong></div></section>
 
     <section class="detail-section"><header><span>01</span><div><h2>漏洞概况</h2><p>基础情报与漏洞适用性摘要</p></div></header><dl class="detail-dl"><div><dt>CVE</dt><dd class="mono">{{ chain.intelligence.cve_id }}</dd></div><div><dt>风险等级</dt><dd>{{ riskLevelText(displayLevel) }}</dd></div><div><dt>攻击场景</dt><dd>{{ chain.attack_scenario.name }}</dd></div><div><dt>情报来源</dt><dd>{{ chain.intelligence.source || "Canonical Ubuntu" }}</dd></div><div class="wide"><dt>漏洞描述</dt><dd>{{ vulnerabilityDetail.description || chain.intelligence.description || chain.risk.decision_reason }}</dd></div></dl></section>
 
-    <section class="detail-section"><header><span>02</span><div><h2>资产影响</h2><p>资产、软件包、版本和暴露状态</p></div></header><table class="data-table"><thead><tr><th>资产</th><th>IP / 系统</th><th>软件包</th><th>当前版本</th><th>修复版本</th><th>适用性</th><th>置信度</th></tr></thead><tbody><tr><td>{{ chain.asset.hostname }}</td><td class="mono">{{ chain.asset.ip_address }} / {{ chain.asset.os }}</td><td>{{ chain.package.name }}</td><td class="mono">{{ chain.package.installed_version }}</td><td class="mono">{{ chain.package.fixed_version || "待确认" }}</td><td><span class="status-label" :class="chain.matching.affected ? 'is-h' : 'is-l'">{{ chain.matching.affected ? "真实命中" : "未命中" }}</span></td><td>{{ pct(chain.matching.confidence) }}</td></tr></tbody></table><p class="section-note">{{ chain.matching.reason }}</p></section>
+    <section class="detail-section"><header><span>02</span><div><h2>资产影响</h2><p>资产、软件包、版本和暴露状态</p></div></header><table class="data-table"><thead><tr><th>资产</th><th>IP / 系统</th><th>软件包</th><th>当前版本</th><th>{{ archivedCorrected ? "历史候选版本（已失效）" : "修复版本" }}</th><th>适用性</th><th>置信度</th></tr></thead><tbody><tr><td>{{ chain.asset.hostname }}</td><td class="mono">{{ chain.asset.ip_address }} / {{ chain.asset.os }}</td><td>{{ chain.package.name }}</td><td class="mono">{{ chain.package.installed_version }}</td><td class="mono">{{ chain.package.fixed_version || "待确认" }}</td><td><span class="status-label" :class="chain.matching.affected ? 'is-h' : 'is-l'">{{ archivedCorrected ? "历史匹配已纠正" : chain.matching.affected ? "真实命中" : "未命中" }}</span></td><td>{{ pct(chain.matching.confidence) }}</td></tr></tbody></table><p class="section-note">{{ chain.matching.reason }}</p></section>
 
     <section class="detail-section"><header><span>03</span><div><h2>多源漏洞情报</h2><p>Canonical、NVD、CISA KEV 与 FIRST EPSS</p></div></header><table class="data-table"><thead><tr><th>来源</th><th>职责</th><th>状态</th><th>关键证据</th><th>更新时间</th></tr></thead><tbody><tr v-for="source in intelligenceRows" :key="source.name"><td><strong>{{ source.label }}</strong></td><td>{{ source.role }}</td><td><span class="status-label" :class="source.status === '可用' ? 'is-l' : 'is-h'">{{ source.status }}</span></td><td>{{ source.summary }}</td><td>{{ source.updated }}</td></tr><tr v-if="!intelligenceRows.length"><td colspan="5" class="empty-cell">暂无多源情报记录。</td></tr></tbody></table></section>
 
@@ -49,9 +50,26 @@
 </div>
 </section>
 
-    <section class="detail-section"><header><span>06</span><div><h2>风险研判</h2><p>专业分析、冲突复议与最终裁决</p></div></header><table class="data-table"><thead><tr><th>研判角色</th><th>核心结论</th><th>置信度 / 方向</th><th>证据引用</th></tr></thead><tbody><tr v-for="row in agentRows" :key="row.id"><td><strong>{{ row.label }}</strong><small class="cell-sub mono">{{ row.id }}</small></td><td>{{ row.reason }}</td><td>{{ row.meta }}</td><td class="mono">{{ row.evidence || "-" }}</td></tr><tr v-if="!agentRows.length"><td colspan="4" class="empty-cell">暂无专业分析记录。</td></tr></tbody></table><div class="final-decision"><div><span>当前风险</span><strong>{{ displayScore }} / {{ riskLevelText(displayLevel) }}</strong></div><div><span>风险裁决</span><strong>{{ riskRecord.review_verdict || decisionText(chain.risk.decision) }}</strong></div><div><span>处置建议</span><strong>{{ riskRecord.recommended_action || decisionText(chain.risk.decision) }}</strong></div><p>{{ riskRecord.review_reason || chain.risk.decision_reason }}</p></div></section>
+    <section class="detail-section"><header><span>06</span><div><h2>风险研判</h2><p>专业分析、冲突复议与最终裁决</p></div></header><table class="data-table"><thead><tr><th>研判角色</th><th>核心结论</th><th>置信度 / 方向</th><th>证据引用</th></tr></thead><tbody><tr v-for="row in agentRows" :key="row.id"><td><strong>{{ row.label }}</strong><small class="cell-sub mono">{{ row.id }}</small></td><td>{{ row.reason }}</td><td>{{ row.meta }}</td><td class="mono">{{ row.evidence || "-" }}</td></tr><tr v-if="!agentRows.length"><td colspan="4" class="empty-cell">暂无专业分析记录。</td></tr></tbody></table><div class="final-decision"><div><span>{{ archivedCorrected ? "历史风险基线" : "当前风险" }}</span><strong>{{ displayScore }} / {{ riskLevelText(displayLevel) }}</strong></div><div><span>风险裁决</span><strong>{{ riskRecord.review_verdict || decisionText(chain.risk.decision) }}</strong></div><div><span>处置建议</span><strong>{{ riskRecord.recommended_action || decisionText(chain.risk.decision) }}</strong></div><p>{{ riskRecord.review_reason || chain.risk.decision_reason }}</p></div></section>
 
-    <section class="detail-section"><header><span>07</span><div><h2>修复建议</h2><p>建议执行不代表已经执行</p></div><span class="status-label" :class="['fixed','verified'].includes(chain.remediation.status) ? 'is-l' : 'is-h'">{{ ['fixed','verified'].includes(chain.remediation.status) ? "已经执行" : "建议执行" }}</span></header><dl class="detail-dl compact"><div><dt>修复状态</dt><dd>{{ fixStatus(chain.remediation.status) }}</dd></div><div><dt>目标版本</dt><dd>{{ chain.package.fixed_version || "待确认" }}</dd></div></dl><div class="command-grid"><div><header><span>修复命令</span><el-button text :icon="CopyDocument" @click="copy(chain.remediation.command)">复制</el-button></header><pre>{{ chain.remediation.command || "暂无修复命令" }}</pre></div><div><header><span>验证命令</span></header><pre>{{ chain.remediation.verification || "升级后重新采集资产并核对软件包版本。" }}</pre></div></div></section>
+    <section class="detail-section" v-if="riskRecord.governance">
+      <header><span>审核</span><div><h2>对象审核与历史纠正</h2><p>风险变化相对于明确基线；软件包升级由独立处置计划表达。</p></div></header>
+      <p>实际状态：{{ riskRecord.review_status }} / {{ riskRecord.active ? '当前对象' : '历史 inactive' }}；方向原值：{{ riskRecord.risk_direction }}；语义：{{ riskRecord.governance.risk_direction_semantics }}</p>
+      <el-alert v-if="!riskRecord.governance.execution_eligible" title="当前对象不具备新的修复执行资格。建议稿与操作员裁定分别记录。" type="warning" :closable="false" />
+      <article v-for="event in riskRecord.governance.events" :key="event.id">
+        <p>#{{ event.id }} · {{ event.kind }} · {{ event.actor }} · {{ event.created_at }}</p>
+        <p v-if="event.payload.current_explanation">{{ event.payload.current_explanation }}</p>
+        <p v-if="event.payload.reason">{{ event.payload.reason }}</p><p v-if="event.kind === 'historical_assessment_draft'">AI归档建议稿（尚未由操作员确认）：{{ event.payload.decision?.verdicts?.[0]?.impact_status }} / {{ event.payload.decision?.verdicts?.[0]?.reason }}；原始置信度 {{ event.payload.decision?.verdicts?.[0]?.confidence }}。<el-button text @click="goUnifiedRun(event.payload.run_id)">查看四角色与证据</el-button></p>
+        <p v-if="event.kind === 'official_applicability_correction'">历史等级 {{ event.payload.original_risk.risk_level || event.payload.original_risk.preliminary_level }}；纠正依据 {{ event.payload.correction.evidence_id }}；归档裁定：{{ historicalDecision || '等待授权操作员' }}</p>
+      </article>
+      <div v-if="!riskRecord.active && correctionEvent"><el-button @click="analyzeHistory">生成四角色归档建议稿</el-button>
+        <el-button @click="adjudicate('confirm_archive')">确认历史归档</el-button>
+        <el-button @click="adjudicate('retain_for_review')">保留待审核</el-button>
+        <el-button @click="adjudicate('reject_correction')">驳回纠正建议</el-button>
+      </div>
+    </section>
+
+    <section class="detail-section"><header><span>07</span><div><h2>修复建议</h2><p>建议执行不代表已经执行</p></div><span class="status-label" :class="['fixed','verified'].includes(chain.remediation.status) ? 'is-l' : 'is-h'">{{ archivedCorrected ? "旧建议已失效" : ['fixed','verified'].includes(chain.remediation.status) ? "已经执行" : "建议执行" }}</span></header><dl class="detail-dl compact"><div><dt>修复状态</dt><dd>{{ fixStatus(chain.remediation.status) }}</dd></div><div><dt>{{ archivedCorrected ? "历史候选版本" : "目标版本" }}</dt><dd>{{ chain.package.fixed_version || "待确认" }}</dd></div></dl><p v-if="archivedCorrected">当前官方 not_affected，无本 CVE 专属修复版本；旧建议没有新的执行资格。</p><div v-else class="command-grid"><div><header><span>修复命令</span><el-button text :icon="CopyDocument" @click="copy(chain.remediation.command)">复制</el-button></header><pre>{{ chain.remediation.command || "暂无修复命令" }}</pre></div><div><header><span>验证命令</span></header><pre>{{ chain.remediation.verification || "升级后重新采集资产并核对软件包版本。" }}</pre></div></div></section>
 
     <section class="detail-section"><header><span>08</span><div><h2>审计记录</h2><p>Audit Policy、人工审核和证据缺口</p></div></header><table class="data-table"><thead><tr><th>审计项</th><th>结果</th><th>说明</th></tr></thead><tbody><tr><td>自动审计策略</td><td>{{ riskRecord.human_review_required ? "转人工审核" : "通过" }}</td><td>{{ (riskRecord.audit_policy_reasons || []).join("；") || "无阻断策略" }}</td></tr><tr><td>冲突复议</td><td>{{ riskRecord.review_conflicts?.length ? "存在冲突" : "无冲突" }}</td><td>{{ (riskRecord.review_conflicts || []).join("；") || "-" }}</td></tr><tr><td>证据完整性</td><td>{{ riskRecord.review_missing_evidence?.length ? "存在缺口" : "完整" }}</td><td>{{ (riskRecord.review_missing_evidence || []).join("；") || "-" }}</td></tr><tr><td>人工审计</td><td>{{ riskRecord.review_status || "待研判" }}</td><td>{{ riskRecord.human_review_required ? "必须由人工逐条确认" : "未触发人工门禁" }}</td></tr></tbody></table></section>
 
@@ -60,9 +78,9 @@
       <el-alert v-for="c in officialRecords.corrections.filter(c => c.asset_id === chain.asset.id)" :key="c.id" :title="'纠正 #' + c.id + '：' + c.before.match_status + ' → ' + c.after.match_status + '；旧计划仅供历史审计，不得执行。'" type="warning" :closable="false" />
       <table class="data-table"><thead><tr><th>原始证据</th><th>状态 / 获取时间</th><th>官方来源与摘要</th></tr></thead><tbody><tr v-for="record in officialRecords.records" :key="record.evidence_id"><td>{{ record.evidence_id }}</td><td>{{ record.evidence_status }} / {{ record.fetched_at }}<p>{{ record.error }}</p></td><td><a :href="record.source_url" target="_blank" rel="noopener noreferrer">Canonical 原始记录</a><p class="mono">{{ record.content_sha256 }}</p></td></tr></tbody></table>
     </section>
-    <section class="detail-section" v-if="unifiedShadowRuns.length"><header><span>09</span><div><h2>统一四智能体影子研判</h2><p>LangGraph 唯一编排器的影子运行（只读对照，不改变上方正式结论）</p></div><span class="status-label is-info">影子</span></header>
+    <section class="detail-section" v-if="unifiedRuns.length"><header><span>09</span><div><h2>统一四智能体研判</h2><p>LangGraph 唯一四智能体的真实运行、证据和人工门禁</p></div><span class="status-label is-info">统一编排</span></header>
       <table class="data-table"><thead><tr><th>运行</th><th>任务</th><th>模式</th><th>状态</th><th>Trace</th><th>完成时间</th><th></th></tr></thead><tbody>
-        <tr v-for="run in unifiedShadowRuns" :key="run.run_id">
+        <tr v-for="run in unifiedRuns" :key="run.run_id">
           <td class="mono">{{ run.run_id }}</td>
           <td>{{ run.task_type }}</td>
           <td><span class="status-label" :class="run.mode === 'shadow' ? 'is-info' : 'is-l'">{{ run.mode === "shadow" ? "影子" : "正式" }}</span></td>
@@ -72,7 +90,7 @@
           <td><el-button size="small" text type="primary" @click="goUnifiedRun(run.run_id)">在智能体页查看</el-button></td>
         </tr>
       </tbody></table>
-      <p class="section-note">影子运行只写 UnifiedAnalysisRun 表；正式字段（风险分/裁决/处置建议）仅由正式链路写入，两个结论可在「智能体分析与修复工作流 → 统一编排（影子）」中对照。</p>
+      <p class="section-note">正式运行经审计门禁写入风险；历史影子记录保留为只读审计。每条记录可在 AgentOps 查看实际模式、四角色工具与证据。</p>
     </section>
   </section>
 
@@ -84,10 +102,10 @@
 
 <script setup>
 import { ArrowLeft, CopyDocument } from "@element-plus/icons-vue";
-import { ElMessage } from "element-plus";
+import { ElMessage, ElMessageBox } from "element-plus";
 import { computed, onMounted, ref } from "vue";
 import { useRoute, useRouter } from "vue-router";
-import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
+import { api, adjudicateHistoricalRisk, analyzeHistoricalRisk, fetchBehaviorChains, fetchCveRuntimeEvidence, fetchRiskRanking, fetchVulnerability } from "../api";
 import UbuntuRepairEvidence from "../components/UbuntuRepairEvidence.vue";
 import { fetchHarnessRuns, fetchUnifiedRuns } from "../api/deviceOperations";
 
@@ -113,6 +131,22 @@ const chain = computed(() => chains.value.find((c) => c.chain_id === chainId.val
 const paths = computed(() => chain.value?.dependency_graph?.paths || []);
 const services = computed(() => (chain.value?.service_context || []).slice(0, 8));
 const riskRecord = computed(() => riskRows.value.find((row) => row.cve_id === chain.value?.intelligence?.cve_id && row.hostname === chain.value?.asset?.hostname) || {});
+const correctionEvent = computed(() => (riskRecord.value.governance?.events || []).find(e => e.kind === 'official_applicability_correction'));
+const archivedCorrected = computed(() => riskRecord.value.active === false && Boolean(correctionEvent.value));
+const historicalDecision = computed(() => [...(riskRecord.value.governance?.events || [])].reverse().find(e => e.kind === 'historical_adjudication')?.payload?.decision);
+async function analyzeHistory() {
+  try { const result = await analyzeHistoricalRisk(riskRecord.value.risk_id); goUnifiedRun(result.run_id); }
+  catch (e) { ElMessage.error(e?.response?.data?.detail || e.message || '历史分析启动失败'); }
+}
+async function adjudicate(decision) {
+  try {
+    const actor = await ElMessageBox.prompt('请输入具备控制权限的操作员标识', '历史归档裁定', { inputPattern: /\S+/, inputErrorMessage: '操作员必填' });
+    const reason = await ElMessageBox.prompt('请输入裁定依据；此操作不重新激活风险、不授予修复权限', '裁定依据', { inputType: 'textarea', inputPattern: /\S+/, inputErrorMessage: '依据必填' });
+    await adjudicateHistoricalRisk(riskRecord.value.risk_id, { decision, actor: actor.value, reason: reason.value, correction_event_id: correctionEvent.value.id });
+    riskRows.value = await fetchRiskRanking();
+    ElMessage.success('操作员历史裁定已记录');
+  } catch (e) { if (e !== 'cancel' && e !== 'close') ElMessage.error(e?.response?.data?.detail || e.message || '裁定失败'); }
+}
 const displayScore = computed(() => riskRecord.value.has_final_conclusion ? riskRecord.value.final_score : (riskRecord.value.preliminary_score ?? chain.value?.risk?.dynamic_score ?? "-"));
 const displayLevel = computed(() => riskRecord.value.has_final_conclusion ? riskRecord.value.risk_level : (riskRecord.value.preliminary_level || chain.value?.risk?.dynamic_level));
 const epssDisplay = computed(() => {
@@ -164,8 +198,8 @@ const pct = (v) => `${Math.round(Number(v || 0) * 100)}%`;
 const fixStatus = (s) => ({ pending: "待修复", in_progress: "进行中", fixed: "已修复", verified: "已验证" }[s] || "待修复");
 const back = () => router.push("/risk");
 
-// 统一四智能体影子研判（M4.3）：按 risk_id 关联展示，只读。
-const unifiedShadowRuns = ref([]);
+// 统一四智能体研判（M4.3）：按 risk_id 关联展示，只读。
+const unifiedRuns = ref([]);
 const repairRuns = ref([]);
 const officialRecords = ref({ records: [], corrections: [] });
 const officialError = ref("");
@@ -194,7 +228,7 @@ onMounted(async () => {
   const rid = Number(riskRecord.value.risk_id || 0);
   if (rid) {
     repairRuns.value = (await fetchHarnessRuns()).filter(r => r.risk_id === rid && r.plan.adapter === "ubuntu-apt-v1");
-    unifiedShadowRuns.value = await fetchUnifiedRuns({ risk_id: rid, limit: 10 }).catch(() => []);
+    unifiedRuns.value = await fetchUnifiedRuns({ risk_id: rid, limit: 10 }).catch(() => []);
   }
 });
 </script>

@@ -39,10 +39,6 @@ export const discoverDevice = data => api.post("/devices/discover", data, contro
 export const refreshDevice = deviceId => api.post("/devices/" + deviceId + "/refresh", null, control()).then(r => r.data);
 
 // 四智能体编排与修复工作流（阶段三/四）。
-export const fetchAgentSpecs = () => api.get("/agents/specs").then(r => r.data);
-export const startAgentAnalysis = payload => api.post("/agents/analyze", payload, control()).then(r => r.data);
-export const fetchAgentRuns = () => api.get("/agents/runs").then(r => r.data);
-export const fetchAgentRun = runId => api.get("/agents/runs/" + runId).then(r => r.data);
 export const startMqttWorkflow = payload => api.post("/remediation/workflow/mqtt-anonymous", payload, control()).then(r => r.data);
 export const fetchWorkflowRuns = () => api.get("/remediation/workflow/runs").then(r => r.data);
 export const fetchWorkflowRun = runId => api.get("/remediation/workflow/runs/" + runId).then(r => r.data);

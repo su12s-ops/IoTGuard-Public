@@ -19,7 +19,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import database as app_database
 from app import models
-from app.services.agents.tools import tool_query_process_evidence
+from app.services.agent_tools import tool_query_process_evidence
 from app.services.security_evidence import event_to_evidence, persist_evidence
 
 

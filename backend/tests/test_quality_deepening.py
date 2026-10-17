@@ -575,7 +575,7 @@ class TestDecisionPromptAndValidation:
 class TestYQualityCases:
     @pytest.fixture(scope="class")
     def y_db(self, tmp_path_factory):
-        from stage9_agent_effectiveness_audit import build_fixture, fresh_session_factory
+        from tests.closure_fixture import build_fixture, fresh_session_factory
         from stage9b_quality_cases import extend_fixture_for_y_cases
         root = tmp_path_factory.mktemp("y-fixture")
         factory, engine = fresh_session_factory(root / "db")
@@ -625,8 +625,9 @@ class TestYQualityCases:
             "installed_version": "3.7.3-4ubuntu1.4", "fixed_version": "3.8.9",
             "match_status": "potentially_affected"}])
         candidate = packet.candidates[0]
-        assert candidate.version_compare["result"] == "affected"       # 上游口径
-        assert "caveat" in candidate.version_compare                    # backport 提示
+        assert candidate.version_compare["result"] == "not_affected"
+        assert candidate.version_compare["legacy_candidate_fixed_version"] == "3.8.9"
+        assert candidate.fixed_version == ""
         assert candidate.vendor_patch["release_status"] == "not_affected"
         assert candidate.vendor_patch["backport"] is True
 
@@ -665,7 +666,7 @@ class TestYQualityCases:
         assert packet.candidates[0].urgency_amplifiers["any_present"] is False
 
     def test_counterfactual_build_removes_kev(self, tmp_path_factory):
-        from stage9_agent_effectiveness_audit import build_fixture, fresh_session_factory
+        from tests.closure_fixture import build_fixture, fresh_session_factory
         from stage9b_quality_cases import extend_fixture_for_y_cases
         root = tmp_path_factory.mktemp("y-cf")
         factory, engine = fresh_session_factory(root / "db")

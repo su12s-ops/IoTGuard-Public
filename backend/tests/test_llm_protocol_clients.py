@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.services.agents.base import (
+from app.services.agent_infra import (
     AnthropicProtocolChatClient,
     DeepSeekChatClient,
     build_llm_client,
@@ -156,23 +156,3 @@ class TestDispatchFactory:
         monkeypatch.setattr(config, "DEEPSEEK_API_KEY", "")
         with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
             build_llm_client()
-
-
-class TestSystemBClientBranch:
-    def test_anthropic_branch_builds_autogen_client(self, monkeypatch):
-        from app import config
-        from app.services import event_review_pipeline as pipeline
-        monkeypatch.setattr(pipeline, "DEEPSEEK_API_PROTOCOL", "anthropic")
-        client = pipeline._create_model_client()
-        from autogen_ext.models.anthropic import AnthropicChatCompletionClient
-        assert isinstance(client, AnthropicChatCompletionClient)
-
-    def test_openai_branch_unchanged(self, monkeypatch):
-        from app.services import event_review_pipeline as pipeline
-        monkeypatch.setattr(pipeline, "DEEPSEEK_API_PROTOCOL", "openai")
-        monkeypatch.setattr(pipeline, "DEEPSEEK_API_KEY", "offline-test-key")
-        monkeypatch.setattr(pipeline, "DEEPSEEK_MODEL", "deepseek-v4-flash")
-        monkeypatch.setattr(pipeline, "DEEPSEEK_BASE_URL", "https://api.deepseek.com/v1")
-        client = pipeline._create_model_client()
-        from autogen_ext.models.openai import OpenAIChatCompletionClient
-        assert isinstance(client, OpenAIChatCompletionClient)

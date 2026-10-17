@@ -15,7 +15,7 @@ from sqlalchemy import text
 from app.config import API_TITLE, API_VERSION, DATABASE_URL, DEEPSEEK_MODEL
 from app.database import SessionLocal, init_db
 from app.routers import analysis, assets, dashboard, demo, matching, remediation, reports, risk, runtime, vulnerabilities, workflow, traces
-from app.routers import iot, harness, devices, agents, remediation_workflow, scans, unified
+from app.routers import iot, harness, devices, remediation_workflow, scans, unified
 
 
 # ── 启动时记录的诊断信息 ──
@@ -244,7 +244,6 @@ app.include_router(analysis.router, prefix="/api")
 app.include_router(iot.router, prefix="/api")
 app.include_router(harness.router, prefix="/api")
 app.include_router(devices.router, prefix="/api")
-app.include_router(agents.router, prefix="/api")
 app.include_router(remediation_workflow.router, prefix="/api")
 app.include_router(scans.router, prefix="/api")
 app.include_router(traces.router, prefix="/api")

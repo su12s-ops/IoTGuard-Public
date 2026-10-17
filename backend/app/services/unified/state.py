@@ -92,7 +92,7 @@ class UnifiedAnalysisState(BaseModel):
     task_type: str = TASK_RISK_REVIEW
     target_ref: str = ""
     target_type: str = "linux_host"
-    mode: Literal["shadow", "formal"] = "shadow"
+    mode: Literal["shadow", "formal", "historical"] = "shadow"
     investigation_goal: str = ""
 
     routing: RoutingDecision = Field(default_factory=RoutingDecision)

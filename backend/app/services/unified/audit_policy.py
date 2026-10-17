@@ -81,6 +81,8 @@ def _deterministic_contradiction_reasons(state_like: dict[str, Any], verdicts: l
 
     reasons: list[str] = []
     if candidates:   # 仅当预取包携带候选确定性事实时才做矛盾核查
+        if branch.get("result") == "undetermined" and impact == "confirmed_affected":
+            reasons.append("branch_check_undetermined_model_confirmed_requires_review")
         branch_excluded = branch.get("result") in {
             "branch_excluded", "below_stated_affected_range"}
         if branch_excluded and impact in {"confirmed_affected", "potentially_affected"}:
@@ -190,6 +192,8 @@ def apply_unified_audit_policy(state_like: dict[str, Any]) -> AuditPolicyDecisio
         reasons.append("major_baseline_contradiction")
 
     # 有界方向映射 + 分数计算（LLM 永不直写分数）
+    if verdict.get("risk_direction", "maintain") != "maintain" and not verdict.get("risk_change_basis"):
+        reasons.append("risk_change_basis_missing")
     direction = verdict.get("risk_direction", "maintain") if verdict else "maintain"
     adjustment = DIRECTION_ADJUSTMENTS.get(direction, 0)
     score = round(max(0.0, min(100.0, float(baseline.get("preliminary_score") or 0) + adjustment)), 2)

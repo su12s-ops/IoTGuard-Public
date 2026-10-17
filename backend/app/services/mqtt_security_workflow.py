@@ -148,30 +148,10 @@ def fallback_plan(host: str, port: int) -> dict[str, Any]:
 
 def agent_plan(db: Session, host: str, port: int, detection: dict[str, Any],
                client_factory=None) -> dict[str, Any]:
-    """用阶段三的修复智能体（真实 LLM）分析并生成白名单方案；失败用兜底方案。"""
-    from app.services.agents import agents as A
-    from app.services.agents.base import ToolLoopAgent
-    try:
-        if client_factory is None:
-            from app.services.agents.orchestrator import default_client_factory
-            client_factory = default_client_factory
-        context = (
-            f"分析目标: MQTT broker {host}:{port}。真实检测结果：匿名 CONNECT rc=0"
-            f"（allow_anonymous=true，任意客户端可连接），设备 SmartCam-X1 智能摄像头。"
-            "请基于此生成白名单修复方案（备份→修改配置→重启→验证），并给出回滚计划。"
-        )
-        result = ToolLoopAgent(A.REMEDIATION_VERIFICATION_SPEC, client_factory()).run(
-            db, context=context, deadline_s=90.0)
-        if result.status == "succeeded" and result.output.get("actions"):
-            plan = dict(result.output)
-            plan["risk_ref"] = plan.get("risk_ref") or f"mqtt-anonymous:{host}:{port}"
-            plan["source"] = "agent_llm"
-            return plan
-        reason = result.error or "方案缺少动作"
-    except Exception as exc:  # LLM 不可用等情况：记录原因并使用兜底方案
-        reason = f"{type(exc).__name__}: {exc}"
+    """Deterministic allowlisted plan; MQTT has no independent LLM path."""
+    del db, detection, client_factory
     plan = fallback_plan(host, port)
-    plan["data_gaps"] = [f"Agent 方案不可用，使用确定性兜底方案（{reason}）"]
+    plan["source"] = "deterministic_policy"
     return plan
 
 

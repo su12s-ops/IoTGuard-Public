@@ -121,6 +121,8 @@ def enrich_plan(db, run, asset, risk, connection, plan):
 
 
 def validate(db, run):
+    from app.services.review_common.governance import assert_execution_allowed
+    assert_execution_allowed(db, db.get(models.RiskAssessment, run.risk_id))
     plan = json.loads(run.plan_json)
     if plan.get("adapter") != ADAPTER or h().digest(plan) != run.plan_hash:
         raise ValueError("计划摘要无效")

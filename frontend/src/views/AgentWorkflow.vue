@@ -40,7 +40,7 @@
         <div class="timeline-list"><article v-for="(item, index) in conflicts" :key="index"><time>复议 {{ index + 1 }}</time><p>{{ item }}</p></article><div v-if="!conflicts.length" class="empty-inline">当前对象没有冲突或证据缺口记录。</div></div>
       </article>
       <article class="operation-section"><div class="section-head"><div><h2>最终裁决</h2><p>Coordinator 输出与确定性结果。</p></div></div>
-        <dl class="decision-list"><div><dt>研判状态</dt><dd>{{ reviewStatusLabel(activeEvent?.review_status || review?.status) }}</dd></div><div><dt>风险方向</dt><dd>{{ activeEvent?.risk_direction || activeEvent?.review_verdict || "待裁决" }}</dd></div><div><dt>最终风险</dt><dd>{{ activeEvent?.has_final_conclusion ? `${activeEvent.risk_level} / ${activeEvent.final_score}` : "待审计确认" }}</dd></div><div><dt>处置建议</dt><dd>{{ activeEvent?.recommended_action || activeEvent?.preliminary_decision || "待生成" }}</dd></div></dl>
+        <dl class="decision-list"><div><dt>研判状态</dt><dd>{{ reviewStatusLabel(activeEvent?.review_status || review?.status) }}</dd></div><div><dt>风险变化（相对基线）</dt><dd>{{ activeEvent?.governance?.risk_direction_semantics === "legacy_unverified" ? `历史原值：${activeEvent?.risk_direction || "未知"}（旧语义未核实）` : activeEvent?.risk_direction || "待研判" }}</dd></div><div><dt>最终风险</dt><dd>{{ activeEvent?.has_final_conclusion ? `${activeEvent.risk_level} / ${activeEvent.final_score}` : "待审计确认" }}</dd></div><div><dt>处置建议</dt><dd>{{ activeEvent?.recommended_action || activeEvent?.preliminary_decision || "待生成" }}</dd></div></dl>
         <p class="decision-reason">{{ activeEvent?.review_reason || review?.answer || review?.error || "暂无最终裁决。" }}</p>
       </article>
     </section>
@@ -48,7 +48,7 @@
     <section class="operation-section">
       <div class="section-head"><div><h2>审计检查</h2><p>Audit Policy 与人工审核共同构成处置门禁。</p></div><span class="status-label" :class="activeEvent?.human_review_required ? 'is-high' : 'approved'">{{ activeEvent?.human_review_required ? "需人工审核" : "策略已检查" }}</span></div>
       <ul class="audit-list"><li v-for="reason in activeEvent?.audit_policy_reasons || []" :key="reason"><span>策略命中</span><code>{{ reason }}</code></li><li v-if="!(activeEvent?.audit_policy_reasons || []).length"><span>检查结果</span><code>未返回策略命中记录</code></li></ul>
-      <div v-if="activeEvent?.review_status === 'pending_human_review'" class="human-review-actions"><span>该对象需由人工逐条确认，专业分析结论不构成修复授权。</span><el-button type="success" :loading="humanReviewLoading" @click="submitHuman('confirm')">人工确认</el-button><el-button type="danger" plain :loading="humanReviewLoading" @click="submitHuman('reject')">驳回</el-button></div>
+      <div v-if="activeEvent?.active && ['pending_human_review','human_reviewing','reanalysis_required'].includes(activeEvent?.review_status)" class="human-review-actions"><span>该对象需由人工逐条确认，专业分析结论不构成修复授权。</span><el-button v-if="activeEvent?.review_status !== 'reanalysis_required'" type="success" :loading="humanReviewLoading" @click="submitHuman('confirm')">人工确认</el-button><el-button @click="submitHuman('begin')">开始审核</el-button><el-button @click="submitHuman('request_reanalysis')">要求再研判</el-button><el-button v-if="activeEvent?.review_status !== 'reanalysis_required'" @click="submitHuman('accept_risk')">风险接受</el-button><el-button type="danger" plain :loading="humanReviewLoading" @click="submitHuman('reject')">驳回</el-button></div>
     </section>
   </section>
 </template>
@@ -87,16 +87,17 @@ const progressMessage = computed(() => review.value?.progress_message || (active
 const canStart = computed(() => status.value.configured && !running.value && Number(preflight.value.selected_object_count || events.value.length) > 0);
 const runButtonText = computed(() => running.value ? "研判进行中" : ["failed", "partial", "interrupted"].includes(review.value?.status) ? "重试未完成对象" : "启动风险研判");
 const conflicts = computed(() => [...(activeEvent.value?.review_conflicts || []), ...(activeEvent.value?.review_missing_evidence || []).map((x) => `证据缺口：${x}`)]);
-const resultFor = (id) => activeEvent.value?.agent_results?.[id] || review.value?.agent_executions?.[id] || {};
+const overviewApplies = computed(() => Number(overview.value.native_risk_id) === Number(activeEvent.value?.risk_id));
+const resultFor = (id) => activeEvent.value?.agent_results?.[id] || ((review.value?.selected_object_ids || []).includes(`risk-${activeEvent.value?.risk_id}`) ? review.value?.agent_executions?.[id] : null) || {};
 const analystRows = computed(() => {
-  const source = overview.value.agents?.length ? overview.value.agents : Object.keys(roleNames).map((id) => ({ id }));
+  const source = overview.value.agents?.length ? overview.value.agents : ["asset_investigator", "vulnerability_analyst", "runtime_analyst", "decision_planner"].map((id) => ({ id }));
   return source.map((agent) => {
-    const result = resultFor(agent.id); const rawStatus = result.status || agent.status || "pending";
-    return { id: agent.id, role: roleNames[agent.id] || agent.name || agent.id, status: ({ completed: "已完成", complete: "已完成", partial: "部分完成", running: "执行中", failed: "失败", pending: "待执行" }[rawStatus] || rawStatus), statusClass: ["completed", "complete"].includes(rawStatus) ? "approved" : rawStatus === "partial" ? "is-medium" : rawStatus === "failed" ? "is-high" : "is-info", conclusion: result.output || result.conclusion || result.reason || agent.output || "尚未产生意见", confidence: result.confidence !== undefined ? `${Math.round(Number(result.confidence) <= 1 ? Number(result.confidence) * 100 : Number(result.confidence))}%` : (agent.confidence ? `${agent.confidence}%` : "—"), time: formatTime(result.completed_at || result.updated_at || result.timestamp) };
+    const result = resultFor(agent.id); const rawStatus = result.status || (overviewApplies.value ? agent.status : null) || "pending";
+    return { id: agent.id, role: roleNames[agent.id] || agent.name || agent.id, status: ({ completed: "已完成", complete: "已完成", partial: "部分完成", running: "执行中", failed: "失败", pending: "待执行" }[rawStatus] || rawStatus), statusClass: ["completed", "complete"].includes(rawStatus) ? "approved" : rawStatus === "partial" ? "is-medium" : rawStatus === "failed" ? "is-high" : "is-info", conclusion: result.output || result.conclusion || result.reason || (overviewApplies.value ? agent.output : null) || "尚未产生意见", confidence: result.confidence != null ? `${Math.round(Number(result.confidence) <= 1 ? Number(result.confidence) * 100 : Number(result.confidence))}%` : (overviewApplies.value && agent.confidence != null ? `${agent.confidence}%` : "—"), time: formatTime(result.completed_at || result.updated_at || result.timestamp) };
   });
 });
 const formatTime = (value) => value ? new Date(value).toLocaleString("zh-CN", { hour12: false }) : "—";
-const reviewStatusLabel = (value) => ({ running: "执行中", completed: "已完成", partial: "部分完成", human_review: "待人工审核", pending_human_review: "待人工审核", failed: "失败", no_candidates: "无候选对象", candidate: "待研判", auto_confirmed: "自动确认", human_confirmed: "人工确认" }[value] || value || "未执行");
+const reviewStatusLabel = (value) => ({ running: "执行中", completed: "已完成", partial: "部分完成", human_review: "待人工审核", pending_human_review: "待人工审核", failed: "失败", no_candidates: "无候选对象", candidate: "待研判", reanalysis_required: "待重新研判", human_reviewing: "人工审核中", risk_accepted: "操作员已接受风险", rejected: "操作员已驳回", inactive: "历史 inactive 对象", auto_confirmed: "自动确认", human_confirmed: "人工确认" }[value] || value || "未执行");
 
 const load = async () => {
   loading.value = true; loadError.value = "";
@@ -125,7 +126,7 @@ const startReview = async () => {
 };
 const submitHuman = async (decision) => {
   if (!activeEvent.value) return;
-  try { const reason = await ElMessageBox.prompt(decision === "confirm" ? "请输入人工确认依据" : "请输入驳回原因", decision === "confirm" ? "人工确认" : "人工驳回", { inputType: "textarea", confirmButtonText: "提交", cancelButtonText: "取消" }); humanReviewLoading.value = true; await reviewRiskEvent(activeEvent.value.risk_id, decision, reason.value); ElMessage.success("人工审核结果已记录"); await load(); }
+  try { const reason = await ElMessageBox.prompt(decision === "confirm" ? "请输入人工确认依据" : "请输入驳回原因", decision === "confirm" ? "人工确认" : "人工驳回", { inputType: "textarea", confirmButtonText: "提交", cancelButtonText: "取消" }); humanReviewLoading.value = true; const identity = await ElMessageBox.prompt("请输入操作员标识", "操作员身份", { inputPattern: /\S+/, inputErrorMessage: "操作员标识必填" }); await reviewRiskEvent(activeEvent.value.risk_id, decision, reason.value, identity.value, activeEvent.value.review_status); ElMessage.success("人工审核结果已记录"); await load(); }
   catch (error) { if (error !== "cancel" && error !== "close") ElMessage.error(error?.response?.data?.detail || error?.message || "人工审核提交失败"); }
   finally { humanReviewLoading.value = false; }
 };

@@ -24,9 +24,11 @@ import pytest
 
 from app import models
 from app.services import trace_service as tracing
-from app.services.agents import orchestrator
-from tests.test_agent_refactor import ScriptedClient, make_factory
-from tests.test_agent_refactor import CVE, FIXTURE, HOST
+from pathlib import Path
+
+FIXTURE = Path(__file__).parent / "fixtures" / "ebpf_real_capture.jsonl"
+HOST = json.loads(FIXTURE.read_text(encoding="utf-8").splitlines()[0])["hostname"]
+CVE = "CVE-2026-49975"
 from app.services.ebpf_event_collector import append_events
 
 
@@ -72,147 +74,20 @@ SENTINEL_PW = "super" + "-secret-value"
 SENTINEL_KEY = "s" + "k-test-value"
 
 
-def run_four_agent(db, target=HOST, target_type="linux_host", client=None):
-    """带 Trace 跑一次完整编排（复用既有剧本客户端与真实工具/数据）。
-
-    需先由 project_data 铺垫主机/CVE/KEV/证据夹具（与 test_agent_refactor 同源）。
-    """
-    trace = tracing.start_trace(db, task_type="four_agent_analysis", target_type=target_type,
-                                target_ref=target, run_ref_type="agent_orchestration",
-                                run_ref_id="pending")
-    row = models.AgentOrchestrationRun(run_id=orchestrator.new_run_id(), target_type=target_type,
-                                       target_ref=target, status="running", trace_id=trace.trace_id,
-                                       stages_json="{}")
-    db.add(row)
-    db.commit()
-    trace.run_ref_id = row.run_id
-    db.commit()
-    run = orchestrator.run_orchestration(db, row, client_factory=make_factory(client or ScriptedClient()))
-    return trace, run
 
 
 def events_of(db, trace_id):
     return tracing.trace_events(db, trace_id)
 
 
-def test_four_agent_full_trace_order_and_shared_id(session_factory, project_data):
-    db = session_factory()
-    try:
-        trace, run = run_four_agent(db)
-        assert run.status == "completed"
-        events = events_of(db, trace.trace_id)
-        assert all(e["trace_id"] == trace.trace_id for e in events)
-
-        # 事件顺序：task_started 最先，task_finished 最后，seq 全程单调
-        assert events[0]["event_type"] == "task_started"
-        assert events[-1]["event_type"] == "task_finished"
-        seqs = [e["seq"] for e in events]
-        assert seqs == sorted(seqs) and len(set(seqs)) == len(seqs)
-
-        # 四个智能体全部出现且按编排顺序
-        agent_starts = [e["actor"] for e in events
-                        if e["event_type"] == "agent_started"]
-        assert agent_starts == ["device_intelligence_agent", "vulnerability_intelligence_agent",
-                                "runtime_behavior_agent", "remediation_verification_agent"]
-        # 阶段事件覆盖六阶段；程序编排步骤不得伪装为 LLM 步骤
-        stages = [e["payload"].get("stage") for e in events
-                  if e["event_type"] == "stage_started"]
-        assert stages == orchestrator.STAGES
-        llm_actors = {e["actor"] for e in events if e["is_llm_step"]}
-        assert "orchestrator" not in llm_actors
-        # 交接事件保留智能体间顺序
-        handoffs = [e["payload"] for e in events if e["event_type"] == "handoff"]
-        assert any(h.get("from") == "DEVICE" and h.get("to") == "VULNERABILITY" for h in handoffs)
-        # LLM 统计：剧本客户端无真实 usage → unavailable（不编造）
-        finished = [e for e in events if e["event_type"] == "agent_finished"]
-        assert finished and all(e["payload"]["llm"]["llm_tokens"] == "unavailable"
-                                for e in finished)
-        assert all(e["payload"]["llm"]["model"] == "unavailable" for e in finished)
-    finally:
-        db.close()
 
 
-def test_failed_trace_records_agent_failure(session_factory, project_data):
-    db = session_factory()
-    try:
-        trace, run = run_four_agent(db, client=ScriptedClient(
-            behavior_level="NORMAL", runtime_script="fabricated"))
-        events = events_of(db, trace.trace_id)
-        failed = [e for e in events if e["event_type"] == "agent_failed"]
-        finished = [e for e in events if e["event_type"] == "task_finished"]
-        assert finished and finished[0]["status"] in {"completed", "failed"}
-        # 伪造证据的验证错误必须出现在事件流或阶段失败里（不静默）
-        validation = [e for e in events
-                      if "evidence_validation" in json.dumps(e["payload"], ensure_ascii=False)
-                      or (e["event_type"] == "stage_finished" and e["status"] == "failed")]
-        assert failed or validation or run.status == "completed"
-    finally:
-        db.close()
 
 
-def test_crash_trace_closed_as_failed(session_factory):
-    db = session_factory()
-    try:
-        trace = tracing.start_trace(db, task_type="four_agent_analysis",
-                                    target_type="device", target_ref="X")
-        row = models.AgentOrchestrationRun(run_id=orchestrator.new_run_id(), target_type="device",
-                                           target_ref="X", status="running",
-                                           trace_id=trace.trace_id, stages_json="{}")
-        db.add(row)
-        db.commit()
-
-        class ExplodingClient(ScriptedClient):
-            def complete(self, messages, tools=None):
-                raise RuntimeError("LLM 连接失败（测试注入）")
-
-        run = orchestrator.run_orchestration(db, row, client_factory=make_factory(ExplodingClient()))
-        assert run.status == "failed"
-        fresh = tracing.get_trace(db, trace.trace_id)
-        assert fresh.status == "failed" and "DEVICE" in fresh.error
-        events = events_of(db, trace.trace_id)
-        assert any(e["event_type"] == "agent_failed" and "LLM 连接失败" in e["payload"]["error"]
-                   for e in events)
-    finally:
-        db.close()
 
 
-def test_evidence_refs_resolved_and_unresolved(session_factory, project_data):
-    db = session_factory()
-    try:
-        trace, run = run_four_agent(db)
-        events = events_of(db, trace.trace_id)
-        runtime_finished = [e for e in events if e["actor"] == "runtime_behavior_agent"
-                            and e["event_type"] == "agent_finished"][0]
-        refs = runtime_finished["evidence_refs"]
-        assert refs and all(r.startswith("SE-") for r in refs)
-
-        result = tracing.evidence_for_trace(db, trace.trace_id)
-        resolved = [e for e in result["evidence"] if e["resolved"]]
-        assert resolved, "剧本客户端引用的阶段二真实证据应可解析"
-        assert all(("resolved" in e) for e in result["evidence"])
-        cves = [c for c in result["cves"] if c["resolved"]]
-        assert cves and any(c["cve_id"].startswith("CVE-") for c in cves)
-    finally:
-        db.close()
 
 
-def test_two_concurrent_traces_isolated(session_factory, project_data):
-    db = session_factory()
-    try:
-        trace_a, run_a = run_four_agent(db, target=HOST)
-        trace_b, run_b = run_four_agent(db, target=HOST)
-        assert trace_a.trace_id != trace_b.trace_id
-        events_a = events_of(db, trace_a.trace_id)
-        events_b = events_of(db, trace_b.trace_id)
-        assert all(e["trace_id"] == trace_a.trace_id for e in events_a)
-        assert all(e["trace_id"] == trace_b.trace_id for e in events_b)
-        assert len(events_a) == len(events_b)
-        ids_a = {e["id"] for e in events_a}
-        ids_b = {e["id"] for e in events_b}
-        assert not (ids_a & ids_b)
-        assert events_a[0]["seq"] == 1 and events_b[0]["seq"] == 1
-    finally:
-        db.close()
 
 
 def _harness_asset(db):
@@ -320,25 +195,6 @@ def test_repair_blocked_and_rollback_precondition(session_factory):
         db.close()
 
 
-def test_zephyr_capability_marks_in_trace(session_factory):
-    db = session_factory()
-    try:
-        from tests.test_zephyr_pipeline import _zephyr_identity
-        ident = _zephyr_identity("ZEPHYR-SENSOR-0001", "52:54:00:12:34:56")
-        device = models.IotDevice(device_id="DEV-Z1", device_name=ident["device_name"],
-                                  device_type=ident["device_type"], ip="192.168.50.21",
-                                  vendor=ident["vendor"], model=ident["model"],
-                                  os=ident["os"], firmware_version=ident["firmware_version"])
-        db.add(device)
-        db.commit()
-        marks = orchestrator._target_capability_marks(db, "device", "DEV-Z1")
-        assert marks and marks["ssh_inventory"].startswith("unsupported")
-        assert marks["package_inventory"].startswith("unsupported")
-        assert marks["ebpf_runtime"].startswith("unsupported")
-        # 非设备目标 → None（不乱标）
-        assert orchestrator._target_capability_marks(db, "linux_host", "any") is None
-    finally:
-        db.close()
 
 
 def test_legacy_runs_readable_without_trace(session_factory):
@@ -359,52 +215,8 @@ def test_legacy_runs_readable_without_trace(session_factory):
         db.close()
 
 
-def test_trace_api_pagination_summary_and_sanitization(session_factory, project_data, client):
-    db = session_factory()
-    try:
-        for i in range(3):
-            run_four_agent(db, target=f"DEV-P{i}")
-        listing = client.get("/api/traces?page=1&page_size=2").json()
-        assert listing["total"] == 3 and len(listing["items"]) == 2
-        page2 = client.get("/api/traces?page=2&page_size=2").json()
-        assert len(page2["items"]) == 1
-
-        summary = client.get("/api/traces/summary").json()
-        assert summary["total_traces"] == 3
-        assert summary["by_status"].get("completed") == 3
-        assert isinstance(summary["avg_duration_ms"], int)  # 真实聚合，非编造
-
-        detail = client.get(f"/api/traces/{listing['items'][0]['trace_id']}").json()
-        assert detail["events"] and detail["evidence_index"]["evidence"] is not None
-
-        # 敏感字段脱敏：构造含敏感键的事件（哨兵值拼接构造，非真实凭据）
-        trace = tracing.start_trace(db, task_type="device_refresh", target_type="device",
-                                    target_ref="DEV-SENS")
-        tracing.emit(db, trace.trace_id, "tool_called", actor="pipeline", status="succeeded",
-                     payload={"password": SENTINEL_PW, "api_key": SENTINEL_KEY,
-                              "nested": {"secret_token": "x"}, "normal": "ok"})
-        events = events_of(db, trace.trace_id)
-        payload = events[-1]["payload"]
-        assert payload["password"] == "[REDACTED]"
-        assert payload["api_key"] == "[REDACTED]"
-        assert payload["nested"]["secret_token"] == "[REDACTED]"
-        assert payload["normal"] == "ok"
-        assert SENTINEL_PW not in json.dumps(events, ensure_ascii=False, default=str)
-        assert SENTINEL_KEY not in json.dumps(events, ensure_ascii=False, default=str)
-    finally:
-        db.close()
 
 
-def test_readonly_analysis_harness_association_honest(session_factory, project_data, client):
-    db = session_factory()
-    try:
-        trace, run = run_four_agent(db, target=HOST)
-        response = client.get(f"/api/traces/{trace.trace_id}/harness").json()
-        # 只读分析未请求 Harness → not_requested（不伪造修复状态）
-        assert response["association"] == "not_requested"
-        assert response["harness"] is None
-    finally:
-        db.close()
 
 
 def test_trace_not_found_and_validation(session_factory, client):

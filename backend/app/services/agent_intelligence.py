@@ -442,57 +442,38 @@ def build_four_agent_workflow(db: Session) -> dict[str, Any]:
     )
     review_payload = _review_agent_status(latest_report)
 
-    agents = [
-        {
-            "id": "evidence_audit_agent",
-            "name": "Evidence Audit Agent",
-            "goal": "审核数据覆盖完整性与质量，输出数据盲区与补采要求。",
-            "status": review_payload["agents"]["evidence_audit"]["status"],
-            "confidence": review_payload["agents"]["evidence_audit"]["confidence"],
-            "output": review_payload["agents"]["evidence_audit"]["output"],
-        },
-        {
-            "id": "impact_assessment_agent",
-            "name": "漏洞影响研判智能体",
-            "goal": "评估漏洞实际影响与优先级，给出确认/升级/降级意见。",
-            "status": review_payload["agents"]["impact_assessment"]["status"],
-            "confidence": review_payload["agents"]["impact_assessment"]["confidence"],
-            "output": review_payload["agents"]["impact_assessment"]["output"],
-        },
-        {
-            "id": "exposure_runtime_agent",
-            "name": "Exposure & Runtime Agent",
-            "goal": "验证运行时证据关联强度，识别矛盾证据。",
-            "status": review_payload["agents"]["exposure_runtime"]["status"],
-            "confidence": review_payload["agents"]["exposure_runtime"]["confidence"],
-            "output": review_payload["agents"]["exposure_runtime"]["output"],
-        },
-        {
-            "id": "decision_coordinator_agent",
-            "name": "处置决策协调智能体",
-            "goal": "综合意见输出唯一结构化裁定（确认/升级/降级/证据不足）。",
-            "status": review_payload["agents"]["decision_coordinator"]["status"],
-            "confidence": review_payload["agents"]["decision_coordinator"]["confidence"],
-            "output": review_payload["agents"]["decision_coordinator"]["output"],
-        },
-    ]
+    from app.services.unified.agents_def import specs_summary
+    native = db.query(models.UnifiedAnalysisRun).filter_by(mode="formal").order_by(models.UnifiedAnalysisRun.id.desc()).first()
+    state = json.loads(native.state_json or "{}") if native else {}
+    logs = json.loads(native.agents_json or "{}") if native else {}
+    role_fields = {"asset_investigator": "investigation", "vulnerability_analyst": "vulnerability",
+                   "runtime_analyst": "runtime", "decision_planner": "decision"}
+    agents = []
+    for spec in specs_summary():
+        name = spec["name"]
+        output = state.get(role_fields[name]) or {}
+        log = logs.get(name) or {}
+        agents.append({"id": name, "name": spec["title"], "goal": spec["role"],
+            "status": "completed" if log.get("status") == "succeeded" else log.get("status", "pending"),
+            "confidence": round(output["confidence"] * 100, 2) if output.get("confidence") is not None else None,
+            "output": output.get("reason") or json.dumps(output, ensure_ascii=False) if output else "",
+            "error": log.get("error", ""), "duration_ms": log.get("latency_ms"),
+            "run_id": native.run_id if native else None, "risk_id": native.risk_id if native else None})
     return {
         "metrics": metrics,
         "agents": agents,
         "workflow_edges": [
-            {"from": "evidence_audit_agent", "to": "decision_coordinator_agent"},
-            {"from": "impact_assessment_agent", "to": "decision_coordinator_agent"},
-            {"from": "exposure_runtime_agent", "to": "decision_coordinator_agent"},
+            {"from": "asset_investigator", "to": "vulnerability_analyst"},
+            {"from": "asset_investigator", "to": "runtime_analyst"},
+            {"from": "vulnerability_analyst", "to": "decision_planner"},
+            {"from": "runtime_analyst", "to": "decision_planner"},
         ],
+        "native_run_id": native.run_id if native else None,
+        "native_risk_id": native.risk_id if native else None,
         "topology": topology,
         "top_chains": chains[:5],
         "review": review_payload["summary"],
-        "api_sequence": [
-            "数据质量审核智能体：审核资产/情报/运行时数据覆盖，输出盲区与补采要求。",
-            "漏洞影响研判智能体：评估漏洞实际影响与优先级，给出确认/升级/降级意见。",
-            "运行时归因验证智能体：验证 eBPF/探针证据关联强度与矛盾证据。",
-            "处置决策协调智能体：综合意见输出唯一结构化裁定，驱动最终风险与修复任务。",
-        ],
+        "api_sequence": [spec["role"] for spec in specs_summary()],
     }
 
 
@@ -524,7 +505,7 @@ def _review_agent_status(report) -> dict[str, Any]:
     if object_verdicts and isinstance(object_verdicts, list):
         confidences = [v.get("confidence", 0) for v in object_verdicts if isinstance(v, dict)]
         summary["confidence"] = round(sum(confidences) / len(confidences) * 100) if confidences else 0
-        summary["human_review_required"] = any(v.get("human_review_required") for v in object_verdicts)
+        summary["human_review_required"] = bool(getattr(report, "human_review_object_count", 0)) or any(v.get("human_review_required") for v in object_verdicts)
         summary["verdict"] = verdict.get("overall_summary", "")[:200]
     elif verdict:
         # 旧版 single-verdict 格式
@@ -587,25 +568,25 @@ def _review_agent_status(report) -> dict[str, Any]:
 
         if exec_status == "completed":
             agents[key]["status"] = "completed"
-            agents[key]["confidence"] = output_confidence or 85
+            agents[key]["confidence"] = output_confidence if confidences else None
             agents[key]["output"] = output[:600]
         elif exec_status == "failed":
             agents[key]["status"] = "failed"
-            agents[key]["confidence"] = output_confidence or 20
+            agents[key]["confidence"] = output_confidence if confidences else None
             agents[key]["output"] = output[:600]
             agents[key]["error"] = exec_info.get("error", "")
         elif exec_status == "running":
             agents[key]["status"] = "running"
-            agents[key]["confidence"] = 50
+            agents[key]["confidence"] = None
         else:
             # pending — 回退检查 opinions
             has_output = bool(output.strip()) and output.strip() != "{}"
             if has_output:
                 agents[key]["status"] = "completed"
-                agents[key]["confidence"] = 75
+                agents[key]["confidence"] = None
             else:
                 agents[key]["status"] = "pending"
-                agents[key]["confidence"] = 10
+                agents[key]["confidence"] = None
             agents[key]["output"] = output[:600] if has_output else ""
 
         agents[key]["duration_ms"] = exec_info.get("duration_ms", 0)

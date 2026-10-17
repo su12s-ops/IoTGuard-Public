@@ -6,6 +6,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.database import get_db
 from app.services.risk_engine import calculate_risk
+from app.services.review_common.governance import explanation
 
 router = APIRouter(prefix="/risk", tags=["Risk"])
 
@@ -37,6 +38,7 @@ def ranking(db: Session = Depends(get_db)):
             {
                 "id": item.id,
                 "risk_id": item.id,
+                "active": item.active,
                 "object_id": f"risk-{item.id}",
                 "match_id": item.match_id,
                 "rank": item.priority_rank,
@@ -85,6 +87,7 @@ def ranking(db: Session = Depends(get_db)):
                 "recommended_priority": item.recommended_priority,
                 "recommended_action": item.recommended_action,
                 "risk_direction": item.risk_direction,
+                "governance": explanation(db, item),
                 "evidence_packet": json.loads(item.evidence_packet_json or "{}"),
                 "agent_results": json.loads(item.agent_results_json or "{}"),
                 "conflict_result": json.loads(item.conflict_result_json or "{}"),

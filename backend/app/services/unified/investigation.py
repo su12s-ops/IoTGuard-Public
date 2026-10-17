@@ -37,7 +37,12 @@ def evidence_view(db, asset_id):
     for row in db.query(models.OfficialCveRecord).filter(models.OfficialCveRecord.cve_id.in_(cves)).order_by(models.OfficialCveRecord.id):
         if row.evidence_status == "available":
             official[row.cve_id] = row.content_sha256
+    metadata = json.loads(asset.inventory_metadata_json or "{}")
     return {"packages": sorted((p.package_name, p.package_version, p.architecture) for p in asset.packages),
+            "services": sorted((s.service_name or "", s.port or 0, s.protocol or "", s.listen_address or "",
+                s.process_name or "", bool(s.is_public_exposed)) for s in asset.services),
+            "package_sources": sorted(metadata.get("package_sources") or []),
+            "cached_apt_policy": metadata.get("apt_policy") or {},
             "distribution": asset.distribution, "os_version": asset.os_version,
             "official": official,
             "inventory_complete": asset.inventory_complete,
@@ -46,8 +51,8 @@ def evidence_view(db, asset_id):
 
 def propose(db, run_id, request):
     row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id).one_or_none()
-    if row is None or row.mode != "shadow":
-        raise ValueError("shadow_source_required")
+    if row is None or row.mode not in {"shadow", "formal"}:
+        raise ValueError("unified_source_required")
     asset = db.query(models.LinuxAsset).filter_by(hostname=row.target_ref).one_or_none()
     risk = db.get(models.RiskAssessment, row.risk_id) if row.risk_id else None
     if row.target_type != "linux_host" or asset is None or (risk and risk.asset_id != asset.id):
@@ -121,16 +126,31 @@ def resume(db, item, client_factory=None):
     if json.loads(asset.inventory_metadata_json or "{}").get("collection_run_id") != run.id:
         raise ValueError("collection_superseded")
     parent = db.query(models.UnifiedAnalysisRun).filter_by(run_id=item.source_run_id).one()
+    if parent.mode == "formal":
+        from app import config
+        risk = db.get(models.RiskAssessment, parent.risk_id)
+        if config.UNIFIED_PIPELINE_MODE != "on" or not risk or not risk.active:
+            raise ValueError("active_formal_source_required")
+        current_run = json.loads(risk.device_context_json or "{}").get("unified_run_id")
+        if current_run != parent.run_id or risk.review_status not in {"pending_human_review", "reanalysis_required"}:
+            raise ValueError("formal_source_superseded_or_under_review")
     claimed = db.execute(update(models.InvestigationRequest).where(
         models.InvestigationRequest.id == item.id, models.InvestigationRequest.status == "authorized",
         models.InvestigationRequest.reanalysis_run_id == "").values(status="reanalysis_running"))
     if claimed.rowcount != 1:
         db.rollback()
         raise ValueError("reanalysis_already_claimed")
+    if parent.mode == "formal":
+        changed_risk = db.execute(update(models.RiskAssessment).where(
+            models.RiskAssessment.id == risk.id,
+            models.RiskAssessment.review_status.in_({"pending_human_review", "reanalysis_required"})).values(review_status="agent_reviewing"))
+        if changed_risk.rowcount != 1:
+            db.rollback()
+            raise ValueError("formal_review_state_changed")
     child = models.UnifiedAnalysisRun(run_id="UA-" + uuid.uuid4().hex[:24], risk_id=parent.risk_id,
-        task_type=parent.task_type, target_type=parent.target_type, target_ref=parent.target_ref, mode="shadow", status="running")
+        task_type=parent.task_type, target_type=parent.target_type, target_ref=parent.target_ref, mode=parent.mode, status="running")
     trace = tracing.start_trace(db, task_type="unified_four_agent", target_type=child.target_type, target_ref=child.target_ref,
-        run_ref_type="unified_analysis", run_ref_id=child.run_id, metadata={"mode": "shadow", "parent": parent.run_id, "request_id": item.id})
+        run_ref_type="unified_analysis", run_ref_id=child.run_id, metadata={"mode": parent.mode, "parent": parent.run_id, "request_id": item.id})
     child.trace_id = trace.trace_id
     db.add(child)
     item.reanalysis_run_id, item.status = child.run_id, "reanalysis_running"
@@ -144,19 +164,35 @@ def resume(db, item, client_factory=None):
         "new_inventory_evidence_id": evidence_id, "collection_run_id": run.id,
         "previous_verdicts": (previous_state.get("decision") or {}).get("verdicts"),
         "instruction": "本次已完成授权固定清单采集。逐项说明新证据解决了什么、未解决什么，为什么改变或保持判断；未刷新 apt 索引、未采集新运行时。不得因重跑提高置信度。"})
+    if parent.mode == "formal":
+        from app import config
+        from app.services.unified.adapter import formal_sink
+        risk = db.get(models.RiskAssessment, parent.risk_id)
+        if config.UNIFIED_PIPELINE_MODE != "on" or not risk or not risk.active:
+            raise ValueError("active_formal_source_required")
+        kwargs["sink"] = formal_sink
     run_unified_sync(db, child, force_full_review=True, investigation_goal=goal, **kwargs)
+    if parent.mode == "formal" and child.status != "completed":
+        risk.review_status, risk.human_review_required = "pending_human_review", True
+        risk.final_score = risk.risk_level = risk.decision = None
+        risk.review_reason = "unified_investigation_reanalysis_failed:" + (child.error or "unknown")
+        db.commit()
     old, new = json.loads(parent.state_json), json.loads(child.state_json)
+    if parent.mode == "formal":
+        from app.services.unified.adapter import persist_investigation_report
+        from app.services.unified.state import UnifiedAnalysisState
+        persist_investigation_report(db, child, UnifiedAnalysisState.model_validate(new))
     changed = substantive_change(json.loads(item.before_json), evidence_view(db, item.asset_id))
     # A new receipt alone cannot justify increased confidence in any role.
-    if not changed:
-        clamp_confidence(old, new)
-        child.state_json = encode(new)
-        child.decision_json = encode(new.get("decision") or {})
+    # Preserve every raw model confidence. Repeated reasoning is variance,
+    # never evidence that independently justifies a risk change.
     contributions = {role: {"judgment_changed": judgment(old.get(key)) != judgment(new.get(key)),
         "output_changed": old.get(key) != new.get(key), "before": old.get(key), "after": new.get(key)}
         for role, key in zip(ALL_AGENT_IDS, ("investigation", "vulnerability", "runtime", "decision"))}
     item.result_json = encode({"evidence_id": evidence_id, "substantive_update": changed,
         "gap_resolution": "current_inventory_verified_partial_question",
+        "model_variance_only": not changed,
+        "raw_model_confidence_preserved": True,
         "resolved_facts": {"distribution": asset.distribution, "os_version": asset.os_version,
             "package_count": len(asset.packages), "inventory_sha256": raw.content_sha256,
             "candidate_packages": [{"name": p.package_name, "version": p.package_version} for p in asset.packages
@@ -168,26 +204,9 @@ def resume(db, item, client_factory=None):
     item.status = "completed" if child.status == "completed" else "reanalysis_failed"
     db.commit()
     tracing.emit(db, child.trace_id, "investigation_reassessed", actor="collection_policy", status=item.status,
-        payload={"request_id": item.id, "substantive_update": changed, "confidence_cap": not changed}, evidence_refs=[evidence_id])
+        payload={"request_id": item.id, "substantive_update": changed, "model_variance_only": not changed}, evidence_refs=[evidence_id])
     return child
 
-
-def clamp_confidence(old, new):
-    """Match semantic objects by identity; unseen objects get no confidence boost."""
-    if isinstance(new, dict):
-        old = old if isinstance(old, dict) else {}
-        for key, value in new.items():
-            if key == "confidence" and isinstance(value, (int, float)):
-                new[key] = min(value, float(old.get(key) or 0))
-            else:
-                clamp_confidence(old.get(key), value)
-    elif isinstance(new, list):
-        previous = old if isinstance(old, list) else []
-        for index, value in enumerate(new):
-            keys = ("object_id", "cve_id", "evidence_id", "dimension")
-            identity = next((key for key in keys if isinstance(value, dict) and value.get(key)), None)
-            prior = next((v for v in previous if isinstance(v, dict) and v.get(identity) == value[identity]), {}) if identity else (previous[index] if index < len(previous) else {})
-            clamp_confidence(prior, value)
 
 
 def judgment(report):

@@ -24,7 +24,7 @@ if str(_SCRIPTS_DIR) not in sys.path:
 
 from app.services.unified.evidence_prep import build_evidence_prep_packet  # noqa: E402
 
-from stage9_agent_effectiveness_audit import (  # noqa: E402
+from tests.closure_fixture import (  # noqa: E402
     build_fixture,
     fresh_session_factory,
 )

@@ -455,6 +455,17 @@ class RuntimeSensor(Base):
     detail = Column(Text, default="")
 
 
+class RiskGovernanceEvent(Base):
+    __tablename__ = "risk_governance_event"
+    id = Column(Integer, primary_key=True)
+    risk_id = Column(Integer, ForeignKey("risk_assessment.id"), index=True, nullable=False)
+    kind = Column(String(64), nullable=False)
+    actor = Column(String(128), nullable=False)
+    contract_version = Column(String(64), nullable=False)
+    payload_json = Column(Text, nullable=False)
+    created_at = Column(DateTime, default=utcnow)
+
+
 class HarnessRun(Base):
     __tablename__ = "harness_run"
     id = Column(String(32), primary_key=True)

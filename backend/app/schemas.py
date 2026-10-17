@@ -19,8 +19,19 @@ class TaskStatusUpdate(BaseModel):
 
 
 class HumanReviewRequest(BaseModel):
-    decision: Literal["confirm", "reject"]
-    reason: str
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["begin", "confirm", "reject", "request_reanalysis", "accept_risk"]
+    reason: str = Field(min_length=1, max_length=4000)
+    actor: str = Field(min_length=1, max_length=128)
+    expected_status: str = Field(min_length=1, max_length=32)
+
+
+class HistoricalAdjudicationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    decision: Literal["confirm_archive", "retain_for_review", "reject_correction"]
+    reason: str = Field(min_length=1, max_length=4000)
+    actor: str = Field(min_length=1, max_length=128)
+    correction_event_id: int = Field(gt=0)
 
 
 class DemoTargetBase(BaseModel):

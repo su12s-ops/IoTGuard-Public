@@ -269,14 +269,14 @@ class TestPipelineIntegration:
 
 class TestAgentDataQuality:
     def test_gap_when_openwrt_asset_has_no_logread(self, db, openwrt_asset):
-        from app.services.agents.tools import tool_query_runtime_data_quality
+        from app.services.agent_tools import tool_query_runtime_data_quality
 
         result = tool_query_runtime_data_quality(db, "OpenWrt")
         assert result["found"] is True
         assert any("logread 运行时日志采集记录" in gap for gap in result["data_gaps"])
 
     def test_sensor_recorded_and_gap_declares_degraded_basis(self, db, openwrt_asset):
-        from app.services.agents.tools import tool_query_runtime_data_quality
+        from app.services.agent_tools import tool_query_runtime_data_quality
 
         events, meta = ortlog.build_events(_capture(), asset_hostname="OpenWrt",
                                            asset_id=openwrt_asset.id, sensor_id="openwrt-logread-1")

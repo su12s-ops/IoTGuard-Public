@@ -172,7 +172,7 @@ const formatScore = (value) => Number.isFinite(Number(value)) ? Number(value).to
 const affectedStatusText = (status) => ({ potentially_affected: "版本命中", version_match: "版本命中", insufficient_data: "证据不足", unknown: "待补证", fixed: "已修复", not_affected: "未受影响" }[status] || status || "未知");
 const runtimeStatusText = (status) => ({ verified: "已验证", contextual: "上下文关联", not_observed: "未观察到", waiting: "等待证据" }[status] || status || "未知");
 const reachableStatusText = (status) => ({ internet_exposed: "公网可达", internal_reachable: "内部可达", linked: "内部可达", local_only: "仅本机", none: "仅包级命中", unreachable: "不可达" }[status] || status || "未知");
-const auditLabel = (row) => row.human_review_required || row.review_status === "pending_human_review" ? "待人工审核" : row.has_final_conclusion ? "已形成结论" : "候选待研判";
+const auditLabel = (row) => row.active === false && row.review_status === "inactive" ? (row.governance?.historical_review_state === "confirm_archive" ? "历史归档已确认" : "历史待裁定") : row.human_review_required || row.review_status === "pending_human_review" ? "待人工审核" : row.has_final_conclusion ? "已形成结论" : "候选待研判";
 const auditClass = (row) => row.human_review_required || row.review_status === "pending_human_review" ? "is-h" : row.has_final_conclusion ? "is-l" : "is-info";
 const decisionLabel = (value) => ({ immediate_fix: "立即修复", scheduled_fix: "排期修复", collect_more_evidence: "继续补证", monitor: "持续观察", defer: "暂缓处理" }[value] || value || "待裁决");
 const releaseOf = (cveId) => (cveId || "").split(":")[1] || "-";

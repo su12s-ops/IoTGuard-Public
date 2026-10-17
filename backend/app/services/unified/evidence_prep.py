@@ -539,6 +539,10 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
                 "上游版本口径比较结果；厂商精确公告声明本 release not_affected"
                 + ("（含 backport 修复）" if vendor_patch.get("backport") else "")
                 + "，厂商口径优先，不得据此判受影响")
+        if vendor_patch.get("release_status") == "not_affected":
+            version_compare = {"result": "not_affected", "legacy_candidate_fixed_version": fixed,
+                "note": "精确官方 not_affected；无本 CVE 专属修复版本，旧版本仅为历史候选值"}
+            fixed = ""
         candidate_facts.append(CandidateFacts(
             cve_id=cve_id, package_name=str(candidate.get("package_name") or ""),
             installed_version=installed, fixed_version=fixed,

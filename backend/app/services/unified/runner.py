@@ -83,6 +83,11 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
     """
     if run_row.mode == "shadow" and sink is not None:
         raise ValueError("shadow_sink_forbidden")
+    if run_row.mode == "formal":
+        from app import config
+        from app.services.unified.adapter import formal_sink
+        if config.UNIFIED_PIPELINE_MODE != "on" or sink is not formal_sink:
+            raise ValueError("unique_formal_sink_required")
     state = empty_state(
         run_row.run_id, run_row.task_type, run_row.target_ref,
         run_row.target_type, run_row.mode)
@@ -105,7 +110,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
     ctx = RunContext(
         db_factory=SessionLocal, trace_id=run_row.trace_id, meter=meter,
         client_factory=client_factory, risk=risk, run_deadline_s=run_deadline_s,
-        ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review and run_row.mode == "shadow")
+        ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review)
     if risk is not None:
         baseline_ids = json.loads(risk.evidence_packet_json or "{}") if risk.evidence_packet_json else {}
         ctx.packet_evidence_ids = {

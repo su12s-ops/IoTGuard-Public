@@ -472,7 +472,7 @@ class TestAuditPolicy:
             "investigation": {"evidence_quality": "sufficient"},
             "runtime": {"runtime_status": "not_observed"},
             "conflict_result": {},
-            "decision": {"verdicts": [{"risk_direction": "upgrade_major",
+            "decision": {"verdicts": [{"risk_direction": "upgrade_major", "risk_change_basis": "new relevant exposure compared to input.baseline",
                                        "recommended_action": "monitor",
                                        "recommended_priority": "low",
                                        "impact_status": "potentially_affected",

@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.services.vulnerability_intelligence.service import get_source_bundle
+from app.services.review_common.governance import explanation
 
 
 FINAL_REVIEW_STATES = {
@@ -197,7 +198,11 @@ def markdown_report(db: Session) -> str:
         preliminary = risk.preliminary_score if risk.preliminary_score is not None else 0
         final = risk.final_score
         has_final = _has_final_conclusion(risk)
-        if has_final:
+        governance = explanation(db, risk)
+        historical_corrected = not risk.active and any(e["kind"] == "official_applicability_correction" for e in governance["events"])
+        if historical_corrected:
+            score_line = f"历史错误基线分数={preliminary}, 历史等级={risk.preliminary_level}；当前官方不受影响，保持inactive，归档状态={governance['historical_review_state']}"
+        elif has_final:
             change = ""
             if abs(preliminary - final) > 0.01:
                 change = f"，风险变化: 基线 {preliminary} → 最终 {final}"
@@ -208,6 +213,10 @@ def markdown_report(db: Session) -> str:
         lines.append(
             f"- #{risk.priority_rank} {host} {risk.cve_id}: {score_line}, 依据={risk.reason or ''}"
         )
+        lines.append(f"  - 风险方向原值={risk.risk_direction}; 语义={governance['risk_direction_semantics']}; 软件包方向见独立处置计划。")
+        for event in governance["events"]:
+            if event["kind"] in {"official_applicability_correction", "historical_adjudication", "human_review"}:
+                lines.append(f"  - 治理审计 #{event['id']} {event['kind']} / {event['actor']}: {json.dumps(event['payload'], ensure_ascii=False, default=str)}")
     lines.extend(["", "## 整改建议（不自动执行修复）"])
     for task in summary["tasks"][:10]:
         asset = db.get(models.LinuxAsset, task.asset_id)
@@ -231,6 +240,7 @@ def json_report(db: Session) -> dict:
                 "rank": risk.priority_rank,
                 "asset_id": risk.asset_id,
                 "cve_id": risk.cve_id,
+                "active": risk.active,
                 "preliminary_score": risk.preliminary_score,
                 "preliminary_level": risk.preliminary_level,
                 "preliminary_decision": risk.preliminary_decision,
@@ -242,6 +252,8 @@ def json_report(db: Session) -> dict:
                 "review_verdict": risk.review_verdict,
                 "review_confidence": risk.review_confidence,
                 "review_adjustment": risk.review_adjustment,
+                "risk_direction": risk.risk_direction,
+                "governance": explanation(db, risk),
                 "human_review_required": risk.human_review_required,
                 "has_final_conclusion": _has_final_conclusion(risk),
                 "reason": risk.reason if _has_final_conclusion(risk) else risk.preliminary_reason,

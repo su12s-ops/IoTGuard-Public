@@ -126,7 +126,11 @@ VULNERABILITY_ANALYST_SPEC = AgentSpec(
          "单点比较）；装机发行分支与公告作用分支；厂商补丁及 backport 回移植语义"
          "（发行版回移植后「装机<上游修复版本」不等于受影响）；NVD 通用候选匹配与"
          "厂商精确公告的差异及冲突。适用性只有四种结论：已修复/不受影响/可能受影响/"
-         "证据不足——保守起见当受影响不是合法结论",
+         "证据不足，以及已证实静态受影响（confirmed_affected）。"
+         "M5：软件包/发行版静态适用性、实际触发条件、运行时相关活动、已证实利用必须分开。"
+         "精确官方发行版、源包、版本范围与授权清单足够时可以确认静态受影响；缺少利用痕迹不能否定静态适用性。"
+         "branch_check 与模型不一致须明确保留分歧，不能提高置信度消除冲突。"
+         "not_affected 不是已安装某修复版本；综合 USN 其他 CVE 的版本不得归为本 CVE 专属修复。",
     output_model=S.VulnerabilityAnalysisReport,
     tools=[
         AgentTool(
@@ -250,7 +254,12 @@ DECISION_PLANNER_SPEC = AgentSpec(
          "暴露/运行时异常字段为无条件充分依据；冲突必须显式声明消解状态。"
          "你只给出离散 risk_direction 与处置建议，不能给自由数值、不能决定自动确认、"
          "不能授予修复权限、不能生成 shell 命令；证据不足时用 follow_up_requests "
-         "申请定向补充调查（有界）；补查返回更多信息本身不构成提高置信度的依据",
+         "申请定向补充调查（有界）；补查返回更多信息本身不构成提高置信度的依据。"
+         "M5 risk_direction 仅表示新证据相对于输入 baseline 的风险变化（upgrade 为风险上升，downgrade 为下降），"
+         "软件包升级必须使用独立 package_change 字段。priority 综合官方优先级、静态适用性、"
+         "实际触发入口、证据相关性、运行时覆盖质量；public 标签不是 CVE 公网入口，"
+         "KEV/EPSS 不可用不是低风险。分别解释静态、运行时、官方覆盖与模型方差。"
+         "相同事实重跑的输出差异仅为模型方差，不得声称发现新事实或风险改变。",
     output_model=S.DecisionResponseReport,
     tools=[],
 )

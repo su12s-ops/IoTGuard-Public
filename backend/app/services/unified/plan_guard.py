@@ -16,6 +16,16 @@ def annotate_plan(state: dict, plan: dict, evidence_ids: list[str]) -> dict:
         if len(parts) == 3 and parts[1] == package:
             allowed.add(parts[0].split(":")[0])
     classifications, blockers = [], []
+    package_actions = [a for a in plan.get("actions") or [] if a.get("action") == "update_package"]
+    # This is the proposed package direction, separate from risk_direction and
+    # from whether any operation has actually been authorized or executed.
+    package_change = ("upgrade" if package_actions and fixed and
+        (candidate.get("version_compare") or {}).get("result") == "affected" else
+        "undetermined" if package_actions else "none")
+    verdict = ((state.get("decision") or {}).get("verdicts") or [{}])[0]
+    model_package_change = verdict.get("package_change", "undetermined")
+    if package_actions and model_package_change == "none":
+        blockers.append("package_direction_conflicts_with_proposed_actions")
     for index, action in enumerate(plan.get("actions") or []):
         kind, target = action.get("action"), action.get("target", "")
         category = "risk_mitigation"
@@ -31,7 +41,7 @@ def annotate_plan(state: dict, plan: dict, evidence_ids: list[str]) -> dict:
                 blockers.append("fix_version_not_vendor_release_version")
             if vendor.get("release_status") == "not_affected" or (candidate.get("version_compare") or {}).get("result") == "fixed":
                 blockers.append("fix_for_excluded_or_fixed_vulnerability")
-        elif kind == "restart_service" and target in {"falco", "tetragon", "ebpf-collector"}:
+        elif kind == "restart_service" and str(target).split(" ", 1)[0].lower() in {"falco", "tetragon", "ebpf-collector"}:
             category = "collector_health_recovery"
         elif kind == "backup_file":
             category = "rollback_preparation"
@@ -41,6 +51,8 @@ def annotate_plan(state: dict, plan: dict, evidence_ids: list[str]) -> dict:
             "target": target, "requires_approval": True})
         action["requires_approval"] = True
     return {**plan, "requires_approval": True,
+        "package_change": package_change, "model_package_change": model_package_change,
+        "package_change_semantics": "proposed_package_operation_not_risk_change_or_execution",
         "resolved_risk_ref": baseline.get("object_id") or state.get("object_id"),
         "original_evidence_ids": evidence_ids,
         "affected_source_package": package, "vendor_release_fixed_version": fixed,

@@ -11,8 +11,8 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app import models
-from app.services.agents.agents import specs_summary
-from app.services.agents.tools import tool_query_runtime_data_quality
+from app.services.unified.agents_def import specs_summary
+from app.services.agent_tools import tool_query_runtime_data_quality
 
 
 @pytest.fixture()
@@ -122,7 +122,7 @@ def test_unknown_device_reports_gap_not_fabrication(session_factory):
 
 
 def test_runtime_agent_spec_registers_quality_tool():
-    spec = next(s for s in specs_summary() if s["name"] == "runtime_behavior_agent")
+    spec = next(s for s in specs_summary() if s["name"] == "runtime_analyst")
     assert "query_runtime_data_quality" in spec["tools"]
 
 
@@ -131,7 +131,7 @@ def test_evidence_keys_reconcile_device_and_host_lines(session_factory):
     与主机线资产（LinuxAsset，SSH 采集自报主机名 OpenWrt-<hash>）必须互相传递
     证据键——logread/eBPF 证据锚定的是设备自报主机名，否则设备面研判会因键
     失配错误得到"无运行时证据"。"""
-    from app.services.agents.tools import _evidence_keys
+    from app.services.agent_tools import _evidence_keys
 
     db = session_factory()
     try:
@@ -153,7 +153,7 @@ def test_evidence_keys_reconcile_device_and_host_lines(session_factory):
 def test_evidence_keys_resolve_via_pinned_connection_when_asset_ip_missing(session_factory):
     """操作员上传的主机线资产可以没有 IP 字段（清单不含管理地址）；此时经
     指纹钉扎的 DeviceConnection（host↔asset_id，平台权威同机绑定）解析。"""
-    from app.services.agents.tools import _evidence_keys
+    from app.services.agent_tools import _evidence_keys
 
     db = session_factory()
     try:

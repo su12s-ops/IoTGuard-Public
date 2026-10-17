@@ -187,6 +187,11 @@ def import_official_records(
             "entries": entries,
         }
     db.flush()
+    from app.services.review_common.governance import reconcile_official_record
+    for result in results.values():
+        if result.get("evidence_status") == "imported":
+            official = db.query(models.OfficialCveRecord).filter_by(evidence_id=result["evidence_id"]).one()
+            reconcile_official_record(db, official)
     return results
 
 

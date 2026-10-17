@@ -122,11 +122,19 @@ def _risk_and_match(db, run, require_active=True):
     if (not risk or risk.asset_id != run.asset_id or not match or match.asset_id != run.asset_id
             or match.cve_id != risk.cve_id or (require_active and (not risk.active or not match.active))):
         raise ValueError("任务没有有效且属于当前资产的风险事件")
+    from app.services.review_common.governance import correction
+    if correction(db, risk):
+        raise ValueError("officially_corrected_risk_execution_blocked")
+    if require_active:
+        from app.services.review_common.governance import assert_execution_allowed
+        assert_execution_allowed(db, risk)
     return risk, match
 
 
 def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", model_review=False,
                trace_id="", shadow_run_id=""):
+    if model_review:
+        raise ValueError("harness_embedded_llm_retired_use_formal_analysis")
     if device_access.collection_only_mode() and goal != "collect":
         raise ValueError("联调采集模式只允许纯采集任务，不允许调查、复核或修复")
     if goal == "collect":
@@ -143,8 +151,6 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
     risk = db.get(models.RiskAssessment, risk_id) if risk_id else None
     if risk_id and (not risk or risk.asset_id != asset_id):
         raise ValueError("风险事件不属于所选资产")
-    if model_review and not risk:
-        raise ValueError("智能体复核需要选择具体风险事件")
     connection = db.query(models.DeviceConnection).filter_by(asset_id=asset_id, enabled=True).one_or_none()
     snapshot = inventory(asset)
     plan = {"policy_version": POLICY_VERSION, "goal": goal, "asset_id": asset_id, "risk_id": risk_id,
@@ -166,8 +172,6 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
             "authorization": "none"}
     run = models.HarnessRun(id=uuid.uuid4().hex, asset_id=asset_id, risk_id=risk_id,
                             connection_id=connection.id if connection else None, snapshot_json=encode(snapshot))
-    if model_review:
-        plan["steps"].append("expert_review")
     if goal == "repair":
         if asset.distribution == "ubuntu":
             from app.services import ubuntu_repair
@@ -226,6 +230,9 @@ def _openwrt_repair_plan(db, run, asset, risk, connection, snapshot, plan, artif
     run.status = "blocked" if reasons else "awaiting_approval"
 
 def approve(db, run, plan_hash, actor, reason):
+    if run.risk_id:
+        from app.services.review_common.governance import assert_execution_allowed
+        assert_execution_allowed(db, db.get(models.RiskAssessment, run.risk_id))
     if digest(json.loads(run.plan_json)) != plan_hash:
         tracing.emit(db, run.trace_id, "harness_policy_blocked", actor="harness",
                      status="blocked", payload={"check": "plan_hash_mismatch", "submitted": plan_hash})
@@ -363,23 +370,6 @@ def install_registered_package(connection, item, path, rollback=False):
         client.close()
 
 
-def _expert_review(db, run, risk):
-    from app.services import event_review_pipeline as review
-    if not review._configured():
-        raise ValueError("智能体模型未配置；未生成替代或模拟结论")
-    packet = review.build_evidence_packet(db, risk)
-    async def invoke():
-        client = review._create_model_client()
-        try:
-            return await asyncio.wait_for(review._safe_process_event(packet, client), timeout=240)
-        finally:
-            await client.close()
-    result = asyncio.run(invoke())
-    review._persist_event_result(db, run.id, result)
-    return {"risk_id": risk.id, "review_status": risk.review_status, "recommended_action": risk.recommended_action,
-            "human_review_required": risk.human_review_required,
-            "requested_tools": result["coordinator"].requested_tools if result.get("coordinator") else ["manual_review"]}
-
 
 def _verify(db, run, connection, item, root):
     fresh = tool(db, run, "collect_inventory", lambda: _collect(db, connection))
@@ -430,6 +420,8 @@ def _claim(db, run, allowed_states):
 
 def execute(db, run, verify_only=False):
     plan = json.loads(run.plan_json)
+    if plan.get("model_review"):
+        raise ValueError("harness_embedded_llm_retired_use_formal_analysis")
     if plan.get("adapter") == "ubuntu-apt-v1":
         from app.services import ubuntu_repair
         return ubuntu_repair.queue(db, run, "verify" if verify_only else "execute")
@@ -484,24 +476,6 @@ def execute(db, run, verify_only=False):
                 run_matching(db, cve_ids=[risk.cve_id])
                 from app.services.review_common import build_evidence_packet
                 result["evidence_packet"] = tool(db, run, "inspect_evidence", lambda: build_evidence_packet(db, risk).model_dump())
-                if plan["model_review"]:
-                    result["agent_review"] = tool(db, run, "expert_review", lambda: _expert_review(db, run, risk))
-                    followups = {}
-                    for requested in dict.fromkeys(result["agent_review"]["requested_tools"]):
-                        if requested == "collect_inventory" and connection and asset.distribution == "openwrt":
-                            followups[requested] = tool(db, run, requested, lambda: _collect(db, connection))
-                            run_matching(db, cve_ids=[risk.cve_id])
-                        elif requested == "inspect_runtime":
-                            followups[requested] = tool(db, run, requested, lambda: coverage(db, asset.id))
-                        elif requested == "inspect_evidence":
-                            followups[requested] = tool(db, run, requested, lambda: build_evidence_packet(db, risk).model_dump())
-                        else:
-                            result["missing_evidence"].append("智能体要求人工复核或设备补采尚不可用")
-                    result["followup_tools"] = followups
-                    if followups:
-                        result["agent_rereview"] = tool(db, run, "expert_review", lambda: _expert_review(db, run, risk))
-                        if result["agent_rereview"]["human_review_required"]:
-                            result["missing_evidence"].append("补采后仍需人工复核；自动调查最多补采一轮")
             run.status = "needs_evidence" if result["missing_evidence"] else "completed"
         else:
             if connection is None:

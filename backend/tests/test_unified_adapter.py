@@ -247,9 +247,9 @@ class TestBatchAdapter:
                                              client_factory=lambda: ScriptedClient(copy.deepcopy(FULL_SCRIPT)))
         db.close()
         # High（困难候选全量评审→人工门禁）+ Medium（simple 分层 0-LLM 直通）
-        assert result["status"] == "partial"
-        assert result["completed_object_count"] == 1
-        assert result["human_review_object_count"] == 1
+        assert result["status"] == "human_review"
+        assert result["completed_object_count"] == 0
+        assert result["human_review_object_count"] == 2
         assert result["selected_object_count"] == 2
         assert len(result["event_results"]) == 2
         assert all(event["pipeline_version"] == "unified-four-agent-v1"
@@ -261,12 +261,12 @@ class TestBatchAdapter:
         assert risk_high.review_status == "pending_human_review"
         assert risk_high.recommended_action == "immediate_fix"
         # Medium 简单分层：规则直通 auto_confirmed，结论来源显式标注
-        assert risk_medium.review_status == "auto_confirmed"
-        assert "rule_tier_simple" in json.loads(risk_medium.audit_policy_reasons)
+        assert risk_medium.review_status == "pending_human_review"
+        assert "rule_tier_simple" not in json.loads(risk_medium.audit_policy_reasons)
         assert json.loads(risk_medium.device_context_json)["pipeline_version"] == "unified-four-agent-v1"
         db.close()
 
-    def test_analysis_router_switches_by_flag(self, client, monkeypatch, session_factory):
+    def test_analysis_router_switches_by_flag(self, client, monkeypatch, session_factory, control_headers):
         """flag=on 时 /api/analysis/runs 走统一适配层；off 时走原链路。"""
         from app import main
         monkeypatch.setattr(main, "SessionLocal", session_factory)
@@ -278,7 +278,7 @@ class TestBatchAdapter:
         import app.routers.analysis as analysis_mod
         import app.services.unified.adapter as adapter_mod
 
-        def fake_unified(db, run_id=None, background=True):
+        def fake_unified(db, run_id=None, background=True, **kwargs):
             called["unified"] += 1
             return {"run_id": run_id, "status": "no_candidates",
                     "pipeline_version": UNIFIED_ADAPTER_VERSION}
@@ -287,13 +287,13 @@ class TestBatchAdapter:
         # 种一个候选，保证走到 _review_entrypoint（无候选时在入口前提前返回）
         risk_id = _setup_risk(session_factory, level="High", score=70.0)
         monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
-        response = client.post("/api/analysis/runs")
+        response = client.post("/api/analysis/runs", headers=control_headers)
         assert response.status_code == 200
         payload = response.json()
         assert payload["pipeline_version"] == UNIFIED_ADAPTER_VERSION
         assert called["unified"] == 1
 
         monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "off")
-        response = client.post("/api/analysis/runs")
-        assert response.status_code == 200
+        response = client.post("/api/analysis/runs", headers=control_headers)
+        assert response.status_code == 503
         assert called["unified"] == 1   # 未再增长（走了原链路）

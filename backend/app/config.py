@@ -33,7 +33,7 @@ DEEPSEEK_API_PROTOCOL = os.getenv("DEEPSEEK_API_PROTOCOL", "openai")
 # 可选：anthropic 协议下关闭模型思考（off=禁用；默认空=沿用模型默认行为）
 DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "")
 
-# Stage 9B：统一四智能体编排开关（off=零行为变化 / shadow=影子对照 / on=正式入口）
+# M5：唯一四智能体；on 为正式入口，off/shadow 禁止正式任务，无旧 LLM fallback。
 UNIFIED_PIPELINE_MODE = os.getenv("LINUXGUARD_UNIFIED_PIPELINE", "off").strip().lower()
 if UNIFIED_PIPELINE_MODE not in {"off", "shadow", "on"}:
     UNIFIED_PIPELINE_MODE = "off"

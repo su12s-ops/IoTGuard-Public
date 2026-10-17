@@ -462,10 +462,20 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None) -> int:
             )
             db.add(risk)
         else:
+            from app.services.review_common.governance import correction
+            if correction(db, risk):
+                # A contradicted historical match is permanently ineligible.
+                # New applicability requires a new evidence-backed risk object.
+                continue
             changed = risk.candidate_fingerprint != fingerprint or not risk.active
             for name, value in values.items():
                 setattr(risk, name, value)
             if changed:
+                from app.services.review_common.governance import record, snapshot, invalidate_prior_authorizations
+                record(db, risk, "risk_reanalysis_reset", "risk_engine", {
+                    "original": snapshot(risk), "reason": "candidate_facts_changed",
+                    "original_direction_semantics": "legacy_or_previous_contract"})
+                invalidate_prior_authorizations(db, risk, "candidate_facts_changed")
                 _reset_for_reanalysis(risk, "候选关键证据发生变化，需重新研判。")
                 _block_open_remediation_tasks(db, risk, "候选关键证据发生变化。")
         processed += 1

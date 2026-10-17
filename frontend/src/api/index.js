@@ -58,7 +58,7 @@ export const calculateRisk = () => api.post("/risk/calculate").then((res) => res
 export const fetchRiskRanking = () => api.get("/risk/ranking").then((res) => res.data);
 export const generateRemediation = () => api.post("/remediation/generate").then((res) => res.data);
 export const fetchRemediationTasks = () => api.get("/remediation/tasks").then((res) => res.data);
-export const updateTaskStatus = (id, status) => api.patch(`/remediation/tasks/${id}`, { status }).then((res) => res.data);
+export const updateTaskStatus = (id, status) => api.patch(`/remediation/tasks/${id}`, { status }, controlRequest()).then((res) => res.data);
 export const fetchReportJson = () => api.get("/reports/summary.json").then((res) => res.data);
 export const fetchReportMarkdown = () => api.get("/reports/summary.md").then((res) => res.data);
 export const fetchReportArchives = () => api.get("/reports/archives").then((res) => res.data);
@@ -98,8 +98,12 @@ export const archiveDownloadUrl = (filename) =>
 
 // ========== 任务式风险研判接口 ==========
 export const createReviewRun = (retryFailed = false) =>
-  api.post("/analysis/runs", null, { params: { retry_failed: retryFailed } }).then((res) => res.data);
+  api.post("/analysis/runs", null, { ...controlRequest(), params: { retry_failed: retryFailed, batch_size: 1 } }).then((res) => res.data);
 export const fetchReviewRun = (runId) => api.get(`/analysis/runs/${runId}`).then((res) => res.data);
 export const fetchPreflight = () => api.get("/analysis/preflight").then((res) => res.data);
-export const reviewRiskEvent = (riskId, decision, reason) =>
-  api.post(`/analysis/risks/${riskId}/human-review`, { decision, reason }, controlRequest()).then((res) => res.data);
+export const reviewRiskEvent = (riskId, decision, reason, actor, expected_status) =>
+  api.post(`/analysis/risks/${riskId}/human-review`, { decision, reason, actor, expected_status }, controlRequest()).then((res) => res.data);
+
+export const adjudicateHistoricalRisk = (riskId, payload) => api.post(`/analysis/risks/${riskId}/historical-adjudication`, payload, controlRequest()).then(r => r.data);
+
+export const analyzeHistoricalRisk = riskId => api.post(`/analysis/risks/${riskId}/historical-analysis`, null, controlRequest()).then(r => r.data);

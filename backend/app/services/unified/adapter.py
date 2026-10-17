@@ -2,7 +2,7 @@
 
 原则：
 - 仅当 LINUXGUARD_UNIFIED_PIPELINE=on 时由路由切换到本模块；off/shadow
-  模式下正式链路保持 System B 原样（零行为变化）；
+  模式下拒绝正式任务；旧 LLM 产品代码已退役；
 - 响应契约与 System B 的 generate_and_save_report 兼容（前端/调用方无感）；
 - 正式落库经 formal_sink：审计门禁结论写 RiskAssessment（语义与 System B
   的 _persist_event_result 一致），影子表同时保留完整状态；
@@ -45,9 +45,30 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
     risk = db.get(models.RiskAssessment, run_row.risk_id) if run_row.risk_id else None
     if risk is None:
         return
+    if not risk.active:
+        raise ValueError("inactive_risk_requires_historical_adjudication")
+    from app.services.review_common import governance
+    event = governance.assessment_record(db, risk, run_row, state)
     baseline = state.baseline or {}
     final = state.final or {}
     policy = AuditPolicyDecisionRecord.model_validate(final.get("policy") or {})
+    facts_hash = json.loads(event.payload_json)["facts_hash"]
+    previous_events = db.query(models.RiskGovernanceEvent).filter(
+        models.RiskGovernanceEvent.risk_id == risk.id, models.RiskGovernanceEvent.kind == "native_assessment",
+        models.RiskGovernanceEvent.id < event.id).order_by(models.RiskGovernanceEvent.id.desc()).first()
+    previous_payload = json.loads(previous_events.payload_json) if previous_events else {}
+    if previous_events and previous_payload.get("facts_schema") != json.loads(event.payload_json).get("facts_schema"):
+        policy.status = "pending_human_review"
+        policy.final_score = policy.final_level = None
+        policy.reasons.append("facts_comparison_schema_changed_requires_review")
+    if previous_events and previous_payload.get("facts_hash") == facts_hash:
+        policy.status = "pending_human_review"
+        policy.final_score = policy.final_level = None
+        policy.reasons.append("same_facts_model_variance_not_new_evidence")
+    if db.query(models.RiskGovernanceEvent).filter_by(risk_id=risk.id, kind="object_review_hold").first():
+        policy.status = "pending_human_review"
+        policy.final_score = policy.final_level = None
+        policy.reasons.append("object_review_hold_requires_operator")
     decision = state.decision or {}
     verdicts = decision.get("verdicts") or []
     verdict = verdicts[0] if verdicts else {}
@@ -65,6 +86,10 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
     for verdict_item in verdicts:
         missing.extend(verdict_item.get("missing_evidence") or [])
 
+    if governance.correction(db, risk):
+        policy.status = "pending_human_review"
+        policy.reasons.append("official_correction_execution_blocked")
+        policy.final_score = policy.final_level = None
     risk.review_status = policy.status
     risk.human_review_required = policy.status == "pending_human_review"
     risk.review_adjustment = policy.adjustment
@@ -85,6 +110,8 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
         risk.recommended_priority = verdict.get("recommended_priority") or ""
         risk.recommended_action = verdict.get("recommended_action") or ""
         risk.risk_direction = verdict.get("risk_direction") or "maintain"
+        if "same_facts_model_variance_not_new_evidence" in policy.reasons:
+            risk.risk_direction = json.loads(event.payload_json)["previous"].get("risk_direction") or "maintain"
     else:
         risk.review_confidence = 0
         risk.review_verdict = "insufficient_evidence"
@@ -104,6 +131,12 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
         risk.decision = None
         risk.reason = risk.review_reason or "统一审计门禁要求人工审核"
     risk.audit_policy_reasons = json.dumps(policy.reasons, ensure_ascii=False)
+    state.final["policy"] = policy.model_dump()
+    run_row.state_json = state.model_dump_json()
+    risk.evidence_packet_json = json.dumps(state.evidence_prep or {}, ensure_ascii=False, default=str)
+    risk.agent_results_json = json.dumps({"asset_investigator": state.investigation,
+        "vulnerability_analyst": state.vulnerability, "runtime_analyst": state.runtime, "decision_planner": state.decision}, ensure_ascii=False)
+    risk.conflict_result_json = state.conflict_result.model_dump_json()
 
     # F2/R1 对账：设备级运行时结论只读附加（不参与既有门禁语义）
     risk.device_context_json = json.dumps({
@@ -174,6 +207,7 @@ def _event_result(run_row: models.UnifiedAnalysisRun, state: UnifiedAnalysisStat
         "conflict": state.conflict_result.model_dump(),
         "degraded_roles": state.degraded_roles,
         "routing": state.routing.model_dump(),
+        "plan": (state.final or {}).get("plan"),
         "pipeline_version": PIPELINE_VERSION,
     }
 
@@ -197,7 +231,7 @@ def _aggregate_agent_executions(rows: list[models.UnifiedAnalysisRun]) -> dict[s
 def run_review_analysis_unified(db: Session, run_id: str | None = None,
                                 selected_risks=None, selection_result=None,
                                 progress_callback=None,
-                                client_factory=None) -> dict[str, Any]:
+                                client_factory=None, investigation_goal: str = "") -> dict[str, Any]:
     """System B run_review_analysis 的统一编排器实现（正式模式）。
 
     逐事件串行执行统一图（每事件一次完整四智能体编排），经 formal_sink
@@ -205,8 +239,10 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     """
     from app.services.review_common import select_candidates
 
+    if config.UNIFIED_PIPELINE_MODE != "on":
+        raise ValueError("formal_unified_mode_required")
     del selection_result
-    selected = list(selected_risks or select_candidates(db)["_selected_risks"])
+    selected = list(select_candidates(db)["_selected_risks"] if selected_risks is None else selected_risks)
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:
         return {"status": "no_candidates", "review_run_id": run_id, "model_called": False}
@@ -214,6 +250,8 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     rows: list[models.UnifiedAnalysisRun] = []
     states: list[UnifiedAnalysisState] = []
     for risk in selected:
+        if not risk.active or risk.review_status in {"inactive", "resolved", "human_reviewing"}:
+            raise ValueError("risk_not_eligible_for_formal_analysis")
         run_row = models.UnifiedAnalysisRun(
             run_id=f"UA-{run_id}-{risk.id}", task_type=TASK_RISK_REVIEW,
             target_type="linux_host",
@@ -221,8 +259,14 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
                                               if db.get(models.LinuxAsset, risk.asset_id) else ""),
             mode="formal", status="running", risk_id=risk.id)
         db.add(run_row)
+        from app.services import trace_service as tracing
+        trace = tracing.start_trace(db, task_type="unified_four_agent", target_type="linux_host",
+            target_ref=run_row.target_ref, run_ref_type="unified_analysis", run_ref_id=run_row.run_id,
+            metadata={"mode": "formal", "formal_entry": "/api/analysis", "risk_id": risk.id})
+        run_row.trace_id = trace.trace_id
         db.commit()
-        run_unified_sync(db, run_row, sink=formal_sink,
+        run_unified_sync(db, run_row, sink=formal_sink, force_full_review=True,
+                         investigation_goal=investigation_goal,
                          client_factory=client_factory or default_client_factory)
         if run_row.status == "failed":
             # runner 会捕获编排级异常并把运行标记 failed（不抛出、不落 sink）。
@@ -276,13 +320,42 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     }
 
 
+_admission_lock = threading.RLock()
+
+
+def _admission(function):
+    from functools import wraps
+    @wraps(function)
+    def dispatch(db, *args, **kwargs):
+        with _admission_lock:
+            if db.query(models.AnalysisReport).filter_by(status="running").first():
+                raise ValueError("formal_worker_busy")
+            return function(db, *args, **kwargs)
+    return dispatch
+
+
+@_admission
 def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                                      background: bool = False,
-                                     client_factory=None) -> dict[str, Any]:
+                                     client_factory=None, risk_id: int = 0, batch_size: int = 1,
+                                     investigation_goal: str = "") -> dict[str, Any]:
     """System B generate_and_save_report 的统一编排器实现（正式模式入口）。"""
     from app.services.review_common import select_candidates
 
+    if config.UNIFIED_PIPELINE_MODE != "on":
+        raise ValueError("formal_unified_mode_required")
     selection = select_candidates(db)
+    eligible = selection["_selected_risks"]
+    if risk_id:
+        eligible = [risk for risk in eligible if risk.id == risk_id]
+        if not eligible:
+            raise ValueError("risk_not_eligible_for_formal_analysis")
+    selected_ids = {r.id for r in eligible[:max(1, min(batch_size, 4))]}
+    selection["skipped_objects"] += [{"object_id": f"risk-{r.id}", "reason": "bounded_queue"}
+                                     for r in selection["_selected_risks"] if r.id not in selected_ids]
+    selection["_selected_risks"] = [r for r in eligible if r.id in selected_ids]
+    selection["selected_object_ids"] = [f"risk-{r.id}" for r in selection["_selected_risks"]]
+    selection["selected_object_count"] = len(selected_ids)
     selected = selection["_selected_risks"]
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:
@@ -305,6 +378,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         progress_sequence=1, progress_updated_at=datetime.now(timezone.utc))
     db.add(report)
     for risk in selected:
+        from app.services.review_common.governance import invalidate_prior_authorizations
+        invalidate_prior_authorizations(db, risk, "new_formal_assessment_requires_new_approval")
         risk.review_status = "agent_reviewing"
     db.commit()
     db.refresh(report)
@@ -349,7 +424,7 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                 result = run_review_analysis_unified(
                     worker_db, run_id, worker_selected,
                     progress_callback=lambda **payload: _progress(worker_db, run_id, **payload),
-                    client_factory=client_factory)
+                    client_factory=client_factory, investigation_goal=investigation_goal)
                 _finish(worker_db, worker_report, result)
             except Exception as exc:
                 traceback.print_exc()
@@ -360,6 +435,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                     risk.human_review_required = True
                     risk.review_reason = f"unified_background_failure:{exc}"
                     risk.final_score = None
+                    risk.risk_level = None
+                    risk.decision = None
                 worker_report = worker_db.query(models.AnalysisReport).filter_by(
                     review_run_id=run_id).one_or_none()
                 if worker_report:
@@ -387,7 +464,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
             "created_at": report.created_at.isoformat() if report.created_at else "",
         }
 
-    result = run_review_analysis_unified(db, run_id, selected, client_factory=client_factory)
+    result = run_review_analysis_unified(db, run_id, selected, client_factory=client_factory,
+                                         investigation_goal=investigation_goal)
     _finish(db, report, result)
     result["report_id"] = report.id
     return result
@@ -405,3 +483,31 @@ def _progress(db: Session, run_id: str, **payload: Any) -> None:
         report.progress_sequence = int(report.progress_sequence or 0) + 1
         report.progress_updated_at = datetime.now(timezone.utc)
         db.commit()
+
+
+def persist_investigation_report(db, row, state):
+    """Publish a formal reanalysis receipt through the existing report read model.
+
+    The original batch report stays historical; /analysis/latest and exported
+    reports must point to the new INV-driven run, not the pre-collection draft.
+    """
+    if row.mode != "formal" or state.mode != "formal":
+        raise ValueError("formal_investigation_report_required")
+    if db.query(models.AnalysisReport).filter_by(review_run_id=row.run_id).first():
+        return
+    event = _event_result(row, state)
+    human = (state.final.get("policy") or {}).get("status") != "auto_confirmed"
+    db.add(models.AnalysisReport(review_run_id=row.run_id, model=config.DEEPSEEK_MODEL,
+        pipeline_version=UNIFIED_ADAPTER_VERSION, status="human_review" if human else "completed",
+        current_stage="audit_policy", candidate_count=1, selected_object_count=1,
+        processed_object_count=1, completed_object_count=0 if human else 1,
+        human_review_object_count=1 if human else 0, object_verdict_count=bool(event["coordinator"]),
+        selected_object_ids_json=json.dumps([state.object_id]), progress_percent=100,
+        agent_executions_json=json.dumps(_aggregate_agent_executions([row]), ensure_ascii=False),
+        verdict_json=json.dumps({"pipeline_version": UNIFIED_ADAPTER_VERSION, "event_results": [event],
+            "object_verdicts": [event["coordinator"]] if event["coordinator"] else [],
+            "overall_summary": "授权只读补采后的统一四角色正式再研判；人工门禁与修复授权仍然独立。"}, ensure_ascii=False),
+        opinions_json=json.dumps([event], ensure_ascii=False),
+        answer="授权只读补采后的统一四角色正式再研判；原报告作为历史保留。",
+        termination_reason="investigation_reanalysis", completed_at=models.utcnow()))
+    db.commit()

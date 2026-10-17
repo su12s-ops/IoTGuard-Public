@@ -5,7 +5,7 @@ import pytest
 
 from app import models
 from app.services import device_vulnerability as DV
-from app.services.agents import tools as agent_tools
+from app.services import agent_tools as agent_tools
 
 DEVICE_ID = "DEV-SCX1-MATCH"
 ADVISORY = {

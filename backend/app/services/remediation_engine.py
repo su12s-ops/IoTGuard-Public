@@ -50,6 +50,8 @@ def _esm_remediation_command(package_name: str) -> str:
 
 
 def _authorized(risk: models.RiskAssessment) -> bool:
+    if not risk.active or risk.review_verdict == "not_affected":
+        return False
     if risk.review_status not in AUTHORIZED_STATES or risk.human_review_required:
         return False
     # High/Critical and core assets never receive formal repair authorization
@@ -74,7 +76,8 @@ def generate_remediation_tasks(db: Session, allow_human_override: bool = False) 
         .all()
     )
     for risk in assessments:
-        if not _authorized(risk):
+        from app.services.review_common.governance import execution_allowed
+        if not _authorized(risk) or not execution_allowed(db, risk):
             continue
         asset = db.get(models.LinuxAsset, risk.asset_id)
         match = db.get(models.VulnerabilityMatch, risk.match_id) if risk.match_id else None

@@ -230,17 +230,9 @@ def test_registered_file_cannot_escape_manifest_directory(rig, tmp_path):
         h.checked_file(rig.root, "../outside.ipk", hashlib.sha256(b"test").hexdigest())
 
 
-def test_investigation_marks_missing_coverage_and_bounds_agent_followups(rig, monkeypatch):
-    calls = []
-    def expert(db, run, risk):
-        calls.append(run.id)
-        return {"requested_tools": ["inspect_runtime"], "human_review_required": True}
-    monkeypatch.setattr(h, "_expert_review", expert)
-    run = h.create_run(rig.db, rig.asset.id, rig.risk.id, model_review=True)
-    h.execute(rig.db, run)
-    assert run.status == "needs_evidence", run.error
-    assert len(calls) == 2
-    assert "inspect_runtime" in json.loads(run.result_json)["followup_tools"]
+def test_harness_embedded_model_review_is_retired(rig):
+    with pytest.raises(ValueError, match="harness_embedded_llm_retired"):
+        h.create_run(rig.db, rig.asset.id, rig.risk.id, model_review=True)
     assert rig.calls == []
 
 
@@ -250,7 +242,7 @@ def test_harness_api_requires_control_and_prevents_manual_verification(rig, clie
     assert response.status_code == 200
     run_id = response.json()["id"]
     assert client.get("/api/harness/runs/" + run_id).json()["tool_calls"] == []
-    response = client.patch("/api/remediation/tasks/" + str(rig.task.id), json={"status": "verified"})
+    response = client.patch("/api/remediation/tasks/" + str(rig.task.id), json={"status": "verified"}, headers=control)
     assert response.status_code in {400, 409}
 
 

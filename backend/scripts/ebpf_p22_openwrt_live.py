@@ -318,14 +318,14 @@ def main() -> int:
         (report_dir / "reliability.json").write_text(rel_text, encoding="utf-8")
         check("reliability 端点含 logread 语义", "logread" in rel_text)
 
-        from app.services.agents.tools import tool_query_runtime_data_quality
+        from app.services.agent_tools import tool_query_runtime_data_quality
         quality = tool_query_runtime_data_quality(db, "OpenWrt")
         (report_dir / "agent-data-quality.json").write_text(
             json.dumps(quality, ensure_ascii=False, indent=2), encoding="utf-8")
         check("智能体数据质量 found", quality.get("found") is True)
         check("数据质量声明降级边界（非 eBPF）",
               any("拉取式降级采集" in gap and "非 eBPF" in gap for gap in quality.get("data_gaps", [])))
-        from app.services.agents.tools import (tool_query_file_evidence,
+        from app.services.agent_tools import (tool_query_file_evidence,
                                                 tool_query_network_evidence,
                                                 tool_query_process_evidence)
         evidence_views = {
