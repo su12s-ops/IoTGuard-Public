@@ -5,13 +5,14 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
+from app.services.device_access import require_control
 from app.services.risk_engine import calculate_risk
 from app.services.review_common.governance import explanation
 
 router = APIRouter(prefix="/risk", tags=["Risk"])
 
 
-@router.post("/calculate")
+@router.post("/calculate", dependencies=[Depends(require_control)])
 def calculate(db: Session = Depends(get_db)):
     count = calculate_risk(db)
     return {"message": "Risk calculated", "count": count}

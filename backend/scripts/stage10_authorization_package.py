@@ -45,6 +45,13 @@ GATED_ACTIONS = [
 
 
 def write_private(path: Path, payload: dict) -> str:
+    # Defense-in-depth containment (Mimosa finding finding:4b7e2112…, static
+    # advisory): this CLI tool's sink only ever writes inside the gitignored
+    # local archive. Enforce it instead of relying on call-site discipline.
+    root = ROOT.resolve()
+    target = path.resolve()
+    if not target.is_relative_to(root / "local-archive"):
+        raise SystemExit("refusing to write outside the local archive")
     path.parent.mkdir(parents=True, exist_ok=True)
     raw = json.dumps(payload, ensure_ascii=False, indent=2).encode("utf-8")
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, stat.S_IRUSR | stat.S_IWUSR)

@@ -1,5 +1,7 @@
 # IoTGuard Stage 10：真实漏洞修复与四智能体自动复检 —— 第一轮交付报告（停在独立实验授权门禁）
 
+> **【Stage 10 第二轮纠正记录 · 2026-10-17】** 本报告原文保留，但其中三处"通告 **USN-8927-1**"的归属**错误**，特此纠正：经对官方原文 `https://ubuntu.com/security/cves/CVE-2026-94266.json`（content_sha256 `932d5a73873cf5f94ae3eae37d5e5cb57abbaa045235fc5797fea0632f8b0816`，与库内原始记录一致且稳定）逐字段核验——**USN-8927-1 仅覆盖 `resolute` 发行版，不含 noble**；noble/curl 源包修复版 `8.5.0-2ubuntu10.16` 的实际通告是 **USN-8932-1**（noble 条目含源包 curl 及 curl、libcurl3t64-gnutls、libcurl4-doc、libcurl4-gnutls-dev、libcurl4-openssl-dev、libcurl4t64 六个二进制包）。产品数据库派生字段（notice_fixes、风险证据包、治理事件）自始即为正确的 USN-8932-1，无需数据纠正；本轮错误仅存在于本报告与 `ai_collaboration/CHANGELOG.md`、`ai_collaboration/CURRENT_TASK.md` 的文字叙述。后续任何修复计划的 `official.notices` 字段以代码从官方原文实时推导为准（仅纳入对 noble 携带该修复版本的通告），原审批哈希不因本次纠正受影响（尚无已批准计划）。
+
 日期：2026-10-17（Asia/Shanghai）。仓库：IoTGuard-Public。基线：`710d87daed4df6b7d5fbd3e3ace3fd58aeea36a4`。
 
 **本轮结论（如实陈述）**：已完成任务书第一部分全部生产状态核查与第二部分全部可安全自动化的准备工作；**未创建克隆、未执行任何快照恢复验证、未刷新任何 apt 索引、未执行任何 dpkg 写操作、未开启任何修复写开关**。统一四智能体对克隆的研判与 Harness 候选计划属于获批后的执行内容（克隆尚不存在，不存在可研判对象；本轮不做任何模拟或伪造）。生产双写开关全程为 0，原始资产 1 与风险 126 零改动。

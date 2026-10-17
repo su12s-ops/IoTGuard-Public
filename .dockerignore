@@ -1,0 +1,34 @@
+# Backend image build context (repo root). Secrets and runtime data must never
+# enter the build context or the image layers.
+.git
+.github
+.mimosa
+.pytest_cache
+**/__pycache__
+*.pyc
+*.log
+
+# Credentials and local environment: NEVER COPY
+backend/.env
+backend/.env.*
+!backend/.env.example
+.env
+*.pem
+*.key
+*.p12
+*.pfx
+id_rsa*
+id_ed25519*
+
+# Runtime data and local archives (operator-only)
+backend/data/
+reports/
+local-archive/
+asset_inventory.json
+
+# Not needed by the backend image
+frontend/
+firmware/
+simulator/
+docs/
+node_modules/

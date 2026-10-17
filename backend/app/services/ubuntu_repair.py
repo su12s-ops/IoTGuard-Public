@@ -38,6 +38,24 @@ def h():
     return agent_harness
 
 
+def lab_write_state(asset_id):
+    """Stage-10 permission contract for the isolated Ubuntu clone path.
+
+    The lab write switch authorizes nothing by itself: this backend must also
+    declare the exact clone asset id in LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE.
+    LINUXGUARD_ENABLE_DEVICE_REPAIR is the OpenWrt device-write master and is
+    deliberately NOT consulted here, so a lab approval can never be granted by
+    turning on the production device switch (and vice versa). Empty scope is
+    fail-closed.
+    """
+    if os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") != "1":
+        return False, "ubuntu_lab_repair_disabled"
+    scope = {part.strip() for part in (os.getenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", "") or "").split(",") if part.strip()}
+    if str(asset_id) not in scope:
+        return False, "ubuntu_lab_asset_scope_not_declared"
+    return True, ""
+
+
 def official(db, cve, refresh=False):
     cve = cve.split(":")[0]
     if refresh:
@@ -156,8 +174,9 @@ def queue(db, run, operation):
         age = time.time() - plan.get("preflight_received_at", 0)
         if not plan.get("preflight") or not plan["preflight"]["ready"] or not 0 <= age <= 900:
             raise ValueError("预演缺失或已过期，须创建新计划")
-        if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") != "1" or os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") != "1":
-            raise ValueError("设备写操作未启用；隔离副本执行须单独批准")
+        allowed, reason = lab_write_state(run.asset_id)
+        if not allowed:
+            raise ValueError("隔离副本写未授权：" + reason)
         # Backend and execution node independently require the clone-specific permit.
         from importlib.util import spec_from_file_location, module_from_spec
         spec = spec_from_file_location("ubuntu_maintenance", MAINTENANCE)
@@ -205,14 +224,15 @@ def claim(db, run, node_id):
     audit = json.loads(run.result_json)["dispatch"]
     if node_id != plan["node_id"] or audit["queued_for_node"] != node_id or audit["plan_hash"] != run.plan_hash:
         raise ValueError("节点或任务摘要不匹配")
-    if audit["operation"] == "execute" and (run.approval_hash != run.plan_hash or os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") != "1"):
-        raise ValueError("执行审批或写开关已变化")
+    if audit["operation"] == "execute" and run.approval_hash != run.plan_hash:
+        raise ValueError("执行审批已变化")
     if audit["operation"] == "execute":
         risk, match = h()._risk_and_match(db, run)
         if not _authorized(risk) or h().review_signature(risk) != plan["review_hash"] or match.evidence_fingerprint != plan["match_fingerprint"]:
             raise ValueError("领取前风险授权已变化")
-        if os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") != "1":
-            raise ValueError("隔离副本写开关已关闭")
+        allowed, reason = lab_write_state(run.asset_id)
+        if not allowed:
+            raise ValueError("隔离副本写开关已关闭：" + reason)
         if not 0 <= time.time() - plan.get("preflight_received_at", 0) <= 900:
             raise ValueError("执行预演已过期")
     changed = db.execute(update(models.HarnessRun).where(models.HarnessRun.id == run.id,

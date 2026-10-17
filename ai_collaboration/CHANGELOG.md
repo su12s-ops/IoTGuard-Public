@@ -11,14 +11,17 @@
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
 <!-- STAGE10_GATE_STATUS_START -->
-## 2026-10-17 Stage 10 第一轮：真实漏洞修复准备完成——停在独立实验授权门禁
+## Stage 10 第二轮（2026-10-17）：权限契约修复、传感器恢复、研判效率优化与 Docker 交付——隔离实验仍停在授权门禁
 
-- 基线 `710d87d`，工作区干净。任务书第一部分六项核查全部通过（只读取证）：unified 唯一正式引擎（analysis.py 非 on 即 503）、System A/B 零残留、双采集节点正常（后端 46128 / 隧道 46424，当日 03:12 双通道补采 Ubuntu 1790 包与 OpenWrt 182 包）、风险 126 `pending_human_review`/`confirmed_affected` 未代签、官方原文 `ADV-e97cb19b…`（USN-8927-1，noble/security，sha256 `932d5a73…`）、双修复写开关 0 且 `remediation_task` 0 行。
-- 唯一实现变更：最小多节点 Pull 节点注册（`LINUXGUARD_COLLECTION_NODES_JSON` + `LINUXGUARD_COLLECTION_NODE_TOKEN_<SUFFIX>` + `node_for_asset`），原 m45-linux-node 行为逐字节兼容；claim 支持多节点共存（跳过他节点任务）、端点强制"令牌所属节点＝声名节点"、ubuntu_repair 计划绑定改按资产解析。未配置 JSON 时与 M5 一致。
-- 新增只读工具 `backend/scripts/stage10_authorization_package.py`（unified 非 on 或开关非 0 拒绝运行；不打印秘密）。
-- 虚拟化只读探测：VMware Workstation vmrun、源 VM .vmx 全事实、0 快照、Tools running、VMnet8 DHCP 池；克隆预选 192.168.183.110（池外静态，白名单逐主机 /32 追加）。
-- 本地产物（gitignored `local-archive/stage10-work/`）：`authorization-request.json`（sha256 `0c136d6b…ed688`）、`clone-identity.json`（sha256 `c76887ec…0544f`，含已生成独立节点令牌与克隆专用 Ed25519 指纹 `SHA256:PvhZVvu6…`）、克隆密钥对、`clone-operation-plan.md`（阶段 A–F 精确计划）、`register-clone-runbook.md`。
-- **未创建克隆、未执行快照恢复验证、未刷新 apt 索引、未执行 dpkg 写、未开任何写开关；四智能体克隆研判与 Harness 候选计划未执行也未模拟。**集中授权申请（7 项）随 `IOTGUARD_STAGE10_REAL_REMEDIATION_E2E_REPORT.md` 提交，等待用户单独批准；未批准不宣称修复成功。
+基线 `9ce6e60`。统一报告：`IOTGUARD_STAGE10_PRODUCT_COMPLETION_REPORT.md`。生产双写开关全程 0；原始资产 1 与风险 126 零改动。
+
+- **P0-1 权限契约**：新增 `IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md`（唯一正式版本）。修复三处：①`ubuntu-apt-v1` 实验写不再要求 `LINUXGUARD_ENABLE_DEVICE_REPAIR`（该开关改为 OpenWrt 设备写专用域），改由 `LINUXGUARD_UBUNTU_LAB_REPAIR=1` + 新增 `LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE`（逐资产白名单，空=fail-closed）+ 既有许可文件三重约束；②`/api/risk/calculate`、`/api/remediation/generate`、`/api/vulnerabilities/sync-*`、`/api/unified/analyze` 四个此前无认证的写端点补齐 `require_control`；③节点/控制双令牌域保持互斥。新增 fail-closed 测试（含"设备开关置 1 也不能解锁实验室写"断言）。
+- **P0-2 官方依据纠正**：逐字段核验官方 `CVE-2026-94266.json`（sha256 `932d5a73…` 与库内一致）——**USN-8927-1 仅覆盖 resolute；noble/curl 源包修复版 `.16` 的实际通告是 USN-8932-1**。历史文档（第一轮报告/CHANGELOG/CURRENT_TASK 叙述）已加纠正声明，原始记录保留；库内派生字段自始正确。克隆只读复核通过（VM 0 快照、312G 可用、.110 无冲突），授权包已刷新——**克隆创建/快照恢复/索引刷新/dpkg 写/回滚仍全部停在授权门禁**。
+- **P1-1 传感器**：两个 stopped 传感器分别查明——`openwrt-logread-1` 为拉取式（恢复=触发采集），已恢复：422 条新事件入库（当日时间戳 154 条），心跳刷新；`wyh-VMware-Virtual-Platform:falco` 为常驻服务，10-14 被操作员手动 stop 后未重启，**恢复停在 VM root 授权点**（sudo 需密码/root SSH 拒绝；待执行命令 `sudo systemctl start linuxguard-falco`）。采集节点 Runner 修复了两处真实缺陷（后端重启即死亡的未捕获 RemoteDisconnected；重启后节点自动恢复在线已实测）。`/api/health` 新增四态分层（Backend/Collection Node/Sensor/Runtime Evidence 互相独立），前端同步展示。
+- **P1-2 效率**（同输入前后对照，风险 12 shadow，真实 LLM）：基线 `m47-glm-smoke4` 41m46s/19 次/325,405 tokens → 优化后 `UA-20261017084453-a65f5a` **19m05s/10 次/216,674 tokens**（耗时 −54.3%、调用 −47.4%、tokens −33.4%）；最终结论一致（not_affected/monitor/low/downgrade_major），零降级，冲突语义一致走人工。三项最小优化：①请求内确定性工具缓存（时间敏感运行时工具明确排除）；②inventory-only 补查不再触发决策全量重跑；③定向复议继承完整首次上下文、失败保留原结论不降级。OpenWrt shadow `UA-20261017090833-0a6622` 实证 Runtime Analyst 消费恢复后的当日 logread 证据（4 条 finding 引用当日事件，来源/时间在库内核验）。
+- **P1-3 Docker**：前端改多阶段构建（Vite build → nginx，SPA 回退 + /api 反代，不再用 dev server）；后端镜像补齐哈希钉扎 collector 脚本与 migrations、非 root、健康检查；新增 docker-compose.yml 与根 .dockerignore（.env*/密钥/运行数据不进上下文）。实测：构建成功、双容器 healthy、路由刷新 200、API 代理 200、bundle 无硬编码后端地址、镜像内无密钥。采集节点与 Falco 传感器仍在外部 Linux 主机（compose 明确不含、不加 privileged）。
+- **P2**：Mimosa 深扫 `scan-2026-10-17T09-08-58.996Z-4dc68ad6cebb`（seal `53c54180…a8822`）：1 个 high advisory（`stage10_authorization_package.py:write_private` 静态疑似路径穿越）——人工核验为误报（纯 CLI、路径为硬编码常量、无 HTTP 面），已按纵深防御加入 local-archive 包含检查并保留发现留痕；**coverage=completeness partial / runStatus inconclusive（threatModel 观察到 0 入口点）如实披露，未以部分覆盖冒充完成验收**。
+- 仍待用户独立批准：授权一（克隆创建/快照恢复/克隆内官方索引刷新）与授权二（dpkg 写/实验写开关/精确计划审批）——二者均未批准，未执行；Falco 传感器启动需 VM sudo 授权或口令。
 <!-- STAGE10_GATE_STATUS_END -->
 
 

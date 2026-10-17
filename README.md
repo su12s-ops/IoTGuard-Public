@@ -50,7 +50,21 @@ cp backend/.env.example backend/.env   # DeepSeek/NVD Key、控制令牌、发�
 cp frontend/.env.example frontend/.env # 仅 API 地址
 ```
 
-关键环境变量（见 `backend/.env.example` 注释）：`DEEPSEEK_API_KEY`、`NVD_API_KEY`、`LINUXGUARD_CONTROL_TOKEN`（设备操作令牌）、`LINUXGUARD_DISCOVERY_CIDRS`（授权扫描网段白名单）、`LINUXGUARD_ENABLE_DEVICE_REPAIR`（设备写操作总开关，默认 0 关闭）。
+关键环境变量（见 `backend/.env.example` 注释）：`DEEPSEEK_API_KEY`、`NVD_API_KEY`、`LINUXGUARD_CONTROL_TOKEN`（设备操作令牌）、`LINUXGUARD_DISCOVERY_CIDRS`（授权扫描网段白名单）、`LINUXGUARD_ENABLE_DEVICE_REPAIR`（OpenWrt 设备写总开关，默认 0 关闭）。修复类写操作的完整权限契约（控制令牌域 / 采集节点令牌域 / 设备写开关 / 隔离克隆实验室写作用域）见 [Stage 10 写操作权限契约](IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md)。
+
+## Docker 部署（生产）
+
+```bash
+cp backend/.env.example backend/.env.docker   # 按需填写；绝不提交
+docker compose up -d --build
+# 前端(nginx 生产构建 + /api 反代): http://localhost:8080
+# 后端 API: http://localhost:8000/api/health
+```
+
+- 前端镜像为多阶段构建：Vite 生产构建 `dist` → nginx 提供（SPA 路由刷新回退、`/api` 反代到后端）；**不由 Vite 开发服务器对外服务**。
+- 后端镜像包含哈希钉扎的采集/修复脚本（`collector/`），非 root 运行，无特权；数据库在命名卷中，凭据不进入镜像（根 `.dockerignore` 拦截 `.env*`/密钥/运行数据）。
+- 边界（重要）：Docker Compose 独立启动的是 **API + 前端**；**Linux 采集节点（Pull Runner）与 Falco/eBPF 传感器运行在外部 Linux 主机上**（`backend/scripts/collection_node_runner.py`、`collector/deploy/falco/`），经网络回连后端。后端容器不加载 eBPF、不持有设备凭据、绝无 privileged 需求。外部采集节点未启动不是后端故障。
+- 系统状态展示区分四个独立层次（`GET /api/health` 的 `layers`）：**Backend Online / Collection Node Online / Sensor Healthy / Runtime Evidence Fresh**——后端在线不代表采集节点在线，更不代表传感器健康或运行时证据新鲜。
 
 ## 本地启动
 
@@ -69,7 +83,7 @@ python simulator/smartcam_x1.py --host 127.0.0.1 --http-port 8080 --ssh-port 220
 ## 测试
 
 ```bash
-# 后端单元/集成（341 项；含发现闭环 14 项 Mock 用例）
+# 后端单元/集成（隔离 pytest 回归；当前规模 680+ 项，以提交时的 CI 输出为准）
 cd backend && python -m pytest -q
 
 # SmartCam 真实发现闭环联调（独立进程：真实模拟器 + 真实 HTTP API + 一次性临时库，

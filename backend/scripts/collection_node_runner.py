@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import base64
 import hashlib
+import http.client
 import ipaddress
 import json
 import os
@@ -139,6 +140,11 @@ class Backend:
                 return exc.code, {"raw": raw[:300]}
         except urllib.error.URLError as exc:
             log(f"后端不可达: {exc.reason}")
+            return 0, None
+        except (OSError, http.client.HTTPException) as exc:
+            # 后端重启/代理中断会把 RemoteDisconnected 等裸连接错误抛进这里；
+            # 节点必须存活并在下个轮询周期重试，绝不能因此退出常驻循环。
+            log(f"后端连接中断: {type(exc).__name__}: {exc}")
             return 0, None
 
 
@@ -327,8 +333,13 @@ def main() -> None:
     backend = Backend(base_url, token)
 
     while True:
-        status, payload = backend.request(
-            "GET", f"/api/iot/collection-node/claim?node_id={node_id}&node_platform=Linux")
+        try:
+            status, payload = backend.request(
+                "GET", f"/api/iot/collection-node/claim?node_id={node_id}&node_platform=Linux")
+        except Exception as exc:  # noqa: BLE001 — 常驻循环必须吞掉单次轮询异常并重试
+            log(f"领取轮询异常: {type(exc).__name__}: {exc}")
+            time.sleep(max(args.interval, 3))
+            continue
         if status != 200 and args.once:
             raise SystemExit(f"领取失败 HTTP {status}: {payload}; 本轮未执行采集")
         assignment = ((payload or {}).get("assignment")) if status == 200 else None

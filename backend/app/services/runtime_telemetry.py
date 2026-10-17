@@ -56,6 +56,26 @@ def event_time(value):
         return None
 
 
+EVIDENCE_FRESH_WINDOW_S = 900
+
+
+def evidence_freshness(db, asset_id=None):
+    """Whether any real runtime event arrived recently — deliberately separate
+    from sensor heartbeat status and from backend liveness."""
+    now = datetime.now(timezone.utc)
+    query = db.query(func.max(models.RuntimeEvent.occurred_at))
+    if asset_id is not None:
+        query = query.filter(models.RuntimeEvent.asset_id == asset_id)
+    latest = query.scalar()
+    age = None
+    if latest:
+        parsed = event_time(latest) or latest
+        age = round(max(0, (now - parsed).total_seconds()))
+    return {"fresh": age is not None and age <= EVIDENCE_FRESH_WINDOW_S,
+            "latest_event_age_seconds": age, "window_seconds": EVIDENCE_FRESH_WINDOW_S,
+            "basis": "latest_persisted_runtime_event_occurred_at"}
+
+
 def coverage(db, asset_id):
     now = datetime.now(timezone.utc)
     sensors = db.query(models.RuntimeSensor).filter_by(asset_id=asset_id).all()

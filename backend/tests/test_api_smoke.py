@@ -78,11 +78,46 @@ def test_health_endpoint(client):
     response = client.get("/api/health")
 
     assert response.status_code == 200
-    assert response.json() == {
-        "status": "ok",
-        "service": "LinuxGuard",
-        "database": "ok",
-    }
+    body = response.json()
+    assert body["status"] == "ok"
+    assert body["service"] == "LinuxGuard"
+    assert body["database"] == "ok"
+
+
+def test_health_reports_four_independent_layers(client, session_factory, monkeypatch):
+    """Backend Online / Collection Node Online / Sensor Healthy / Runtime
+    Evidence Fresh are separate signals; a stale sensor must not be masked
+    by a 200 from the API."""
+    from app import main, models
+
+    def data():
+        db = session_factory()
+        try:
+            db.add(models.RuntimeSensor(asset_id=1, sensor_id="s:falco", source="falco",
+                                        status="stopped", last_heartbeat_at=models.utcnow()))
+            db.add(models.RuntimeEvent(asset_id=1, sensor_id="s:falco", source="falco",
+                                       occurred_at="2000-01-01T00:00:00Z"))
+            db.commit()
+        finally:
+            db.close()
+    data()
+
+    original = main.SessionLocal
+    main.SessionLocal = session_factory
+    try:
+        response = client.get("/api/health")
+    finally:
+        main.SessionLocal = original
+    body = response.json()
+    layers = body["layers"]
+    assert layers["backend_online"] is True
+    assert layers["collection_node"]["configured"] is False
+    assert layers["collection_node"]["online"] is False
+    assert layers["sensors"]["total"] == 1
+    assert layers["sensors"]["status"] in {"stopped", "stale"}
+    assert layers["sensors"]["healthy"] == 0
+    assert layers["runtime_evidence"]["fresh"] is False
+    assert layers["runtime_evidence"]["latest_event_age_seconds"] > 1000
 
 
 def test_health_endpoint_reports_database_failure(client, monkeypatch):

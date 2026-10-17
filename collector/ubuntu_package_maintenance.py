@@ -171,8 +171,11 @@ def inspect(request):
 
 
 def permit(request, ident):
-    if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") != "1" or os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") != "1":
-        raise ValueError("device_writes_disabled")
+    # Stage-10 契约：本脚本只服务隔离克隆实验室写路径。开关仅为必要条件，
+    # 充分条件是逐克隆许可文件（asset+machine+plan 绑定）；设备写总开关
+    # LINUXGUARD_ENABLE_DEVICE_REPAIR 属 OpenWrt 域，在此不作为前置条件。
+    if os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") != "1":
+        raise ValueError("ubuntu_lab_writes_disabled")
     path = os.getenv("LINUXGUARD_UBUNTU_LAB_PERMIT", "")
     grant = json.loads(Path(path).read_text()) if path else {}
     required = {"asset_id": request["asset_id"], "machine_id_sha256": ident["machine_id_sha256"],

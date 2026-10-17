@@ -1610,6 +1610,7 @@ a, button, [role="button"] { touch-action: manipulation; }
 .system-online, .connection-state, .status-note { display: inline-flex; align-items: center; gap: 7px; color: var(--soc-text-secondary); font-size: 12px; }
 .system-online i, .connection-state i, .status-note i { width: 7px; height: 7px; border-radius: 50%; background: var(--soc-success); }
 .system-online.offline i, .connection-state.offline i { background: var(--soc-danger); }
+.layer-status { color: var(--soc-text-secondary); font-size: 11px; margin-left: 8px; padding-left: 10px; border-left: 1px solid var(--soc-border, #dcdfe6); }
 .main { min-width: 0; padding: 20px 24px 32px; background: var(--soc-bg) !important; }
 .page, .dashboard-page, .report-page { display: grid; gap: 16px; }
 

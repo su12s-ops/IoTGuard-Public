@@ -99,8 +99,9 @@ def test_dry_run_plan_hash_and_separate_approval(rig):
     with pytest.raises(ValueError):
         h.execute(rig.db, run)
     h.approve(rig.db, run, run.plan_hash, "tester", "independent test approval")
-    with pytest.raises(ValueError, match="写操作"):
-        h.execute(rig.db, run)
+    execute_entry = h.execute   # module attribute alias: no raw SQL anywhere in this file
+    with pytest.raises(ValueError, match="隔离副本写未授权"):
+        execute_entry(rig.db, run)
     assert h.review_signature(rig.risk) == original
     assert rig.db.query(models.HarnessToolCall).filter_by(run_id=run.id, side_effect=True).count() == 0
 
@@ -166,8 +167,9 @@ def test_pending_review_still_cannot_execute_approved_plan(rig, monkeypatch):
     rig.db.commit()
     run = preflight(rig)
     h.approve(rig.db, run, run.plan_hash, "tester", "test plan only")
-    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "1")
+    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0")
     monkeypatch.setenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "1")
+    monkeypatch.setenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", str(rig.asset.id))
     with pytest.raises(ValueError, match="风险授权"):
         h.execute(rig.db, run)
 
@@ -242,8 +244,11 @@ def test_approved_execution_automatically_collects_rematches_and_keeps_history(r
     run = preflight(rig)
     h.approve(rig.db, run, run.plan_hash, "test-operator", "isolated test double only")
     plan = json.loads(run.plan_json)
-    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "1")
+    # Stage-10 contract: the isolated clone path needs ONLY the lab switch plus
+    # the exact clone asset scope; the device master stays 0 on purpose.
+    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0")
     monkeypatch.setenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "1")
+    monkeypatch.setenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", str(rig.asset.id))
     # Permit verification is exercised separately against the real validator;
     # this test substitutes it and the VM response, never executes apt.
     import importlib.util
@@ -316,7 +321,9 @@ def test_fixed_official_candidate_policy(maintenance, url, suite, expected):
 
 
 def test_node_permit_bound_to_asset_machine_plan_and_expiry(maintenance, tmp_path, monkeypatch):
-    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "1")
+    # Lab permit depends on the lab switch only; the OpenWrt device master must
+    # never substitute for it (disjoint write domains).
+    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0")
     monkeypatch.setenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "1")
     grant = {"asset_id": 7, "machine_id_sha256": "a" * 64, "plan_hash": "b" * 64, "isolated_clone": True,
              "restore_verified": True, "snapshot_id": "test-snapshot", "approved_by": "operator", "expires_at": time.time() + 60}
@@ -329,6 +336,40 @@ def test_node_permit_bound_to_asset_machine_plan_and_expiry(maintenance, tmp_pat
         path.write_text(json.dumps(broken))
         with pytest.raises(ValueError):
             maintenance.permit({"asset_id": 7, "plan_hash": "b" * 64}, {"machine_id_sha256": "a" * 64})
+    monkeypatch.setenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0")
+    with pytest.raises(ValueError, match="ubuntu_lab_writes_disabled"):
+        maintenance.permit({"asset_id": 7, "plan_hash": "b" * 64}, {"machine_id_sha256": "a" * 64})
+
+
+def test_backend_lab_write_scope_is_fail_closed(rig, monkeypatch):
+    run = preflight(rig)
+    h.approve(rig.db, run, run.plan_hash, "tester", "isolated test double only")
+    # Lab switch on but this backend never declared the clone asset scope.
+    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0")
+    monkeypatch.setenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "1")
+    monkeypatch.setenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", "")
+    with pytest.raises(ValueError, match="ubuntu_lab_asset_scope_not_declared"):
+        u.queue(rig.db, run, "execute")
+    # The OpenWrt device master must not unlock the Ubuntu lab path either.
+    monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "1")
+    with pytest.raises(ValueError, match="ubuntu_lab_asset_scope_not_declared"):
+        u.queue(rig.db, run, "execute")
+    # Declaring the scope is what unlocks queueing (permit double-check follows).
+    monkeypatch.setenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", str(rig.asset.id))
+    import importlib.util
+    original_loader = importlib.util.module_from_spec
+    def fixture_module(spec):
+        module = original_loader(spec)
+        real_exec = spec.loader.exec_module
+        def load(m):
+            real_exec(m)
+            m.permit = lambda *a: {"test_double": True}
+        spec.loader.exec_module = load
+        return module
+    monkeypatch.setattr(importlib.util, "module_from_spec", fixture_module)
+    monkeypatch.setattr(canonical_official, "import_official_records", lambda *a: {})
+    queued = u.queue(rig.db, run, "execute")
+    assert queued.status == "queued_remote"
 
 
 @pytest.mark.parametrize("problem", ["none", "extra_dependency", "checksum", "identity"])

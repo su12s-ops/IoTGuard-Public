@@ -952,10 +952,13 @@ class TestUnifiedApi:
         response = client.post("/api/unified/analyze", json={"hostname": "edge-01"})
         assert response.status_code == 503
 
-    def test_analyze_requires_known_target(self, client, monkeypatch):
+    def test_analyze_requires_known_target(self, client, monkeypatch, control_headers):
         from app import config
         monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "shadow")
         response = client.post("/api/unified/analyze",
+                               json={"hostname": "missing-host", "task_type": "device_surface"})
+        assert response.status_code in {401, 503}   # write-capable entry requires the control token
+        response = client.post("/api/unified/analyze", headers=control_headers,
                                json={"hostname": "missing-host", "task_type": "device_surface"})
         assert response.status_code == 404
 
@@ -1046,3 +1049,177 @@ class TestReportF1Fix:
         text = markdown_report(db)
         db.close()
         assert "意见内容" in text
+
+
+# ── Stage 10 效率优化回归（真实合同语义，不伪造指标） ──────────────────────────
+
+
+def test_request_scoped_tool_cache_hits_within_run_and_resets_across_runs(session_factory, monkeypatch):
+    """确定性工具在同意图内命中缓存；新运行必须重新查询（不跨运行泄漏）。"""
+    db = session_factory()
+    make_asset(db)
+    make_evidence(db)
+    db.close()
+    target = next(t for t in VULNERABILITY_ANALYST_SPEC.tools if t.name == "query_version_impact")
+    original_invoke = target.invoke
+    calls = {"n": 0}
+    vuln_llm_calls = {"n": 0}
+
+    def counting(db_arg, arguments):
+        calls["n"] += 1
+        return original_invoke(db_arg, arguments)
+
+    monkeypatch.setattr(target, "invoke", counting)
+
+    def vuln_repeat_tool(messages):
+        vuln_llm_calls["n"] += 1
+        if vuln_llm_calls["n"] <= 2:   # 前两次 LLM 轮次发出完全相同的工具调用
+            return {"content": "", "tool_calls": [
+                {"id": "t1", "name": "query_version_impact",
+                 "arguments": {"cve_id": "CVE-2026-81001",
+                               "installed_version": "1.18.0", "fixed_version": "1.18.1"}}]}
+        return json_response(GOOD_VULN)
+
+    client = ScriptedClient({
+        "资产与证据调查员": [json_response(GOOD_ASSET)],
+        "漏洞分析师": [vuln_repeat_tool],
+        "运行时分析师": [json_response(GOOD_RUNTIME)],
+        "研判与处置规划师": [json_response(GOOD_DECISION)],
+    })
+    state = base_state()
+    final, _ctx = run_graph(session_factory, state, client)
+    assert final.stage_status["decide"] == "succeeded"
+    assert calls["n"] == 1, "同一运行内相同参数的确定性工具必须命中缓存（handler 只执行一次）"
+
+    # 新运行 = 新 RunContext：缓存不得跨运行泄漏，handler 重新执行
+    second_run_llm = {"n": 0}
+
+    def vuln_tool_once(messages):
+        second_run_llm["n"] += 1
+        if second_run_llm["n"] == 1:
+            return {"content": "", "tool_calls": [
+                {"id": "t2", "name": "query_version_impact",
+                 "arguments": {"cve_id": "CVE-2026-81001",
+                               "installed_version": "1.18.0", "fixed_version": "1.18.1"}}]}
+        return json_response(GOOD_VULN)
+
+    client2 = ScriptedClient({
+        "资产与证据调查员": [json_response(GOOD_ASSET)],
+        "漏洞分析师": [vuln_tool_once],
+        "运行时分析师": [json_response(GOOD_RUNTIME)],
+        "研判与处置规划师": [json_response(GOOD_DECISION)],
+    })
+    run_graph(session_factory, base_state(), client2)
+    assert calls["n"] == 2, "新运行必须重新查询（缓存不跨运行泄漏）"
+
+
+def test_runtime_tools_are_never_cached():
+    """运行时证据事实可能运行中途到达新事件：时间敏感工具不得进入缓存。"""
+    from app.services.unified.agent_base import CACHEABLE_TOOLS
+    runtime_tool_names = {t.name for t in RUNTIME_ANALYST_SPEC.tools}
+    assert runtime_tool_names.isdisjoint(CACHEABLE_TOOLS)
+
+
+def test_inventory_only_followups_skip_rereading_decision(session_factory):
+    """全部补查申请均为 inventory（操作员门控、本轮必然无新证据）时：
+    不再执行补查与完整决策重跑；申请仍随 finalize 登记。"""
+    db = session_factory()
+    make_asset(db)
+    make_evidence(db)
+    db.close()
+    decide_calls = {"n": 0}
+
+    def decide_with_inventory_request(messages):
+        decide_calls["n"] += 1
+        return json_response({
+            "verdicts": [{"object_id": "edge-01", "impact_status": "potentially_affected",
+                          "risk_direction": "maintain", "recommended_action": "monitor",
+                          "recommended_priority": "medium", "confidence": 0.5}],
+            "follow_up_requests": [{"target_agent": "vulnerability_analyst",
+                                    "collection_capability": "inventory",
+                                    "question": "补充包依赖链接数据",
+                                    "expected_effect": "明确 libcurl 依赖来源"}],
+            "confidence": 0.5, "reason": "待操作员授权采集"})
+
+    client = ScriptedClient({
+        "资产与证据调查员": [json_response(GOOD_ASSET)],
+        "漏洞分析师": [json_response(GOOD_VULN)],
+        "运行时分析师": [json_response(GOOD_RUNTIME)],
+        "研判与处置规划师": [decide_with_inventory_request],
+    })
+    final, _ctx = run_graph(session_factory, base_state(), client)
+    assert decide_calls["n"] == 1, "inventory-only 补查不得触发第二次完整决策"
+    assert final.follow_ups_used == 0
+    assert "execute_follow_ups" not in final.stage_status
+    assert final.decision.get("follow_up_requests"), "申请本身必须保留在决策结果中"
+
+
+def test_targeted_evidence_followup_still_runs_full_loop(session_factory):
+    """针对既有证据的定向复查（target_agent）保留原路径：补查 + 第二次决策。"""
+    db = session_factory()
+    make_asset(db)
+    make_evidence(db)
+    db.close()
+    decide_calls = {"n": 0}
+
+    def decide_first(messages):
+        decide_calls["n"] += 1
+        return json_response({
+            "verdicts": [{"object_id": "edge-01", "impact_status": "potentially_affected",
+                          "risk_direction": "maintain", "recommended_action": "monitor",
+                          "recommended_priority": "medium", "confidence": 0.5}],
+            "follow_up_requests": [{"target_agent": "runtime_analyst",
+                                    "question": "SE-1 的父进程是什么？"}],
+            "confidence": 0.5, "reason": "需要补查"})
+
+    client = ScriptedClient({
+        "资产与证据调查员": [json_response(GOOD_ASSET)],
+        "漏洞分析师": [json_response(GOOD_VULN)],
+        "运行时分析师": [json_response(GOOD_RUNTIME), json_response(GOOD_RUNTIME)],
+        "研判与处置规划师": [decide_first, json_response(GOOD_DECISION)],
+    })
+    final, _ctx = run_graph(session_factory, base_state(), client)
+    decide_llm_calls = len([s for s in client.sent if s.startswith("你是研判与处置规划师")])
+    assert decide_llm_calls == 2
+    assert final.follow_ups_used == 1
+
+
+def test_rereview_inherits_full_context_and_failure_keeps_original(session_factory):
+    """定向复议必须继承角色首次运行上下文；复议失败时保留原结论且不降级该角色。"""
+    db = session_factory()
+    make_asset(db)
+    make_evidence(db)
+    db.close()
+    seen_contexts = {"original": "", "rereview": ""}
+
+    def vuln_not_affected(messages):
+        seen_contexts["original"] = messages[-1]["content"]
+        return json_response({
+            "findings": [{"cve_id": "CVE-2026-81001", "cvss_score": 9.8, "kev": True,
+                          "version_impact": "not_affected",
+                          "applicability": "not_affected", "confidence": 0.8}],
+            "max_observed_severity": "critical", "confidence": 0.75})
+
+    def vuln_rereview_fails(messages):
+        seen_contexts["rereview"] = messages[-1]["content"]
+        return {"content": "not json at all", "tool_calls": []}
+
+    client = ScriptedClient({
+        "资产与证据调查员": [json_response(GOOD_ASSET)],
+        "漏洞分析师": [vuln_not_affected, vuln_rereview_fails],
+        "运行时分析师": [json_response(GOOD_RUNTIME)],
+        "研判与处置规划师": [json_response(GOOD_DECISION)],
+    })
+    state = base_state()
+    state.baseline = {"match_status": "potentially_affected", "preliminary_level": "High",
+                      "preliminary_score": 70, "installed_version": "1.18.0",
+                      "fixed_version": "1.18.1", "packet_evidence_ids": ["SE-1"]}
+    final, ctx = run_graph(session_factory, state, client)
+    # 复议上下文继承首次运行上下文（不是从零开始的裸冲突描述）
+    assert "定向复议" in seen_contexts["rereview"]
+    assert seen_contexts["original"] and seen_contexts["original"] in seen_contexts["rereview"]
+    # 复议失败：保留原结论，原角色不被追加降级
+    assert "vulnerability_analyst" not in (final.degraded_roles or [])
+    assert final.vulnerability and final.vulnerability.get("findings")
+    assert final.conflict_result.rereview_count == 1
+    assert final.conflict_result.unresolved, "未消解冲突仍走人工复核"

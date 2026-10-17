@@ -34,6 +34,30 @@ def collection_only_mode():
     return os.getenv("LINUXGUARD_DEPLOYMENT_MODE", "standard") == "collection_only"
 
 
+_NODE_SEEN: dict[str, float] = {}
+NODE_ONLINE_WINDOW_S = 120
+
+
+def touch_node(node_id: str) -> None:
+    """Record an authenticated node request so /api/health can report node
+    liveness independently of backend liveness. In-memory by design: it says
+    "this node reached THIS backend process recently", never more."""
+    if node_id:
+        _NODE_SEEN[node_id] = time.time()
+
+
+def node_liveness() -> dict:
+    now = time.time()
+    from app.services import collection_tasks
+    registered = collection_tasks.registered_nodes()
+    seen = {node_id: stamp for node_id, stamp in _NODE_SEEN.items()
+            if node_id in registered and now - stamp <= NODE_ONLINE_WINDOW_S}
+    return {"configured": bool(registered), "registered": sorted(registered),
+            "online_ids": sorted(seen), "online": bool(seen),
+            "last_seen_seconds": {node_id: round(now - stamp, 1) for node_id, stamp in seen.items()},
+            "window_seconds": NODE_ONLINE_WINDOW_S}
+
+
 def collector_node():
     return {"id": os.getenv("LINUXGUARD_COLLECTOR_NODE_ID", "backend-local"),
             "platform": platform.system(), "mode": os.getenv("LINUXGUARD_DEPLOYMENT_MODE", "standard")}

@@ -1,0 +1,47 @@
+# IoTGuard / LinuxGuard product deployment (Docker Compose).
+#
+# What this composes:
+#   backend  — the LinuxGuard API container (non-root, unprivileged). Database
+#              lives in a named volume; configuration comes from env.
+#   frontend — production nginx serving the built SPA and reverse-proxying /api.
+#
+# What this deliberately does NOT compose (and must never be forced into these
+# containers):
+#   - Linux collection node (pull runner): runs on a registered Ubuntu/Linux
+#     host NEXT TO the devices; it reaches the backend over the network.
+#     See backend/scripts/collection_node_runner.py.
+#   - Falco/eBPF sensors: kernel-adjacent observers on the monitored hosts
+#     (collector/deploy/falco/). Loading eBPF inside the backend container
+#     would require privileged mode — refused by design.
+#   - Device SSH credentials: referenced by env var NAMES only and resolved on
+#     the collection node, never inside the API container.
+#
+# Configuration: create backend/.env.docker from backend/.env.example (never
+# committed). LINUXGUARD_CONTROL_TOKEN must be set before any device operation.
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - path: ./backend/.env.docker
+        required: false
+    environment:
+      LINUXGUARD_DATA_DIR: /app/data
+      LINUXGUARD_DEPLOYMENT_MODE: standard
+    volumes:
+      - linuxguard-data:/app/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+volumes:
+  linuxguard-data:

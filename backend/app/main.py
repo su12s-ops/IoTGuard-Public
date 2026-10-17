@@ -178,7 +178,66 @@ def health():
     finally:
         db.close()
 
-    return {"status": "ok", "service": "LinuxGuard", "database": "ok"}
+    return {"status": "ok", "service": "LinuxGuard", "database": "ok",
+            "layers": _runtime_layers()}
+
+
+def _runtime_layers():
+    """Four independent liveness layers; one must never stand in for another.
+
+    Backend Online ≠ Collection Node Online ≠ Sensor Healthy ≠ Runtime
+    Evidence Fresh. A stopped sensor or stale evidence is reported as such
+    even when this API answers 200.
+    """
+    from app.services import device_access
+    from app.services.runtime_telemetry import evidence_freshness
+    layers = {"backend_online": True, "collection_node": device_access.node_liveness()}
+    db = SessionLocal()
+    try:
+        layers["sensors"] = sensor_summary(db)
+        layers["runtime_evidence"] = evidence_freshness(db)
+    except Exception:
+        layers["sensors"] = {"status": "unknown", "healthy": 0, "total": 0}
+        layers["runtime_evidence"] = {"fresh": False, "latest_event_age_seconds": None}
+    finally:
+        db.close()
+    return layers
+
+
+def sensor_summary(db):
+    import json as _json
+    from datetime import datetime, timezone
+    from app import models
+    now = datetime.now(timezone.utc)
+    sensors = db.query(models.RuntimeSensor).all()
+    healthy = 0
+    worst = "none" if not sensors else "running"
+    details = []
+    for sensor in sensors:
+        timestamp = sensor.last_heartbeat_at
+        timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp and timestamp.tzinfo is None else timestamp
+        age = round(max(0, (now - timestamp).total_seconds())) if timestamp else None
+        capabilities = {}
+        try:
+            capabilities = _json.loads(sensor.capabilities_json or "{}")
+        except ValueError:
+            pass
+        if capabilities.get("mode") == "pull":
+            # Pull sensors are not resident processes: honest health is "did a
+            # recent window succeed", never a fabricated constant "running".
+            status = "reporting" if age is not None and age <= 120 else "stale"
+        else:
+            status = sensor.status if sensor.status != "running" or (age is not None and age <= 120) else "stale"
+            if status == "running" and sensor.dropped_events:
+                status = "degraded"
+        healthy += 1 if status in {"running", "reporting"} else 0
+        worst = status if _WORST_ORDER.get(status, 9) > _WORST_ORDER.get(worst, 9) else worst
+        details.append({"sensor_id": sensor.sensor_id, "asset_id": sensor.asset_id,
+                        "source": sensor.source, "status": status, "heartbeat_age_seconds": age})
+    return {"status": worst, "healthy": healthy, "total": len(sensors), "sensors": details}
+
+
+_WORST_ORDER = {"running": 0, "reporting": 0, "degraded": 1, "stale": 2, "stopped": 3, "unknown": 4, "none": 5}
 
 
 @app.get("/api/diagnostics")

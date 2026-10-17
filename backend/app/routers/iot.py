@@ -31,6 +31,9 @@ def require_collection_node(request: Request):
     if not matched:
         raise HTTPException(401, "采集节点认证失败")
     request.state.collection_node_ids = matched
+    for node_id in matched:
+        from app.services import device_access
+        device_access.touch_node(node_id)
 
 
 def require_node_identity(request: Request, node_id: str):

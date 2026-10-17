@@ -62,6 +62,7 @@
         </div>
         <div v-else class="system-online" :class="{ offline: healthState !== 'online' }">
           <i></i><span>{{ healthText }}</span>
+          <span v-if="healthState === 'online' && layerText" class="layer-status">{{ layerText }}</span>
         </div>
       </el-header>
       <el-main :class="['main', { 'main-dashboard': route.path === '/' }]">
@@ -80,8 +81,22 @@ import { demoState, progressPct } from "./stores/demoProgress";
 
 const route = useRoute();
 const healthState = ref("checking");
+const layers = ref(null);
 let healthTimer = null;
-const healthText = computed(() => ({ online: "系统在线", offline: "后端服务异常", checking: "状态检查中" }[healthState.value]));
+const healthText = computed(() => ({ online: "后端在线", offline: "后端服务异常", checking: "状态检查中" }[healthState.value]));
+// 后端在线 ≠ 采集节点在线 ≠ 传感器健康 ≠ 运行时证据新鲜；四态独立展示，不合并为单一"系统在线"。
+const layerText = computed(() => {
+  const l = layers.value;
+  if (!l) return "";
+  const parts = [];
+  parts.push(l.collection_node?.online ? "采集节点在线" : "采集节点离线");
+  const s = l.sensors;
+  const sensorWord = { running: "健康", reporting: "已上报", degraded: "降级", stale: "心跳过期", stopped: "停止" }[s?.status] || "未知";
+  if (s) parts.push(`传感器 ${s.healthy}/${s.total} ${sensorWord}`);
+  const e = l.runtime_evidence;
+  if (e) parts.push(e.fresh ? "运行时证据新鲜" : "运行时证据过期");
+  return parts.join(" · ");
+});
 const activeMenu = computed(() => {
   if (route.path.startsWith("/behavior-chain") || route.path === "/matching") {
     return "/risk";
@@ -93,8 +108,10 @@ async function checkHealth() {
   try {
     const result = await fetchHealth();
     healthState.value = result?.status === "ok" ? "online" : "offline";
+    layers.value = result?.layers || null;
   } catch {
     healthState.value = "offline";
+    layers.value = null;
   }
 }
 

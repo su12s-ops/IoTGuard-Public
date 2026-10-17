@@ -110,7 +110,7 @@ def list_vulnerabilities(severity: str | None = None, kev: bool | None = None, q
     return rows
 
 
-@router.post("/sync-real")
+@router.post("/sync-real", dependencies=[Depends(require_control)])
 def sync_real(
     keyword: str = "linux",
     days: int = 30,
@@ -189,7 +189,7 @@ def sync_real(
     }
 
 
-@router.post("/sync-ubuntu-assets")
+@router.post("/sync-ubuntu-assets", dependencies=[Depends(require_control)])
 def sync_ubuntu_assets(
     max_packages_per_asset: int = 24,
     limit_per_package: int = 100,
@@ -270,7 +270,7 @@ def sync_ubuntu_assets(
     }
 
 
-@router.post("/sync-kylin-assets")
+@router.post("/sync-kylin-assets", dependencies=[Depends(require_control)])
 def sync_kylin_assets(
     max_packages_per_asset: int = 24,
     limit_per_package: int = 40,

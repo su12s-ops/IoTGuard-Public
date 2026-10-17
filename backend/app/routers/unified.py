@@ -139,6 +139,7 @@ def unified_specs():
         "pid": os.getpid(),
         "device_repair_enabled": os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1",
         "ubuntu_lab_repair_enabled": os.getenv("LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR", "0") == "1",
+        "ubuntu_lab_asset_scope_declared": bool((os.getenv("LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE", "") or "").strip()),
         "migration_contract": "m5-native-review-v2",
         "formal_batch_default": 1,
         "formal_batch_max": 4,
@@ -146,7 +147,7 @@ def unified_specs():
     }
 
 
-@router.post("/analyze", status_code=202)
+@router.post("/analyze", status_code=202, dependencies=[Depends(require_control)])
 def analyze(payload: UnifiedAnalyzeInput, db: Session = Depends(get_db)):
     if config.UNIFIED_PIPELINE_MODE == "off":
         raise HTTPException(503, "统一编排器未启用（LINUXGUARD_UNIFIED_PIPELINE=off）")

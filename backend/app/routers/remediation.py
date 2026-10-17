@@ -9,7 +9,7 @@ from app.services.device_access import require_control
 router = APIRouter(prefix="/remediation", tags=["Remediation"])
 
 
-@router.post("/generate")
+@router.post("/generate", dependencies=[Depends(require_control)])
 def generate(allow_human_override: bool = False, db: Session = Depends(get_db)):
     """生成修复任务。
 

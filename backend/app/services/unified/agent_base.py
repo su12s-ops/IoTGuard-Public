@@ -34,6 +34,19 @@ _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 _RETRY_BACKOFF_S = 1.0   # 异常重试间的固定退避（连接错误/限流；短且有界）
 
+# Stage-10 效率契约（请求内缓存）：这些工具读取的事实在一次编排运行内不变——
+# 版本比较是纯函数；情报源/命中清单/设备画像只被操作员动作（官方重取、匹配重算、
+# 采集登记）改变，而这类动作不可能在运行中途发生。运行时证据工具（进程/网络/
+# 文件/进程树/数据质量）因事件实时到达，明确排除在缓存之外——跨时点事实不缓存。
+CACHEABLE_TOOLS = frozenset({
+    "query_version_impact",
+    "query_intelligence_sources",
+    "query_cve_intelligence",
+    "query_matched_vulnerabilities",
+    "query_device_profile",
+    "query_network_surface",
+})
+
 
 class BudgetExceeded(RuntimeError):
     """run 级预算耗尽：调用方应把当前 Agent 降级，而不是重试。"""
@@ -118,10 +131,12 @@ class UnifiedAgentResult:
 class UnifiedToolLoopAgent:
     """统一四智能体的通用执行器（System A 工具循环的增强版）。"""
 
-    def __init__(self, spec: AgentSpec, client: ChatClient, meter: UsageMeter | None = None):
+    def __init__(self, spec: AgentSpec, client: ChatClient, meter: UsageMeter | None = None,
+                 tool_cache: dict | None = None):
         self.spec = spec
         self.client = client
         self.meter = meter
+        self.tool_cache = tool_cache   # 请求内缓存（仅 CACHEABLE_TOOLS；None=不缓存）
         # 逐 Agent 计量（M4.1 校准：修改前后逐 Agent 的 LLM 调用数/token 可比）
         self._calls = 0
         self._usage: dict[str, int] = {}
@@ -258,6 +273,19 @@ class UnifiedToolLoopAgent:
             for call in calls:
                 entry = {"name": call["name"], "arguments": call["arguments"], "ok": False}
                 tool = allowed.get(call["name"])
+                cache_key = ""
+                if self.tool_cache is not None and call["name"] in CACHEABLE_TOOLS:
+                    cache_key = call["name"] + "|" + json.dumps(
+                        call["arguments"], sort_keys=True, ensure_ascii=False, default=str)
+                    cached = self.tool_cache.get(cache_key)
+                    if cached is not None:
+                        entry["ok"] = True
+                        entry["cached"] = True
+                        entry["summary"] = _brief(cached)
+                        messages.append({"role": "tool", "tool_call_id": call["id"],
+                                         "content": json.dumps(cached, ensure_ascii=False, default=str)[:12000]})
+                        tool_calls_log.append(entry)
+                        continue
                 if tool is None:
                     entry["error"] = "未注册到当前智能体的工具被拒绝"
                     messages.append({"role": "tool", "tool_call_id": call["id"],
@@ -267,6 +295,8 @@ class UnifiedToolLoopAgent:
                         output = tool.invoke(db, call["arguments"])
                         entry["ok"] = True
                         entry["summary"] = _brief(output)
+                        if cache_key:
+                            self.tool_cache[cache_key] = output
                         messages.append({"role": "tool", "tool_call_id": call["id"],
                                          "content": json.dumps(output, ensure_ascii=False, default=str)[:12000]})
                     except Exception as exc:

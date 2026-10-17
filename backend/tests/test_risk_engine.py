@@ -107,7 +107,7 @@ def test_calculate_risk_builds_decision_context(session_factory):
         db.close()
 
 
-def test_risk_ranking_returns_decision_fields(client, session_factory):
+def test_risk_ranking_returns_decision_fields(client, session_factory, control_headers):
     db = session_factory()
     try:
         vuln = models.VulnerabilityInfo(
@@ -157,7 +157,7 @@ def test_risk_ranking_returns_decision_fields(client, session_factory):
     finally:
         db.close()
 
-    calc = client.post("/api/risk/calculate")
+    calc = client.post("/api/risk/calculate", headers=control_headers)
     assert calc.status_code == 200
 
     response = client.get("/api/risk/ranking")

@@ -107,6 +107,11 @@ class RunContext:
     # 语义消融（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策输入
     # （角色本身照常执行；这是「贡献度量」钩子，不是失败/降级路径）
     ablation_mask: frozenset[str] = frozenset()
+    # Stage-10 效率：请求内确定性工具缓存（仅 CACHEABLE_TOOLS；随 run 生命周期
+    # 创建销毁——新采集/官方重取属运行外操作员动作，跨时点事实不进入缓存）
+    tool_cache: dict[str, Any] = field(default_factory=dict)
+    # Stage-10 效率：各角色首次运行的完整上下文（定向复议继承，避免从零重建）
+    first_contexts: dict[str, str] = field(default_factory=dict)
 
     def session(self) -> Session:
         return self.db_factory()
@@ -147,7 +152,10 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
         ctx.emit(db, "agent_started", actor=spec.name, status="running", is_llm_step=True,
                  payload={"agent": spec.name}, started_at=started_at)
         agent_started = time.monotonic()
-        agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter)
+        agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter,
+                                     tool_cache=ctx.tool_cache)
+        with ctx._lock:
+            ctx.first_contexts.setdefault(spec.name, context_text)
         result = agent.run(db, context=context_text, deadline_s=_agent_deadline(ctx))
         degraded_reason = ""
         if result.status != "succeeded":
@@ -807,11 +815,19 @@ def node_directed_rereview(ctx: RunContext):
             if name not in spec_map:
                 continue
             spec, previous, validator = spec_map[name]
+            # Stage-10 效率契约：定向复议继承该角色首次运行的完整上下文（含预取
+            # 事实/候选清单/工具指引），不再只给冲突描述——从零重建上下文曾导致
+            # 复议角色耗时翻倍且以校验失败告终。复议只处理冲突点，维持原结论
+            # 时须给出更强的证据理由。
+            original_context = ctx.first_contexts.get(name, "")
             context_text = (
-                f"针对以下已识别冲突进行定向复议（仅此一次），输出完整结构化结果：\n"
+                f"{original_context}"
+                f"\n\n【定向复议（仅此一次）】针对以下已识别冲突进行核对：\n"
                 f"{json.dumps(descriptions, ensure_ascii=False)}\n"
                 f"你此前的结论: {json.dumps(previous, ensure_ascii=False)[:2000]}\n"
-                "请重新核对工具/事实后给出结论；如维持原结论，请给出更强的证据理由。"
+                "只需依据已提供的事实与必要的专属工具核对上述冲突点；"
+                "如维持原结论，请给出更强的证据理由；如需修改，仅修改与冲突相关的字段。"
+                "仍须输出完整结构化结果。"
             )
             output, degraded_reason = _run_specialist(ctx, spec, context_text,
                                                       validate_fn=validator)
@@ -819,7 +835,16 @@ def node_directed_rereview(ctx: RunContext):
                    AGENT_RUNTIME: "runtime",
                    AGENT_ASSET: "investigation"}[name]
             if output is None:
-                degraded.append(name)   # 复议失败：保留原结论但标记降级（门禁转人工）
+                # Stage-10 效率契约：复议失败不降级原结论——原报告有效时保留，
+                # 未消解冲突已由 merge_rereview 确定性转人工，角色本身不应被
+                # 标记降级（基线运行中复议失败曾把成功角色误标为 degraded）。
+                if _is_empty_default(previous):
+                    degraded.append(name)
+                else:
+                    ctx.log_agent(spec.name + "_rereview", {
+                        "status": "failed_kept_original",
+                        "note": "复议失败：保留原结论；未消解冲突走人工复核",
+                        "error": (degraded_reason or "")[:400]})
             elif _is_empty_default(output) and not _is_empty_default(previous):
                 # 复议产出为空默认值时不得覆盖既有丰富结论（保留原意见）
                 ctx.log_agent(spec.name + "_rereview", {
@@ -837,7 +862,15 @@ def node_directed_rereview(ctx: RunContext):
 def _route_after_decide(state: UnifiedAnalysisState) -> str:
     decision = state.decision or {}
     requests = decision.get("follow_up_requests") or []
-    if requests and state.follow_ups_used < state.budgets.follow_up_rounds:
+    # Stage-10 效率契约：inventory 类补查申请是操作员门控采集——本轮内新证据
+    # 为空是确定性事实。若全部申请都属于该类，重跑执行与完整决策只会原样复读
+    # （基线运行曾因此多花约 5 分钟与数万 token）；申请仍由 finalize 登记。
+    # 针对既有证据的定向复查（target_agent / database）保留原路径——它们能
+    # 产生本轮内可核验的新视图。
+    only_operator_gated = bool(requests) and all(
+        isinstance(request, dict) and request.get("collection_capability") == "inventory"
+        for request in requests)
+    if requests and not only_operator_gated and state.follow_ups_used < state.budgets.follow_up_rounds:
         return "execute_follow_ups"
     return "finalize"
 

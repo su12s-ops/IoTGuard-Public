@@ -11,20 +11,17 @@
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
 <!-- STAGE10_GATE_STATUS_START -->
-## Stage 10 第一轮执行记录（2026-10-17）——核查与准备完成，执行停于授权门禁
+## Stage 10 第二轮（2026-10-17）：权限契约修复、传感器恢复、研判效率优化与 Docker 交付——隔离实验仍停在授权门禁
 
-基线 `710d87d`，结束于同日；全程零设备写、零生产配置变更、零进程重启、生产数据库仅 `mode=ro` 只读查询。
+基线 `9ce6e60`。统一报告：`IOTGUARD_STAGE10_PRODUCT_COMPLETION_REPORT.md`。生产双写开关全程 0；原始资产 1 与风险 126 零改动。
 
-已执行（全部只读或本地隔离）：
-1. 生产状态六项核查（API + 只读库查询 + .env 开关名值核对）→ 全部通过，证据见报告第一部分。
-2. 虚拟化只读探测：`vmrun list/listSnapshots/checkToolsState`、.vmx 读取、`vmnetdhcp.conf`/租约读取；未调用任何会产生写效果的 vmrun 子命令。
-3. 实现最小多节点注册扩展（4 文件）+ 新测试 10 项；全量回归 682 passed / 0 failed（482.93s）。改动未部署到运行中的生产进程。
-4. `stage10_authorization_package.py` 只读组装：`authorization-request.json`（`0c136d6b…`，内置 `authorization_not_granted_by_this_package=true` 与 5 项门禁动作清单）、`clone-identity.json`（`c76887ec…`，独立节点令牌已生成未打印）、克隆专用 Ed25519 密钥对（仅存本地归档）。
-5. `clone-operation-plan.md`（克隆→隔离编辑→离线身份重配置→联网准入→快照/恢复验证→登记，每阶段验证点+回退）与 `register-clone-runbook.md`（获批后登记与研判步骤）。
-
-明确未执行：克隆创建（需源 VM 软关机窗口＝虚拟化权限）、快照恢复验证、克隆内 apt 索引刷新/下载/安装、`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` 置 1、dpkg 写、回滚、四智能体克隆研判、Harness 候选计划。原因：集中于一次授权申请（报告第三部分），未获批准；M4.5 设计与任务书均要求不得绕过。无任何模拟研判或伪造证据替代品。
-
-插曲：Mimosa 扫描器对新测试文件按 `execute(` 字面模式误报 SQL 注入（该文件无裸 SQL、全 ORM）；以模块级别名改写消除误报模式后正常落盘，未绕过钩子。
+- **P0-1 权限契约**：新增 `IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md`（唯一正式版本）。修复三处：①`ubuntu-apt-v1` 实验写不再要求 `LINUXGUARD_ENABLE_DEVICE_REPAIR`（该开关改为 OpenWrt 设备写专用域），改由 `LINUXGUARD_UBUNTU_LAB_REPAIR=1` + 新增 `LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE`（逐资产白名单，空=fail-closed）+ 既有许可文件三重约束；②`/api/risk/calculate`、`/api/remediation/generate`、`/api/vulnerabilities/sync-*`、`/api/unified/analyze` 四个此前无认证的写端点补齐 `require_control`；③节点/控制双令牌域保持互斥。新增 fail-closed 测试（含"设备开关置 1 也不能解锁实验室写"断言）。
+- **P0-2 官方依据纠正**：逐字段核验官方 `CVE-2026-94266.json`（sha256 `932d5a73…` 与库内一致）——**USN-8927-1 仅覆盖 resolute；noble/curl 源包修复版 `.16` 的实际通告是 USN-8932-1**。历史文档（第一轮报告/CHANGELOG/CURRENT_TASK 叙述）已加纠正声明，原始记录保留；库内派生字段自始正确。克隆只读复核通过（VM 0 快照、312G 可用、.110 无冲突），授权包已刷新——**克隆创建/快照恢复/索引刷新/dpkg 写/回滚仍全部停在授权门禁**。
+- **P1-1 传感器**：两个 stopped 传感器分别查明——`openwrt-logread-1` 为拉取式（恢复=触发采集），已恢复：422 条新事件入库（当日时间戳 154 条），心跳刷新；`wyh-VMware-Virtual-Platform:falco` 为常驻服务，10-14 被操作员手动 stop 后未重启，**恢复停在 VM root 授权点**（sudo 需密码/root SSH 拒绝；待执行命令 `sudo systemctl start linuxguard-falco`）。采集节点 Runner 修复了两处真实缺陷（后端重启即死亡的未捕获 RemoteDisconnected；重启后节点自动恢复在线已实测）。`/api/health` 新增四态分层（Backend/Collection Node/Sensor/Runtime Evidence 互相独立），前端同步展示。
+- **P1-2 效率**（同输入前后对照，风险 12 shadow，真实 LLM）：基线 `m47-glm-smoke4` 41m46s/19 次/325,405 tokens → 优化后 `UA-20261017084453-a65f5a` **19m05s/10 次/216,674 tokens**（耗时 −54.3%、调用 −47.4%、tokens −33.4%）；最终结论一致（not_affected/monitor/low/downgrade_major），零降级，冲突语义一致走人工。三项最小优化：①请求内确定性工具缓存（时间敏感运行时工具明确排除）；②inventory-only 补查不再触发决策全量重跑；③定向复议继承完整首次上下文、失败保留原结论不降级。OpenWrt shadow `UA-20261017090833-0a6622` 实证 Runtime Analyst 消费恢复后的当日 logread 证据（4 条 finding 引用当日事件，来源/时间在库内核验）。
+- **P1-3 Docker**：前端改多阶段构建（Vite build → nginx，SPA 回退 + /api 反代，不再用 dev server）；后端镜像补齐哈希钉扎 collector 脚本与 migrations、非 root、健康检查；新增 docker-compose.yml 与根 .dockerignore（.env*/密钥/运行数据不进上下文）。实测：构建成功、双容器 healthy、路由刷新 200、API 代理 200、bundle 无硬编码后端地址、镜像内无密钥。采集节点与 Falco 传感器仍在外部 Linux 主机（compose 明确不含、不加 privileged）。
+- **P2**：Mimosa 深扫 `scan-2026-10-17T09-08-58.996Z-4dc68ad6cebb`（seal `53c54180…a8822`）：1 个 high advisory（`stage10_authorization_package.py:write_private` 静态疑似路径穿越）——人工核验为误报（纯 CLI、路径为硬编码常量、无 HTTP 面），已按纵深防御加入 local-archive 包含检查并保留发现留痕；**coverage=completeness partial / runStatus inconclusive（threatModel 观察到 0 入口点）如实披露，未以部分覆盖冒充完成验收**。
+- 仍待用户独立批准：授权一（克隆创建/快照恢复/克隆内官方索引刷新）与授权二（dpkg 写/实验写开关/精确计划审批）——二者均未批准，未执行；Falco 传感器启动需 VM sudo 授权或口令。
 <!-- STAGE10_GATE_STATUS_END -->
 
 

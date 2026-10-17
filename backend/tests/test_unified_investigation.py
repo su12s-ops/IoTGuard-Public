@@ -166,9 +166,10 @@ def test_official_writer_and_shadow_sink_fail_closed(case, monkeypatch):
     with pytest.raises(ValueError, match="shadow_sink_forbidden"): run_unified_sync(db, row, sink=formal_sink)
 
 
-def test_unified_on_api_cannot_be_second_formal_entry(client, monkeypatch):
+def test_unified_on_api_cannot_be_second_formal_entry(client, monkeypatch, control_headers):
     monkeypatch.setattr(config, "UNIFIED_PIPELINE_MODE", "on")
-    assert client.post("/api/unified/analyze", json={"hostname": "any"}).status_code == 409
+    assert client.post("/api/unified/analyze", json={"hostname": "any"}).status_code in {401, 503}
+    assert client.post("/api/unified/analyze", json={"hostname": "any"}, headers=control_headers).status_code == 409
 
 
 def test_shadow_and_authorization_require_control(client, monkeypatch):
