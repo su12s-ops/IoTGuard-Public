@@ -27,6 +27,13 @@
 
 # 变更日志
 
+## Stage 10 第三轮：隔离克隆实验第一阶段全链执行（2026-10-17，授权 A+B 获批后）
+
+- 授权 A+B 执行完毕：full clone 实建并完成八维身份隔离（WSL2 离线 root 方案，无需客户机口令）；源 VM 关机窗口后全项恢复；基线快照真实恢复验证通过（restore_verified=true，一次无效协议尝试如实作废）；克隆登记为 asset 3 + 连接 3 + stage10-clone-node 并完成首次认证采集（INV-3bef62a8…，1790 包）；克隆内经 chroot 仅官方源刷新 apt 索引（三包候选 .16 真实可获得，来源 security.ubuntu.com noble-security）；风险 127 经正式入口完成四智能体研判（四角色 valid，pending_human_review/confirmed_affected，未代签）；ubuntu-apt-v1 Harness dry-run 本 CVE 历史首次全绿（preflight ready、零 issue），最终计划 SHA256 `352208827415d3c9…4848cf` 停在 awaiting_approval。授权二（dpkg 写/实验写开关/审批/回滚）未批未执行。
+- 新增 `backend/scripts/start_clone_node.py`（克隆节点 runner 启动器，凭据仅经 env/SSH 引用）；统一报告 `IOTGUARD_STAGE10_ISOLATED_CLONE_PREFLIGHT_REPORT.md`。
+- 如实披露：Falco 启动仍停在 sudo 凭据门禁（无任何已配置口令通道，服务保持 inactive）；官方核验管线按契约把风险 126 置为 reanalysis_required（裁定历史完整保留）；生产后端为加载多节点配置重启一次（.env 预备份、重启后全项核验）；生产库一致性备份已留存（sha256 `d9f75be1…fb641`）。
+- 后端应用代码零变更：既有回归基线维持；本轮验证以生产后端真实验收链（health/preflight/认证采集/四智能体正式研判/Harness 预演全部真实执行）为准。
+
 ## Stage 9B M5：统一四智能体唯一化（第一阶段：中立迁移 + 门禁验证）（2026-10-17）
 
 - 用户授权正式切换与旧系统删除；执行中依据 M4.7 迁移契约发现 Q1–Q8 人工裁定未签署（材料裁定栏全空、DB 零人工裁定痕迹），按 M5 指令第 4 条**正式切换停在该人工环节**，等待真实授权操作员；本轮交付门禁之外的全部准备。
