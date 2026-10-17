@@ -240,7 +240,8 @@ def _submit(db, run_id, payload):
     from fastapi import HTTPException
     from app.routers.iot import collection_node_result
     try:
-        return collection_node_result(run_id, SimpleNamespace(model_dump=lambda: payload), db)
+        return collection_node_result(run_id, SimpleNamespace(node_id=payload["node_id"], model_dump=lambda: payload),
+                                      SimpleNamespace(state=SimpleNamespace(collection_node_ids=[payload["node_id"]])), db)
     except HTTPException as exc:
         raise ValueError(str(exc.detail)) from exc
 
@@ -249,7 +250,8 @@ def _claim(db, node_id="ubuntu-lab-node", platform="Linux"):
     from fastapi import HTTPException
     from app.routers.iot import collection_node_claim
     try:
-        return collection_node_claim(node_id, platform, db)["assignment"]
+        return collection_node_claim(node_id, platform,
+                                     SimpleNamespace(state=SimpleNamespace(collection_node_ids=[node_id])), db)["assignment"]
     except HTTPException as exc:
         raise ValueError(str(exc.detail)) from exc
 

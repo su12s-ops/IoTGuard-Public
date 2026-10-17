@@ -6,6 +6,7 @@ or on a registered Linux node. Credential values never pass through the API.
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 import os
 from pathlib import Path
@@ -41,6 +42,59 @@ def remote_node_id():
     return value if re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", value) else ""
 
 
+def registered_nodes():
+    """Registered pull nodes: the M5 primary plus optional independently
+    credentialed extras used by the isolated Stage-10 clone experiment.
+
+    Extras come from LINUXGUARD_COLLECTION_NODES_JSON, a JSON array of
+    ``{"id": ..., "local_asset_ids": "a,b"}`` objects; every extra node
+    authenticates with its own ``LINUXGUARD_COLLECTION_NODE_TOKEN_<SUFFIX>``
+    variable, never by reusing the primary token. Absent or invalid JSON keeps
+    the historical single-node behaviour byte-for-byte.
+    """
+    nodes = {}
+    primary = remote_node_id()
+    if primary:
+        nodes[primary] = {os.getenv("LINUXGUARD_COLLECTION_NODE_LOCAL_ASSET_ID", "").strip()}
+    raw = (os.getenv("LINUXGUARD_COLLECTION_NODES_JSON", "") or "").strip()
+    if raw:
+        try:
+            entries = json.loads(raw)
+        except json.JSONDecodeError:
+            entries = []
+        for entry in entries if isinstance(entries, list) else []:
+            node_id = str((entry or {}).get("id", ""))
+            if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", node_id) or node_id in nodes:
+                continue
+            asset_ids = str((entry or {}).get("local_asset_ids", "") or "")
+            nodes[node_id] = {part.strip() for part in asset_ids.split(",") if part.strip()}
+    return nodes
+
+
+def token_env_for(node_id):
+    if node_id == remote_node_id():
+        return "LINUXGUARD_COLLECTION_NODE_TOKEN"
+    return "LINUXGUARD_COLLECTION_NODE_TOKEN_" + re.sub(r"[^A-Z0-9]", "_", node_id.upper())
+
+
+def registered_node_tokens():
+    return {node_id: os.getenv(token_env_for(node_id), "") for node_id in registered_nodes()}
+
+
+def node_ids_for_token(token):
+    supplied = (token or "").encode()
+    return sorted(node_id for node_id, expected in registered_node_tokens().items()
+                  if expected and hmac.compare_digest(expected.encode(), supplied))
+
+
+def node_for_asset(asset):
+    """Node registered for this asset's isolated execution; primary if unbound."""
+    for node_id, asset_ids in registered_nodes().items():
+        if asset is not None and str(asset.id) in asset_ids:
+            return node_id
+    return remote_node_id()
+
+
 def collector_for(asset):
     if asset and asset.distribution == "ubuntu":
         return iot_devices.COLLECTOR.with_name("collect_linux_asset.sh"), "linux_ssh"
@@ -49,7 +103,7 @@ def collector_for(asset):
 
 def is_node_local(asset):
     return bool(asset and asset.distribution == "ubuntu" and
-        os.getenv("LINUXGUARD_COLLECTION_NODE_LOCAL_ASSET_ID", "") == str(asset.id))
+                str(asset.id) in registered_nodes().get(node_for_asset(asset), set()))
 
 
 def validate_plan(db, run):
@@ -81,7 +135,7 @@ def preflight(db, connection):
     checks["collector_available"] = collector_for(asset)[0].is_file()
     node = device_access.collector_node()
     checks["node_platform"] = node["platform"] == "Linux"
-    checks["remote_node_configured"] = bool(remote_node_id())
+    checks["remote_node_configured"] = bool(registered_nodes())
     checks["node_identity_configured"] = bool(node["id"] and (not device_access.collection_only_mode() or node["id"] != "backend-local"))
     auth = connection.auth_type or "password"
     reference = connection.key_path_env if auth == "ssh_key" else connection.credential_env
@@ -237,7 +291,7 @@ def execute(db, run):
 
     try:
         if device_access.collector_node()["platform"] != "Linux":
-            remote = remote_node_id()
+            remote = node_for_asset(db.get(models.LinuxAsset, run.asset_id))
             if not remote:
                 raise device_access.DeviceOperationError("node_platform_invalid", "真实纯采集任务须由 Ubuntu/Linux 节点执行，Windows 仅用于开发与离线测试；未登记远程采集节点，任务转交不可用")
             # Windows 开发节点不执行设备 SSH：任务原样转交已登记的 Linux 采集节点，
@@ -330,24 +384,32 @@ def claim_for_node(db, node_id: str, node_platform: str):
     running) before any assignment payload is built. Only env-variable NAMES
     and the pinned host fingerprint leave the backend — never key material.
     """
-    expected = remote_node_id()
+    expected = registered_nodes()
     if not expected:
         raise ValueError("后端未登记 Linux 采集节点（LINUXGUARD_COLLECTION_NODE_ID 未配置）")
-    if node_id != expected:
+    if node_id not in expected:
         raise ValueError("采集节点身份与登记不一致；拒绝领取")
     if node_platform != "Linux":
         raise ValueError("采集节点必须在 Ubuntu/Linux 上执行")
-    run = (db.query(models.HarnessRun)
-           .filter(models.HarnessRun.status == "queued_remote").order_by(models.HarnessRun.created_at)
-           .first())
-    if run is not None and json.loads(run.plan_json).get("adapter") == "ubuntu-apt-v1":
-        from app.services import ubuntu_repair
-        return ubuntu_repair.claim(db, run, node_id)
-    if run is None or json.loads(run.plan_json).get("goal") != "collect":
+    run = connection = asset = script = None
+    for candidate in (db.query(models.HarnessRun)
+                      .filter(models.HarnessRun.status == "queued_remote").order_by(models.HarnessRun.created_at)
+                      .yield_per(20)):
+        queued_for = str(json.loads(candidate.result_json).get("queued_for_node", "") or "")
+        if queued_for and queued_for != node_id and queued_for in expected:
+            continue   # Another registered node's task stays claimable by that node.
+        if json.loads(candidate.plan_json).get("adapter") == "ubuntu-apt-v1":
+            from app.services import ubuntu_repair
+            return ubuntu_repair.claim(db, candidate, node_id)
+        if json.loads(candidate.plan_json).get("goal") != "collect":
+            return None
+        connection, asset, script = validate_plan(db, candidate)
+        if queued_for != node_id:
+            raise ValueError("任务不属于此采集节点")
+        run = candidate
+        break
+    if run is None:
         return None
-    connection, asset, script = validate_plan(db, run)
-    if json.loads(run.result_json).get("queued_for_node") != node_id:
-        raise ValueError("任务不属于此采集节点")
     changed = db.execute(update(models.HarnessRun).where(
         models.HarnessRun.id == run.id,
         models.HarnessRun.status == "queued_remote").values(status="running", current_step="collect_inventory_remote"))
@@ -398,7 +460,7 @@ def submit_result(db, run_id: str, payload: dict):
         raise ValueError("采集任务不存在")
     audit = json.loads(run.result_json)
     node_id = str(payload.get("node_id") or "")
-    if not node_id or node_id != remote_node_id() or payload.get("node_platform") != "Linux" or audit.get("execution_node") != node_id:
+    if not node_id or node_id not in registered_nodes() or payload.get("node_platform") != "Linux" or audit.get("execution_node") != node_id:
         raise ValueError("采集节点身份与登记不一致；结果被拒绝")
     if run.status == "completed":
         if payload.get("output_sha256") != audit.get("output_sha256"):

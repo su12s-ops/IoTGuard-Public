@@ -10,6 +10,19 @@
 
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
+<!-- STAGE10_GATE_STATUS_START -->
+## Stage 10 当前边界与新增机制（2026-10-17）
+
+当前报告：`IOTGUARD_STAGE10_REAL_REMEDIATION_E2E_REPORT.md`；基线 `710d87d`。Stage 10 目标：在新建隔离 Ubuntu 24.04 克隆上完成 CVE-2026-94266（noble/curl，目标 `8.5.0-2ubuntu10.16`）从发现到修复后复检的真实闭环；不开发新智能体、不恢复 System A/B、不做新旧对照、不做 Token 优化与外围重构。
+
+新增机制（已合入、未部署到生产进程）：
+- **多节点 Pull 注册**：`LINUXGUARD_COLLECTION_NODES_JSON`（JSON 数组 `{"id","local_asset_ids"}`）+ 每节点独立令牌变量 `LINUXGUARD_COLLECTION_NODE_TOKEN_<SUFFIX>`；`registered_nodes()/node_for_asset()/node_ids_for_token()`；claim 跳过其他已登记节点的任务（无主任务仍完整性报错）；claim/result 端点强制令牌-节点绑定。不配置 JSON 时与 M5 单节点行为逐字节一致（`m45-linux-node` 主节点不受影响）。
+- **克隆授权包组装器**：`backend/scripts/stage10_authorization_package.py`，只读；安全断言（unified 非 on 或任一写开关非 0 → 拒绝运行）。
+- **隔离克隆设计**（`local-archive/stage10-work/`，gitignored）：独立 hostname/machine-id/UUID/MAC/节点令牌/SSH 密钥；VMware 全克隆需源 VM 软关机窗口（已列入授权申请）；基准快照 + 先变更后恢复的恢复验证（`restore_verified` 仅在实测后置 true）；克隆预选 192.168.183.110（VMnet8 池外静态）；白名单仅逐主机 /32 追加；独立隧道端口 18446。
+
+**当前停点**：集中授权申请已提交（报告第三部分，7 项），等待用户对隔离实验的单独批准。批准前：不克隆、不恢复验证、不刷新克隆 apt 索引、不开实验写开关、不 dpkg 写、不回滚。生产 `LINUXGUARD_ENABLE_DEVICE_REPAIR=0` 与 `LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR=0` 不变；风险 126 保持 `pending_human_review`；四智能体克隆研判与 Harness 计划须待克隆真实存在后经正式入口执行，不做模拟。
+<!-- STAGE10_GATE_STATUS_END -->
+
 
 # IoTGuard 项目长期背景与系统架构
 

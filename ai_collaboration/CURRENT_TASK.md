@@ -10,6 +10,21 @@
 
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
+<!-- STAGE10_GATE_STATUS_START -->
+## Stage 10：真实漏洞修复与四智能体自动复检（2026-10-17，进行中——停在隔离实验授权门禁）
+
+当前依据：`IOTGUARD_STAGE10_REAL_REMEDIATION_E2E_REPORT.md`。基线 `710d87d`，工作区干净。对象：新建隔离 Ubuntu 24.04 克隆 / CVE-2026-94266 / noble/curl 源包（目标 `8.5.0-2ubuntu10.16`）。原始资产 1、风险 126 与全部审计保持完整。
+
+- [x] 第一部分状态核查：unified 唯一引擎、System A/B 未恢复、双节点正常、风险 126 库内 `pending_human_review`、官方原文/USN-8927-1 核对、双写开关 0（`remediation_task`=0，历史零设备写）。
+- [x] 第二部分安全自动化准备：平台只读探测（vmrun/.vmx/DHCP 池）、克隆身份包（独立 hostname/machine-id/UUID/MAC/节点令牌/SSH 密钥五重独立化方案）、阶段 A–F 精确操作计划、登记手册、多节点注册最小扩展（全量回归 682/0）。
+- [x] 集中授权申请包生成：`local-archive/stage10-work/authorization-request.json`（sha256 `0c136d6b…`）+ 报告第三部分全文（7 项必备内容）。
+- [ ] **隔离实验授权：未批准 → 一切虚拟化写操作、克隆内 apt 索引刷新、写开关、dpkg 写、回滚全部停止**。M4.5 设计即要求"用户另行批准后克隆"；克隆创建需源 VM 软关机窗口，属虚拟化权限动作，不绕过。
+- [ ] 获批后按序执行：阶段 A–E（克隆/隔离编辑/离线身份重配置/联网准入/快照+恢复验证）→ F 登记 → 四智能体克隆 formal 研判（任务书第三部分）→ Harness 候选计划 + 克隆内官方索引刷新（第四部分，预期首次预演仍 preflight_failed＝索引陈旧证据）→ 操作员裁定与许可登记 → 审批-执行-自动复采-官方重取-复评-`fixed_pending_human_acceptance` 建议。
+- [ ] 如未获批准：如实交付已完成的准备结果并停止（即当前状态）。
+
+红线（全程有效）：`LINUXGUARD_ENABLE_DEVICE_REPAIR=0` 永不开启；实验开关仅实验窗口经批准置 1；不把任务书视为写入授权；版本达标仅产生人工接受建议，不宣称业务稳定性已验证或无其他漏洞。
+<!-- STAGE10_GATE_STATUS_END -->
+
 
 # 当前任务
 

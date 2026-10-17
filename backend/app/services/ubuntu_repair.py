@@ -82,8 +82,8 @@ def enrich_plan(db, run, asset, risk, connection, plan):
         device_access.allowed_host(connection.host)
         if connection.auth_type != "ssh_key" or not re.fullmatch(r"LINUXGUARD_DEVICE_[A-Z0-9_]{1,80}", connection.key_path_env or "") or connection.key_passphrase_env:
             raise ValueError("执行节点连接认证引用无效")
-        node = collection_tasks.remote_node_id()
-        if not node or not os.getenv("LINUXGUARD_COLLECTION_NODE_TOKEN") or not collection_tasks.is_node_local(asset):
+        node = collection_tasks.node_for_asset(asset)
+        if not node or not os.getenv(collection_tasks.token_env_for(node)) or not collection_tasks.is_node_local(asset):
             raise ValueError("Ubuntu 修复须绑定已认证 Linux 本机节点；当前不开放远程 SSH 修复")
         if not asset.inventory_complete or not asset.os_version.startswith("24.04"):
             raise ValueError("本适配器仅支持完整 Ubuntu 24.04 noble 清单")
@@ -131,7 +131,7 @@ def validate(db, run):
     if not asset or asset.distribution != "ubuntu" or not connection or not connection.enabled or connection.asset_id != run.asset_id or h().connection_signature(connection) != plan["connection_hash"]:
         raise ValueError("资产或连接绑定已变化")
     device_access.allowed_host(connection.host)
-    if plan["node_id"] != collection_tasks.remote_node_id() or not collection_tasks.is_node_local(asset) or asset.hostname != plan["identity"]["hostname"] or asset.os_version != plan["identity"]["release"]:
+    if plan["node_id"] != collection_tasks.node_for_asset(asset) or not collection_tasks.is_node_local(asset) or asset.hostname != plan["identity"]["hostname"] or asset.os_version != plan["identity"]["release"]:
         raise ValueError("执行节点或目标身份已变化")
     if hashlib.sha256(MAINTENANCE.read_bytes()).hexdigest() != plan["maintenance_sha256"] or hashlib.sha256(COLLECTOR.read_bytes()).hexdigest() != plan["collector_sha256"]:
         raise ValueError("固定维护工具已变化")

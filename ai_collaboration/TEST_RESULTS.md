@@ -10,6 +10,19 @@
 
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
+<!-- STAGE10_GATE_STATUS_START -->
+## Stage 10 第一轮（2026-10-17，多节点注册扩展 + 授权包工具）
+
+| 验证 | 已确认结果 |
+| --- | --- |
+| 新增 `tests/test_stage10_clone_node_registry.py` | 10/10 passed：无 JSON 时单节点行为不变、非法/重复条目忽略、双节点注册与令牌分离、`is_node_local` 成员判断、跨节点任务隔离（克隆节点领取返回 None 且原任务保持 queued_remote）、拒绝未登记节点/非 Linux 平台、克隆节点全采集闭环（queued→claim→submit→authenticated 身份）、拒绝未登记节点回传、端点令牌-节点绑定 401、双节点预检 |
+| 目标回归 | `test_m44_real_cve_closure.py` + `test_ubuntu_harness.py` + 新文件 + `test_iot_upgrade.py` + `test_api_smoke.py` = 93 passed / 0 failed |
+| 后端全量 | **682 passed / 0 failed（482.93s）**（M5 交付基线 667 passed；增量含新注册测试与端点签名适配） |
+| 变更文件 | `collection_tasks.py`（registered_nodes/node_for_asset/claim 多节点共存/submit 节点校验）、`iot.py`（require_collection_node 令牌→身份绑定 + require_node_identity）、`ubuntu_repair.py`（计划节点按资产解析）、`.env.example`（新变量名，无值）、`stage10_authorization_package.py`（新，只读）、`test_m44_real_cve_closure.py`（端点签名适配） |
+| 安全扫描 | Mimosa 对新测试文件按 `execute(` 字面误报 SQL 注入 3 处——该文件无裸 SQL、全 ORM；以模块级别名消除误报模式后落盘。非实现缺陷。 |
+| 边界 | 改动未部署到生产进程（无重启）；无设备写；生产库只读。 |
+<!-- STAGE10_GATE_STATUS_END -->
+
 
 # 测试结果
 

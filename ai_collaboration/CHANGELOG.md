@@ -10,6 +10,17 @@
 
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
+<!-- STAGE10_GATE_STATUS_START -->
+## 2026-10-17 Stage 10 第一轮：真实漏洞修复准备完成——停在独立实验授权门禁
+
+- 基线 `710d87d`，工作区干净。任务书第一部分六项核查全部通过（只读取证）：unified 唯一正式引擎（analysis.py 非 on 即 503）、System A/B 零残留、双采集节点正常（后端 46128 / 隧道 46424，当日 03:12 双通道补采 Ubuntu 1790 包与 OpenWrt 182 包）、风险 126 `pending_human_review`/`confirmed_affected` 未代签、官方原文 `ADV-e97cb19b…`（USN-8927-1，noble/security，sha256 `932d5a73…`）、双修复写开关 0 且 `remediation_task` 0 行。
+- 唯一实现变更：最小多节点 Pull 节点注册（`LINUXGUARD_COLLECTION_NODES_JSON` + `LINUXGUARD_COLLECTION_NODE_TOKEN_<SUFFIX>` + `node_for_asset`），原 m45-linux-node 行为逐字节兼容；claim 支持多节点共存（跳过他节点任务）、端点强制"令牌所属节点＝声名节点"、ubuntu_repair 计划绑定改按资产解析。未配置 JSON 时与 M5 一致。
+- 新增只读工具 `backend/scripts/stage10_authorization_package.py`（unified 非 on 或开关非 0 拒绝运行；不打印秘密）。
+- 虚拟化只读探测：VMware Workstation vmrun、源 VM .vmx 全事实、0 快照、Tools running、VMnet8 DHCP 池；克隆预选 192.168.183.110（池外静态，白名单逐主机 /32 追加）。
+- 本地产物（gitignored `local-archive/stage10-work/`）：`authorization-request.json`（sha256 `0c136d6b…ed688`）、`clone-identity.json`（sha256 `c76887ec…0544f`，含已生成独立节点令牌与克隆专用 Ed25519 指纹 `SHA256:PvhZVvu6…`）、克隆密钥对、`clone-operation-plan.md`（阶段 A–F 精确计划）、`register-clone-runbook.md`。
+- **未创建克隆、未执行快照恢复验证、未刷新 apt 索引、未执行 dpkg 写、未开任何写开关；四智能体克隆研判与 Harness 候选计划未执行也未模拟。**集中授权申请（7 项）随 `IOTGUARD_STAGE10_REAL_REMEDIATION_E2E_REPORT.md` 提交，等待用户单独批准；未批准不宣称修复成功。
+<!-- STAGE10_GATE_STATUS_END -->
+
 
 # 变更日志
 

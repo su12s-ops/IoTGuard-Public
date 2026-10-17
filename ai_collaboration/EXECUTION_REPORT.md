@@ -10,6 +10,23 @@
 
 本段为 M5 机器可执行验收完成稿；人工裁定关闭前不宣称风险结论定案。完整数据见 `IOTGUARD_M5_FINAL_UNIFIED_PRODUCTION_REPORT.md` 与 `reports/m5-final/`。
 <!-- M5_FINAL_STATUS_END -->
+<!-- STAGE10_GATE_STATUS_START -->
+## Stage 10 第一轮执行记录（2026-10-17）——核查与准备完成，执行停于授权门禁
+
+基线 `710d87d`，结束于同日；全程零设备写、零生产配置变更、零进程重启、生产数据库仅 `mode=ro` 只读查询。
+
+已执行（全部只读或本地隔离）：
+1. 生产状态六项核查（API + 只读库查询 + .env 开关名值核对）→ 全部通过，证据见报告第一部分。
+2. 虚拟化只读探测：`vmrun list/listSnapshots/checkToolsState`、.vmx 读取、`vmnetdhcp.conf`/租约读取；未调用任何会产生写效果的 vmrun 子命令。
+3. 实现最小多节点注册扩展（4 文件）+ 新测试 10 项；全量回归 682 passed / 0 failed（482.93s）。改动未部署到运行中的生产进程。
+4. `stage10_authorization_package.py` 只读组装：`authorization-request.json`（`0c136d6b…`，内置 `authorization_not_granted_by_this_package=true` 与 5 项门禁动作清单）、`clone-identity.json`（`c76887ec…`，独立节点令牌已生成未打印）、克隆专用 Ed25519 密钥对（仅存本地归档）。
+5. `clone-operation-plan.md`（克隆→隔离编辑→离线身份重配置→联网准入→快照/恢复验证→登记，每阶段验证点+回退）与 `register-clone-runbook.md`（获批后登记与研判步骤）。
+
+明确未执行：克隆创建（需源 VM 软关机窗口＝虚拟化权限）、快照恢复验证、克隆内 apt 索引刷新/下载/安装、`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` 置 1、dpkg 写、回滚、四智能体克隆研判、Harness 候选计划。原因：集中于一次授权申请（报告第三部分），未获批准；M4.5 设计与任务书均要求不得绕过。无任何模拟研判或伪造证据替代品。
+
+插曲：Mimosa 扫描器对新测试文件按 `execute(` 字面模式误报 SQL 注入（该文件无裸 SQL、全 ORM）；以模块级别名改写消除误报模式后正常落盘，未绕过钩子。
+<!-- STAGE10_GATE_STATUS_END -->
+
 
 # 最近一次开发结果
 

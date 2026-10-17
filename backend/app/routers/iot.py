@@ -16,14 +16,25 @@ from app.services import trace_service as tracing
 from app.routers.assets import serialize_asset
 from app.services.device_access import allowed_host, allowed_networks, require_control, connection_signature, collector_node, collection_only_mode
 from fastapi import Request
-import hmac
 import os
 
 
 def require_collection_node(request: Request):
-    expected = os.getenv("LINUXGUARD_COLLECTION_NODE_TOKEN", "")
+    """Authenticate a pull node by token and bind it to its registered identity.
+
+    Each registered node has its own token; the matched identities are stored
+    on request.state so every node endpoint can enforce that the caller may
+    only act as the node its token belongs to.
+    """
     supplied = request.headers.get("X-Collection-Node-Token", "")
-    if not expected or not hmac.compare_digest(expected.encode(), supplied.encode()):
+    matched = collection_tasks.node_ids_for_token(supplied)
+    if not matched:
+        raise HTTPException(401, "采集节点认证失败")
+    request.state.collection_node_ids = matched
+
+
+def require_node_identity(request: Request, node_id: str):
+    if node_id not in getattr(request.state, "collection_node_ids", []):
         raise HTTPException(401, "采集节点认证失败")
 from app.services.iot_devices import collect_openwrt, discover
 from app.services import collection_tasks
@@ -327,12 +338,13 @@ class CollectionResultInput(BaseModel):
 
 
 @router.get("/collection-node/claim", dependencies=[Depends(require_collection_node)])
-def collection_node_claim(node_id: str, node_platform: str = "", db: Session = Depends(get_db)):
+def collection_node_claim(node_id: str, node_platform: str = "", request: Request = None, db: Session = Depends(get_db)):
     """Linux 采集节点拉取一个已转交的采集任务（原子领取）。
 
     只回传环境变量名与钉扎指纹，私钥材料永远不离开节点自身；
-    节点身份必须与后端登记一致且节点运行于 Linux。
+    节点身份必须与后端登记一致且节点运行于 Linux，令牌必须属于该节点。
     """
+    require_node_identity(request, node_id)
     try:
         assignment = collection_tasks.claim_for_node(db, node_id, node_platform)
     except ValueError as exc:
@@ -341,8 +353,9 @@ def collection_node_claim(node_id: str, node_platform: str = "", db: Session = D
 
 
 @router.post("/collection-node/results/{run_id}", dependencies=[Depends(require_collection_node)])
-def collection_node_result(run_id: str, payload: CollectionResultInput, db: Session = Depends(get_db)):
+def collection_node_result(run_id: str, payload: CollectionResultInput, request: Request, db: Session = Depends(get_db)):
     """采集节点回传执行结果；成功走与本地采集完全相同的入库与身份核验路径。"""
+    require_node_identity(request, payload.node_id)
     try:
         run = collection_tasks.submit_result(db, run_id, payload.model_dump())
     except ValueError as exc:
