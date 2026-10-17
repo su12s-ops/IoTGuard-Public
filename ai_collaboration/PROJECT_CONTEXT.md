@@ -1,5 +1,17 @@
 # IoTGuard 项目长期背景与系统架构
 
+## Stage 9B M5 当前边界（2026-10-17）
+
+当前报告：`IOTGUARD_M5_SINGLE_AGENT_SYSTEM_REPORT.md`；基线`58fd221`。目标：全项目唯一正式 LLM 研判体系（LangGraph 统一四智能体，正式入口 /api/analysis），彻底退役 System A（services/agents/）与 System B（event_review_pipeline+agent_group_chat）。
+
+已完成：完整调用关系审计与旧/新边界划定；中立迁移（`services/agent_infra.py`、`services/agent_tools.py`、`services/review_common/`——统一编排器与旧系统零 import，通用确定性组件不随旧文件删除）；一致性备份（`local-archive/m5-switch/`，sha256 `33283418…e513f`）；排空核验；迁移演练隔离副本 44/0（演练已改造为退役感知，保留为切换契约校验器）；Mimosa 0 findings；全量回归 742/0。
+
+**门禁（当前停点）**：正式切换前置的 Q1–Q8 人工裁定未签署（`IOTGUARD_M47_HUMAN_REVIEW_PACKETS.md` 裁定栏全空，DB 零人工裁定痕迹）。按 M5 指令与 M4.7 契约 §77：模型不得代签，停在该人工环节等待真实授权操作员；不得将影子结论晋升为正式结论（111 条 reanalysis_required 候选切换后由统一链重新研判，非晋升）。
+
+门禁后既定流程（M5 报告 §9）：操作员裁定落库 → 物理删除旧系统（报告 §2.2 逐文件清单：services/agents/ 全包、event_review_pipeline、agent_group_chat、routers/agents、AgentOrchestrationRun 映射、agent_harness._expert_review、mqtt agent_plan LLM 分支、demo 直调、analysis off 回退分支、历史脚本归档、前端 AgentOps 改接 unified）→ `.env` flag=on → 重启唯一 uvicorn → 进程内核验 mode=on/formal_writer=unified 与轮换令牌生效 → live 验收 A–D → 终扫封印。回滚仅依赖明确版本+备份+授权恢复程序，不依赖第二套在线研判器。
+
+边界维持：flag=off、`LINUXGUARD_ENABLE_DEVICE_REPAIR=0`、`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR=0`；旧系统 on 态互斥护栏（`system_b_formal_writer_disabled` 四写入器）经演练实证；统一链异常唯一合法路径为 fail-closed 落人工。下方 M4.7 及更早内容为历史。
+
 ## Stage 9B M4.7 当前边界（2026-10-17）
 
 当前报告：`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`；基线`fa3b474`。四角色与LangGraph原体系未动；正式入口仍System B，`LINUXGUARD_UNIFIED_PIPELINE=off`，双修复写开关0，旧编排器保留。

@@ -228,7 +228,13 @@ def main() -> int:
         run_review_analysis_unified,
     )
     from app.services.unified.state import empty_state
-    from app.services import event_review_pipeline, agent_harness, agent_group_chat
+    from app.services import agent_harness, review_common
+    try:
+        from app.services import event_review_pipeline, agent_group_chat
+        LEGACY_PRESENT = True
+    except ImportError:  # M5 退役后旧模块不存在；互斥断言转为"不可导入"
+        event_review_pipeline = agent_group_chat = None
+        LEGACY_PRESENT = False
 
     harness_launch = getattr(agent_harness, "execute")
 
@@ -283,7 +289,7 @@ def main() -> int:
 
         # ── D 互斥（on 侧）────────────────────────────────────────────────
         config.UNIFIED_PIPELINE_MODE = "on"
-        try:
+        if LEGACY_PRESENT:
             for label, fn in (
                 ("run_review_analysis", lambda: event_review_pipeline.run_review_analysis(db, "m47x1")),
                 ("generate_and_save_report", lambda: event_review_pipeline.generate_and_save_report(db, "m47x2")),
@@ -295,19 +301,26 @@ def main() -> int:
                     check("D3-on 时 System B " + label + " 拒绝", False, "未抛出异常")
                 except ValueError as exc:
                     check("D3-on 时 System B " + label + " 拒绝", "system_b_formal_writer_disabled" in str(exc), str(exc))
-            r = client.post("/api/unified/analyze", json={"hostname": "edge-01", "risk_id": 126})
-            check("D4-on 时 /api/unified/analyze 拒绝第二正式入口", r.status_code == 409,
-                  "HTTP " + str(r.status_code))
-            shadow_probe = models.UnifiedAnalysisRun(
-                run_id="m47-drill-shadow-probe", task_type="risk_review", target_type="linux_host",
-                target_ref="", mode="shadow", status="running", risk_id=126)
-            db.add(shadow_probe)
-            db.commit()
+        else:
             try:
-                runner_mod.run_unified_sync(db, shadow_probe, sink=formal_sink)
-                check("D5-shadow 行禁止 sink", False, "未抛出异常")
-            except ValueError as exc:
-                check("D5-shadow 行禁止 sink", "shadow_sink_forbidden" in str(exc), str(exc))
+                import importlib
+                importlib.import_module("app.services.event_review_pipeline")
+                check("D3-旧 System B 写入器已退役", False, "模块仍可导入")
+            except ImportError:
+                check("D3-旧 System B 写入器已退役", True, "event_review_pipeline 不可导入")
+        r = client.post("/api/unified/analyze", json={"hostname": "edge-01", "risk_id": 126})
+        check("D4-on 时 /api/unified/analyze 拒绝第二正式入口", r.status_code == 409,
+              "HTTP " + str(r.status_code))
+        shadow_probe = models.UnifiedAnalysisRun(
+            run_id="m47-drill-shadow-probe", task_type="risk_review", target_type="linux_host",
+            target_ref="", mode="shadow", status="running", risk_id=126)
+        db.add(shadow_probe)
+        db.commit()
+        try:
+            runner_mod.run_unified_sync(db, shadow_probe, sink=formal_sink)
+            check("D5-shadow 行禁止 sink", False, "未抛出异常")
+        except ValueError as exc:
+            check("D5-shadow 行禁止 sink", "shadow_sink_forbidden" in str(exc), str(exc))
         finally:
             config.UNIFIED_PIPELINE_MODE = "off"
 
@@ -389,7 +402,7 @@ def main() -> int:
         # run_unified_sync 不吞模型异常；正式入口的 fail-closed 契约位于
         # generate_and_save_report_unified 后台 worker 的 except 分支：
         # 全部选中风险 → pending_human_review + human_review_required + 失败原因。
-        # 演练将 _selection 收窄到风险107 以界定写入范围（仅副本）。
+        # 演练将候选选择收窄到风险107 以界定写入范围（仅副本）。
         config.UNIFIED_PIPELINE_MODE = "on"
         try:
             import time as _time
@@ -397,7 +410,7 @@ def main() -> int:
             def exploding():
                 raise RuntimeError("drill: simulated model outage")
 
-            real_selection = event_review_pipeline._selection
+            real_selection = review_common.select_candidates
 
             def drill_selection(db_):
                 only = db_.get(models.RiskAssessment, 107)
@@ -405,7 +418,7 @@ def main() -> int:
                         "total_risks_in_db": 1, "skipped_objects": [],
                         "selected_object_ids": [107]}
 
-            event_review_pipeline._selection = drill_selection
+            review_common.select_candidates = drill_selection
             try:
                 generate_and_save_report_unified(
                     db, "m47drillfail", background=True, client_factory=exploding)
@@ -437,7 +450,7 @@ def main() -> int:
                       bool(rep) and rep[0].status in ("human_review", "failed"),
                       "report_status=" + str(rep[0].status if rep else None))
             finally:
-                event_review_pipeline._selection = real_selection
+                review_common.select_candidates = real_selection
         finally:
             config.UNIFIED_PIPELINE_MODE = "off"
 

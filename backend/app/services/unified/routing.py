@@ -37,7 +37,7 @@ def _runtime_capability_unsupported(capability_marks: dict[str, Any]) -> bool:
 
 def _has_runtime_evidence(db: Session, target_ref: str, target_type: str) -> bool:
     """目标是否存在任何 SecurityEvidence（多标识键解析，与工具语义一致）。"""
-    from app.services.agents.tools import _evidence_keys
+    from app.services.agent_tools import _evidence_keys
 
     keys = _evidence_keys(db, target_ref)
     if not keys:

@@ -32,7 +32,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.services import trace_service as tracing
-from app.services.agents.base import AgentSpec, ChatClient
+from app.services.agent_infra import AgentSpec, ChatClient
 from app.services.unified import (
     aggregator,
     audit_policy,

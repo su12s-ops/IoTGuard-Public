@@ -1,5 +1,13 @@
 # 变更日志
 
+## Stage 9B M5：统一四智能体唯一化（第一阶段：中立迁移 + 门禁验证）（2026-10-17）
+
+- 用户授权正式切换与旧系统删除；执行中依据 M4.7 迁移契约发现 Q1–Q8 人工裁定未签署（材料裁定栏全空、DB 零人工裁定痕迹），按 M5 指令第 4 条**正式切换停在该人工环节**，等待真实授权操作员；本轮交付门禁之外的全部准备。
+- 新增中立模块：`services/agent_infra.py`（自 System A base.py 迁出客户端协议/两实现/build_llm_client/parse_structured_output）、`services/agent_tools.py`（自 agents/tools.py 全文迁出只读工具）、`services/review_common/`（自 System B 迁出 evidence_packet/selection/human_review 确定性组件）。统一编排器 7 模块（agent_base/graph/agents_def/evidence_prep/routing/schemas/adapter）改依赖中立模块，与旧 System A/B 零 import；`RemediationActionPlan`/`VerificationStep` 内联进 `unified/schemas.py`。
+- `agent_harness.py` inspect_evidence 改用 review_common；`m47_migration_drill.py` 改造：选择收窄补丁移至 `review_common.select_candidates`（修复 E9 副本写入范围扩大问题）、D3 退役感知双态断言——该脚本保留为未来切换的契约校验器。
+- 交付 `IOTGUARD_M5_SINGLE_AGENT_SYSTEM_REPORT.md`：完整调用关系审计、逐文件删除/迁移清单、隔离演练 44/44、备份/排空/令牌/回滚状态、恢复清单（操作员裁定后的七步既定流程）。
+- 未动：flag（off）、两个修复写开关（0）、旧系统产品代码、公开 Git 历史、任何人工裁定。
+
 ## 模型切换：DeepSeek → BigModel GLM-5.3-Flash（2026-10-17，M4.7 后续）
 
 - 用户指令一次性切换四智能体 LLM；实测发现智谱套餐计费走 Anthropic Messages 协议端点（`/api/anthropic` 200），OpenAI 兼容 `/api/paas/v4` 不在套餐内（429/1113），遂适配协议而非仅换配置。

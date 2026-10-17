@@ -21,7 +21,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 from sqlalchemy.orm import Session
 
-from app.services.agents.base import (
+from app.services.agent_infra import (
     AgentSpec,
     AgentTool,
     ChatClient,

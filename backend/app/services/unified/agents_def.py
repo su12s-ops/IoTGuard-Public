@@ -1,6 +1,6 @@
 """统一四智能体定义：职责 + 只读工具 + 输出模型（唯一命名）。
 
-工具全部复用 System A `agents/tools.py` 的既有只读实现（零改动），
+工具全部复用中立模块 `services/agent_tools.py` 的只读实现（零改动），
 新增 `query_intelligence_sources`（只读封装 vulnerability_intelligence
 多源状态包——Agent 2 做厂商公告语义理解与情报冲突核查的事实基础）。
 能力边界 = 注册的工具集合，四组互不重叠。
@@ -14,8 +14,8 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.orm import Session
 
 from app import models
-from app.services.agents import tools as T
-from app.services.agents.base import AgentSpec, AgentTool
+from app.services import agent_tools as T
+from app.services.agent_infra import AgentSpec, AgentTool
 from app.services.unified import schemas as S
 from app.services.unified.schemas import (
     AGENT_ASSET,

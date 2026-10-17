@@ -34,7 +34,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from app import models
-from app.services.agents import tools as T
+from app.services import agent_tools as T
 from app.utils.version_compare import is_version_less
 
 # 集合类事实的有界上限（预取是「事实底座」不是全量导出）

@@ -1,5 +1,18 @@
 # 当前任务
 
+## Stage 9B M5：统一四智能体唯一化与旧 LLM 系统退役（2026-10-17，进行中——停在 Q1–Q8 人工门禁）
+
+当前依据：`IOTGUARD_M5_SINGLE_AGENT_SYSTEM_REPORT.md`。开发前 HEAD=origin/main=`58fd221`，工作区干净。
+
+- [x] 完整调用关系审计：System A（services/agents/）与 System B（event_review_pipeline+agent_group_chat）全部调用方定位；通用能力（规则/CVE 匹配/工具/DB/门禁）与旧 LLM 编排边界划定。
+- [x] 中立迁移：`services/agent_infra.py`、`services/agent_tools.py`、`services/review_common/`（evidence_packet/selection/human_review）自旧文件迁出；统一编排器 7 模块全部改依赖中立模块，与旧 System A/B 零 import。
+- [x] 切换前检查：一致性备份（`local-archive/m5-switch/`，sha256 `33283418…e513f`，integrity ok）；排空（busy=0/running=0）；迁移演练隔离副本 **44/44**（含退役感知 D3 双态、E9 fail-closed 修复）；Mimosa 深扫终态 **0 findings**（`scan-2026-10-17T02-18-21.318Z-f6346022fd88`，seal `580103b6…f4b`）；全量回归 **742/0**（与 GLM 切换里程碑基线对齐）。
+- [x] 令牌探针：运行中进程（2026-10-16 23:21 启动，早于 58fd221）对轮换令牌 401——进程环境陈旧，轮换令牌随切换重启生效（已列入恢复清单）。
+- [ ] **Q1–Q8 人工裁定：未签署 → 正式切换依约停在该人工环节**。材料裁定栏全空、DB 零人工裁定痕迹（`human_confirmed`/`rejected`/`[human_review]` 均 0；风险 126=`reanalysis_required`、12=`inactive` 与交付时一致）。按 M5 指令第 4 条：模型不得代签，等待真实授权操作员。
+- [ ] 待门禁放行后：物理删除旧系统（§2.2 逐文件清单）、`_review_entrypoint` 唯一化（mode≠on → 503 fail-closed）、config 默认 on、前端 AgentOps 改接 /api/unified/*、测试退役守卫、历史脚本归档 → flag=on → 重启 → live 验收 A–D → 终扫 → 交付。
+
+边界：本轮未切 on、未重启、未删任何产品代码、无真实设备写、双修复写开关 0、无影子晋升、未代签；演练写入全部发生在隔离副本并回滚至差异 0。恢复清单见 M5 报告 §9。
+
 ## 模型切换 GLM-5.3-Flash（2026-10-17，M4.7 交付后用户指令）
 
 - [x] 切换四智能体 LLM 为 BigModel GLM-5.3-Flash：套餐计费走 Anthropic Messages 协议端点，OpenAI 兼容端点不在套餐内（1113），已按协议适配（AnthropicProtocolChatClient + autogen Anthropic 分支 + DEEPSEEK_API_PROTOCOL 分发；anthropic 锁 <1.0）。

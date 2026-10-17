@@ -203,10 +203,10 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     逐事件串行执行统一图（每事件一次完整四智能体编排），经 formal_sink
     写正式字段；响应形状与 System B 兼容。
     """
-    from app.services.event_review_pipeline import _selection
+    from app.services.review_common import select_candidates
 
     del selection_result
-    selected = list(selected_risks or _selection(db)["_selected_risks"])
+    selected = list(selected_risks or select_candidates(db)["_selected_risks"])
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:
         return {"status": "no_candidates", "review_run_id": run_id, "model_called": False}
@@ -280,9 +280,9 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                                      background: bool = False,
                                      client_factory=None) -> dict[str, Any]:
     """System B generate_and_save_report 的统一编排器实现（正式模式入口）。"""
-    from app.services.event_review_pipeline import _selection
+    from app.services.review_common import select_candidates
 
-    selection = _selection(db)
+    selection = select_candidates(db)
     selected = selection["_selected_risks"]
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:

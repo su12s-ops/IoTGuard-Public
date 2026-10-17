@@ -11,9 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-from app.services.agents.agents import RemediationActionPlan, VerificationStep
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 AGENT_ASSET = "asset_investigator"
 AGENT_VULNERABILITY = "vulnerability_analyst"
@@ -31,6 +29,36 @@ AGENT_TITLES = {
 PIPELINE_VERSION = "unified-four-agent-v1"
 
 Freshness = Literal["fresh", "stale", "mixed", "none"]
+
+# 白名单修复动作 Schema（M5 自旧 System A agents.py 迁入：统一编排器是唯一消费方）
+RemediationAction = Literal[
+    "change_config", "restart_service", "disable_service", "enable_authentication",
+    "update_package", "backup_file", "restore_file",
+]
+
+
+class RemediationActionPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    action: RemediationAction
+    target: str = Field(description="动作对象：包名/服务名/配置路径")
+    params: dict[str, Any] = Field(default_factory=dict)
+    rationale: str = Field(min_length=1)
+    expected_verification: str = ""
+    requires_approval: bool = True
+
+    @field_validator("params")
+    @classmethod
+    def no_shell_in_params(cls, value: dict[str, Any]):
+        banned = {"command", "shell", "cmd", "script", "exec"}
+        if banned & set(value):
+            raise ValueError(f"params 禁止包含 {banned & set(value)}；修复动作由平台白名单执行器执行")
+        return value
+
+
+class VerificationStep(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    check: str
+    evidence_source: str = ""
 
 
 class UnifiedAgentOutput(BaseModel):

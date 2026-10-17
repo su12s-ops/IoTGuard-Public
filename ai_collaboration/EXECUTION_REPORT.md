@@ -1,5 +1,17 @@
 # 最近一次开发结果
 
+## Stage 9B M5 第一阶段：唯一化准备（2026-10-17）——停在 Q1–Q8 人工门禁
+
+基线`58fd221`、工作区干净；唯一仓库IoTGuard-Public。依据`IOTGUARD_M5_SINGLE_AGENT_SYSTEM_REPORT.md`。用户已授权正式切换与旧系统删除；执行中核查发现 Q1–Q8 未签署（材料裁定栏全空；DB `human_confirmed`/`rejected`/`[human_review]` 标记均为 0；风险126=`reanalysis_required`、12=`inactive` 与 M4.7 交付时一致），按 M5 指令第 4 条与 M4.7 契约 §77 停在人工环节，等待真实授权操作员；模型未签署、未代填。
+
+审计：System A 调用方=routers/agents、mqtt_security_workflow.agent_plan、统一系统基础件 import（6处）、历史脚本3、测试9；System B 调用方=analysis.py off 分支、demo.py、agent_harness._expert_review、统一 adapter._selection、历史脚本12、测试8；通用能力（规则/匹配/情报/证据/trace/门禁/Harness 确定性采集审批）逐一确认保留。
+
+中立迁移：`agent_infra.py`+`agent_tools.py`+`review_common/`（evidence_packet/selection/human_review）自旧文件迁出；统一 7 模块改依赖中立模块（与旧 System A/B 零 import）；`RemediationActionPlan`/`VerificationStep` 内联 unified/schemas；agent_harness inspect_evidence 切 review_common；m47 演练补丁移至 `review_common.select_candidates`（E9 首跑 2 失败=演练补丁失效非生产回归，副本写入范围曾扩大至 111 候选、已全字段回滚差异 0）、D3 退役感知。
+
+切换前检查：一致性备份 sha256 `33283418…e513f`（integrity ok）；排空 busy=0/running=0；演练 **44/0**；Mimosa `scan-2026-10-17T01-59-32.762Z-90ab750eaf44` **0 findings**（seal `5b8402d7…a0ef`）；令牌探针证实运行中进程（10-16 23:21 启动，早于 58fd221）持有旧环境——轮换令牌随切换重启生效；修复写开关双 0。
+
+回归：全量 **742/0**（701+41 perf，与 GLM 切换里程碑基线对齐）；统一专项 75/0；波及面 128/0。维持 flag=off、双写开关 0；未切 on、未重启、未删产品代码、无设备写、无影子晋升、未代签。恢复清单（操作员裁定后七步）见 M5 报告 §9。本轮结束即停止，等待 Q1–Q8 落库。
+
 ## Stage 9B M4.7（2026-10-17）
 
 基线`fa3b474`、工作区含上轮遗留的两处演示令牌改动与验收草稿；唯一仓库IoTGuard-Public。依据`IOTGUARD_UNIFIED_AGENT_MIGRATION_ACCEPTANCE.md`。

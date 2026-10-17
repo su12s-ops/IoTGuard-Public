@@ -482,7 +482,7 @@ def execute(db, run, verify_only=False):
             if run.risk_id:
                 risk, _ = _risk_and_match(db, run)
                 run_matching(db, cve_ids=[risk.cve_id])
-                from app.services.event_review_pipeline import build_evidence_packet
+                from app.services.review_common import build_evidence_packet
                 result["evidence_packet"] = tool(db, run, "inspect_evidence", lambda: build_evidence_packet(db, risk).model_dump())
                 if plan["model_review"]:
                     result["agent_review"] = tool(db, run, "expert_review", lambda: _expert_review(db, run, risk))

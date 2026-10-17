@@ -1,5 +1,21 @@
 # 测试结果
 
+## Stage 9B M5：唯一化准备与门禁验证（2026-10-17，切换停在 Q1–Q8 人工门禁）
+
+基线`58fd221`；中立迁移后回归。
+
+| 验证 | 已确认结果 |
+| --- | --- |
+| 最终全量 | **742 passed / 0 failed**（主干 701/533.01s + test_ebpf_p21_perf 41/0.24s；与 GLM 切换里程碑 742 基线完全对齐，零增减——旧系统既有测试全部在套件内并通过） |
+| 统一系统专项 | unified pipeline+adapter+investigation **75/0**（中立迁移后） |
+| 迁移波及面 | evidence_prep + quality_deepening + agent_harness_upgrade + multi_source_intelligence **128/0** |
+| 迁移契约演练 | 隔离副本 **44/0**：中立迁移代码重验 M4.7 全部契约；E9 首跑 2 失败定位为演练脚本对旧 `_selection` 的补丁失效（非生产回归，仅副本写入范围扩大且已全字段回滚差异 0），演练改补丁至 `review_common.select_candidates` 后 44/0；D3 改造为退役感知双态断言（旧模块在→验护栏，退役后→验不可导入） |
+| Mimosa 深扫（迁移后代码） | 过程扫 `scan-2026-10-17T01-59-32.762Z-90ab750eaf44` 0 findings（seal `5b8402d7…a0ef`）；**交付终扫 `scan-2026-10-17T02-18-21.318Z-f6346022fd88` findingCount=0**，seal `sha256:580103b6…f4b`，123 依赖包，离线通告库可用（1 包 2 通告命中） |
+| 一致性备份 | `local-archive/m5-switch/linuxguard-preM5-20261017T020005Z.db`，397,836,288 B，sha256 `33283418…e513f`，integrity_check=ok |
+| 令牌探针（live） | 运行中进程：错误令牌 401、轮换令牌 401（进程环境早于轮换）——令牌生效验证列入切换重启步骤；risk-126 复核确认未被探针改写 |
+| 修复写开关 | `LINUXGUARD_ENABLE_DEVICE_REPAIR`/`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` 未设置（默认 0）；演练 H3 实证关态拒绝 |
+| 边界 | 未切 on、未重启、未删产品代码；live on 态验收 A–D 待门禁放行后执行 |
+
 ## 模型切换 GLM-5.3-Flash（2026-10-17，M4.7 后续）
 
 | 验证 | 已确认结果 |
