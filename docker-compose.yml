@@ -23,24 +23,39 @@ services:
     build:
       context: .
       dockerfile: backend/Dockerfile
+      args:
+        VCS_REF: ${IOTGUARD_BUILD_REVISION:-unknown}
+        BUILD_DATE: ${IOTGUARD_BUILD_DATE:-unknown}
     env_file:
       - path: ./backend/.env.docker
         required: false
     environment:
       LINUXGUARD_DATA_DIR: /app/data
       LINUXGUARD_DEPLOYMENT_MODE: standard
+      LINUXGUARD_ENABLE_DEVICE_REPAIR: "0"
+      LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR: "0"
     volumes:
       - linuxguard-data:/app/data
     ports:
-      - "8000:8000"
+      - "127.0.0.1:${IOTGUARD_BACKEND_PORT:-18000}:8000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     restart: unless-stopped
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        VCS_REF: ${IOTGUARD_BUILD_REVISION:-unknown}
+        BUILD_DATE: ${IOTGUARD_BUILD_DATE:-unknown}
     depends_on:
       - backend
     ports:
-      - "8080:80"
+      - "127.0.0.1:${IOTGUARD_FRONTEND_PORT:-18080}:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop: [ALL]
     restart: unless-stopped
 
 volumes:

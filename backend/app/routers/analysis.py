@@ -136,6 +136,7 @@ def preflight(db: Session = Depends(get_db)):
 
 @router.post("/runs", dependencies=[Depends(require_control)])
 def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1,
+               post_repair: bool = False,
                investigation_goal: str = Query(default="", max_length=2000), db: Session = Depends(get_db)):
     """启动一次四智能体联合研判任务（后台执行）。
 
@@ -167,7 +168,7 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
             detail=f"已有 {running_count} 条候选正在研判中。已恢复 {recovered} 条超时记录。请等待或稍后重试。",
         )
 
-    if selection["selected_object_count"] == 0:
+    if selection["selected_object_count"] == 0 and not post_repair:
         active_version = PIPELINE_VERSION
         if getattr(config, "UNIFIED_PIPELINE_MODE", "off") == "on":
             from app.services.unified.adapter import UNIFIED_ADAPTER_VERSION
@@ -191,7 +192,7 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
     import uuid as _uuid
     run_id = _uuid.uuid4().hex[:12]
     result = _review_entrypoint(db, run_id, background=True, risk_id=risk_id, batch_size=batch_size,
-                               investigation_goal=investigation_goal)
+                               investigation_goal=investigation_goal, post_repair=post_repair)
 
     return {
         "run_id": result.get("run_id", run_id),

@@ -1,4 +1,5 @@
 import os
+import asyncio
 import re
 import sys
 import traceback
@@ -97,7 +98,16 @@ async def lifespan(_: FastAPI):
     print(f"[startup] PID: {_startup_info['pid']}")
     print(f"[startup] 数据库: {_startup_info['database_absolute_path']}")
     print(f"[startup] 工作目录: {_startup_info['working_directory']}")
-    yield
+    from app.services.collection_tasks import periodic_runtime_collection
+    schedule = asyncio.create_task(periodic_runtime_collection())
+    try:
+        yield
+    finally:
+        schedule.cancel()
+        try:
+            await schedule
+        except asyncio.CancelledError:
+            pass
 
 
 def _record_db_path():
@@ -179,6 +189,8 @@ def health():
         db.close()
 
     return {"status": "ok", "service": "LinuxGuard", "database": "ok",
+            "build": {"revision": os.getenv("IOTGUARD_BUILD_REVISION", "working-tree"),
+                      "created": os.getenv("IOTGUARD_BUILD_DATE", "unknown")},
             "layers": _runtime_layers()}
 
 
@@ -225,7 +237,7 @@ def sensor_summary(db):
         if capabilities.get("mode") == "pull":
             # Pull sensors are not resident processes: honest health is "did a
             # recent window succeed", never a fabricated constant "running".
-            status = "reporting" if age is not None and age <= 120 else "stale"
+            status = sensor.status if sensor.status in {"failed", "degraded", "unknown"} else ("reporting" if age is not None and age <= 120 else "stale")
         else:
             status = sensor.status if sensor.status != "running" or (age is not None and age <= 120) else "stale"
             if status == "running" and sensor.dropped_events:
@@ -237,7 +249,7 @@ def sensor_summary(db):
     return {"status": worst, "healthy": healthy, "total": len(sensors), "sensors": details}
 
 
-_WORST_ORDER = {"running": 0, "reporting": 0, "degraded": 1, "stale": 2, "stopped": 3, "unknown": 4, "none": 5}
+_WORST_ORDER = {"running": 0, "reporting": 0, "degraded": 1, "stale": 2, "stopped": 3, "failed": 4, "unknown": 4, "none": 5}
 
 
 @app.get("/api/diagnostics")

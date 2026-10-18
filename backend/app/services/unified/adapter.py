@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import threading
 import traceback
 import uuid
@@ -45,9 +46,20 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
     risk = db.get(models.RiskAssessment, run_row.risk_id) if run_row.risk_id else None
     if risk is None:
         return
-    if not risk.active:
-        raise ValueError("inactive_risk_requires_historical_adjudication")
     from app.services.review_common import governance
+    if not risk.active:
+        admission = db.query(models.RiskGovernanceEvent).filter_by(
+            risk_id=risk.id, kind="post_repair_reassessment_request").all()
+        if not any(json.loads(e.payload_json).get("run_id") == run_row.run_id for e in admission):
+            raise ValueError("inactive_risk_requires_historical_adjudication")
+        governance.record(db, risk, "post_repair_assessment", "unified_four_agent", {
+            "run_id": run_row.run_id, "trace_id": run_row.trace_id,
+            "decision": state.decision, "policy": state.final.get("policy"),
+            "degraded_roles": state.degraded_roles,
+            "original_risk_preserved": True, "repair_authorization": False,
+            "business_accepted": False})
+        db.commit()
+        return
     event = governance.assessment_record(db, risk, run_row, state)
     baseline = state.baseline or {}
     final = state.final or {}
@@ -250,7 +262,10 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     rows: list[models.UnifiedAnalysisRun] = []
     states: list[UnifiedAnalysisState] = []
     for risk in selected:
-        if not risk.active or risk.review_status in {"inactive", "resolved", "human_reviewing"}:
+        receipt = db.query(models.RiskGovernanceEvent).filter_by(
+            risk_id=risk.id, kind="post_repair_reassessment_request").all()
+        post_repair = any(json.loads(e.payload_json).get("run_id") == f"UA-{run_id}-{risk.id}" for e in receipt)
+        if not post_repair and (not risk.active or risk.review_status in {"inactive", "resolved", "human_reviewing"}):
             raise ValueError("risk_not_eligible_for_formal_analysis")
         run_row = models.UnifiedAnalysisRun(
             run_id=f"UA-{run_id}-{risk.id}", task_type=TASK_RISK_REVIEW,
@@ -268,7 +283,7 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
         run_unified_sync(db, run_row, sink=formal_sink, force_full_review=True,
                          investigation_goal=investigation_goal,
                          client_factory=client_factory or default_client_factory)
-        if run_row.status == "failed":
+        if run_row.status == "failed" and not post_repair:
             # runner 会捕获编排级异常并把运行标记 failed（不抛出、不落 sink）。
             # 正式路径必须与 System B 的 _fail_selected 同语义：fail-closed 落
             # 人工门禁，不能把风险停留在 agent_reviewing。
@@ -338,7 +353,7 @@ def _admission(function):
 def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                                      background: bool = False,
                                      client_factory=None, risk_id: int = 0, batch_size: int = 1,
-                                     investigation_goal: str = "") -> dict[str, Any]:
+                                     investigation_goal: str = "", post_repair: bool = False) -> dict[str, Any]:
     """System B generate_and_save_report 的统一编排器实现（正式模式入口）。"""
     from app.services.review_common import select_candidates
 
@@ -346,11 +361,23 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         raise ValueError("formal_unified_mode_required")
     selection = select_candidates(db)
     eligible = selection["_selected_risks"]
+    if post_repair:
+        risk = db.get(models.RiskAssessment, risk_id) if risk_id else None
+        evidence = db.query(models.CollectionEvidence).filter_by(asset_id=risk.asset_id).order_by(
+            models.CollectionEvidence.id.desc()).first() if risk else None
+        from app.services.review_common.governance import correction
+        if not risk or risk.active or risk.review_status != "resolved" or correction(db, risk) or not evidence:
+            raise ValueError("resolved_repaired_risk_with_inventory_required")
+        if not evidence.evidence_id.startswith("INV-") or hashlib.sha256(evidence.raw_text.encode()).hexdigest() != evidence.content_sha256:
+            raise ValueError("intact_inventory_required")
+        eligible = [risk]
     if risk_id:
         eligible = [risk for risk in eligible if risk.id == risk_id]
         if not eligible:
             raise ValueError("risk_not_eligible_for_formal_analysis")
     selected_ids = {r.id for r in eligible[:max(1, min(batch_size, 4))]}
+    selection["skipped_objects"] = [item for item in selection["skipped_objects"]
+                                    if item.get("object_id") not in {f"risk-{i}" for i in selected_ids}]
     selection["skipped_objects"] += [{"object_id": f"risk-{r.id}", "reason": "bounded_queue"}
                                      for r in selection["_selected_risks"] if r.id not in selected_ids]
     selection["_selected_risks"] = [r for r in eligible if r.id in selected_ids]
@@ -379,6 +406,13 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
     db.add(report)
     for risk in selected:
         from app.services.review_common.governance import invalidate_prior_authorizations
+        if post_repair:
+            from app.services.review_common.governance import record, snapshot
+            record(db, risk, "post_repair_reassessment_request", "authenticated_control_api", {
+                "run_id": f"UA-{run_id}-{risk.id}", "inventory_id": evidence.evidence_id,
+                "inventory_sha256": evidence.content_sha256, "original": snapshot(risk),
+                "repair_authorization": False, "business_accepted": False})
+            continue
         invalidate_prior_authorizations(db, risk, "new_formal_assessment_requires_new_approval")
         risk.review_status = "agent_reviewing"
     db.commit()
@@ -431,6 +465,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                 worker_selected = worker_db.query(models.RiskAssessment).filter(
                     models.RiskAssessment.id.in_(risk_ids)).all()
                 for risk in worker_selected:
+                    if post_repair:
+                        continue
                     risk.review_status = "pending_human_review"
                     risk.human_review_required = True
                     risk.review_reason = f"unified_background_failure:{exc}"

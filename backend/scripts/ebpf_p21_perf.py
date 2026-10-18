@@ -73,8 +73,8 @@ def utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def sh(cmd: list[str] | str, *, timeout: int = 120, shell: bool = False) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, shell=shell, capture_output=True, text=True,
+def sh(cmd: list[str], *, timeout: int = 120) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, shell=False, capture_output=True, text=True,
                           encoding="utf-8", errors="replace", timeout=timeout)
 
 

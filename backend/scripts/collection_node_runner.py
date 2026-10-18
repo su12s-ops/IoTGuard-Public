@@ -243,7 +243,7 @@ def execute_assignment(backend: Backend, assignment: dict) -> None:
     host = assignment["connection"]["host"]
     try:
         local = assignment.get("execution") == "node_local"
-        if assignment.get("collector_type") not in {"openwrt_ssh", "linux_ssh"}:
+        if assignment.get("collector_type") not in {"openwrt_ssh", "linux_ssh", "openwrt_logread"}:
             raise RunnerError("collector_unsupported: 仅允许已登记固定 Collector")
         if not re.fullmatch(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,63}", assignment["connection"].get("username", "")):
             raise RunnerError("username_invalid: 非法 SSH 用户名")

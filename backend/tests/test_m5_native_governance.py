@@ -103,6 +103,24 @@ def test_model_has_no_operator_confirmation_and_legacy_semantics_preserved(case)
     assert risk.risk_direction == "upgrade_minor"
 
 
+@pytest.mark.parametrize("status", ["human_confirmed", "auto_confirmed", "risk_accepted", "rejected"])
+def test_post_remediation_reanalysis_preserves_approval_history(case, status):
+    db, risk = case
+    risk.review_status, risk.review_verdict = status, "confirmed_affected"
+    risk.final_score, risk.decision = 30, "scheduled_fix"
+    old = G.record(db, risk, "human_review", "original-operator", {"decision": "confirm"})
+    db.commit()
+    apply_human_review(db, risk.id, "request_reanalysis", "new post-repair inventory", "delegated-agent", status)
+    assert risk.review_status == "reanalysis_required"
+    assert not risk.review_verdict and risk.final_score is None and risk.decision is None
+    assert db.get(models.RiskGovernanceEvent, old.id).actor == "original-operator"
+    event = db.query(models.RiskGovernanceEvent).filter_by(kind="reanalysis_request").one()
+    assert event.actor == "delegated-agent"
+    assert json.loads(event.payload_json)["repair_authorization"] is False
+    with pytest.raises(ValueError, match="native_assessment"):
+        apply_human_review(db, risk.id, "confirm", "premature", "delegated-agent", "reanalysis_required")
+
+
 def test_no_model_confidence_rewriting_in_production():
     root = Path(__file__).parents[1] / "app/services/unified"
     assert "clamp_confidence(" not in (root / "graph.py").read_text(encoding="utf-8")

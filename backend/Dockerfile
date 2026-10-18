@@ -10,6 +10,10 @@
 # holds device credentials and is deliberately NOT privileged. Real collection
 # and Falco/eBPF sensing run on external Linux nodes (pull runner topology).
 FROM python:3.12-slim
+ARG VCS_REF=unknown
+ARG BUILD_DATE=unknown
+LABEL org.opencontainers.image.revision=$VCS_REF org.opencontainers.image.created=$BUILD_DATE
+ENV IOTGUARD_BUILD_REVISION=$VCS_REF IOTGUARD_BUILD_DATE=$BUILD_DATE
 
 WORKDIR /app
 
@@ -20,11 +24,12 @@ ENV PYTHONUTF8=1
 ENV PYTHONIOENCODING=utf-8
 
 COPY backend/requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple --trusted-host pypi.tuna.tsinghua.edu.cn
+RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app
 COPY backend/scripts ./scripts
 COPY backend/migrations ./migrations
+COPY backend/.env.example ./config.env.example
 # Hash-pinned collector payloads consumed by app/services (see header).
 COPY collector ./collector
 

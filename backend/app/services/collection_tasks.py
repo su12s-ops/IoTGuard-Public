@@ -13,6 +13,7 @@ from pathlib import Path
 import re
 import time
 import uuid
+from datetime import timezone
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
@@ -24,6 +25,66 @@ from app.services import trace_service as tracing
 
 def encode(value):
     return json.dumps(value, sort_keys=True, ensure_ascii=False, default=str)
+
+
+def runtime_schedule_tick(db, now=None):
+    """Bounded, persistent time buckets reuse the existing collection queue.
+
+    Disabled unless connection IDs are explicitly configured. At most two
+    attempts per window; shared asset locks prevent overlapping device access.
+    A disconnected runner cannot build an unbounded backlog.
+    """
+    now = time.time() if now is None else now
+    raw = os.getenv("LINUXGUARD_OPENWRT_LOG_CONNECTION_IDS", "")
+    ids = sorted({int(x) for x in raw.split(",") if x.strip().isdigit()})
+    interval = max(60, min(3600, int(os.getenv("LINUXGUARD_OPENWRT_LOG_INTERVAL_S", "60"))))
+    for connection_id in ids:
+        connection = db.get(models.DeviceConnection, connection_id)
+        asset = db.get(models.LinuxAsset, connection.asset_id) if connection else None
+        if not connection or not connection.enabled or not asset or asset.distribution != "openwrt":
+            continue
+        lock = db.get(models.HarnessAssetLock, asset.id)
+        if lock:
+            active = db.get(models.HarnessRun, lock.run_id)
+            if active and json.loads(active.plan_json).get("purpose") == "runtime_logs":
+                stamp = active.created_at.replace(tzinfo=timezone.utc).timestamp()
+                if now - stamp > 900:
+                    active.status, active.error, active.completed_at = "interrupted", "periodic_collection_timeout_no_blind_replay", models.utcnow()
+                    db.delete(lock)
+                    for call in db.query(models.HarnessToolCall).filter_by(run_id=active.id, status="running"):
+                        call.status, call.error, call.completed_at = "interrupted", active.error, active.completed_at
+                    sensor = db.query(models.RuntimeSensor).filter_by(asset_id=asset.id, sensor_id=f"openwrt-logread-{connection_id}").first()
+                    if sensor:
+                        sensor.status, sensor.detail = "failed", active.error
+                    db.commit()
+            continue
+        for attempt in range(2):
+            run = create_run(db, connection_id, f"periodic-{int(now // interval)}-{attempt}", "runtime_logs")
+            if run.status == "pending":
+                execute(db, run)
+                break
+            if run.status not in {"failed", "interrupted"}:
+                break
+        if run.status in {"failed", "interrupted"}:
+            sensor = db.query(models.RuntimeSensor).filter_by(asset_id=asset.id, sensor_id=f"openwrt-logread-{connection_id}").first()
+            if sensor:
+                sensor.status, sensor.detail = "failed", run.error or "periodic_collection_failed"
+                db.commit()
+
+
+async def periodic_runtime_collection():
+    import asyncio
+    import logging
+    from app.database import SessionLocal
+    def tick():
+        with SessionLocal() as db:
+            runtime_schedule_tick(db)
+    while True:
+        try:
+            await asyncio.to_thread(tick)
+        except Exception:
+            logging.getLogger(__name__).exception("Periodic read-only collection tick failed")
+        await asyncio.sleep(15)
 
 
 def digest(value):
@@ -95,7 +156,11 @@ def node_for_asset(asset):
     return remote_node_id()
 
 
-def collector_for(asset):
+def collector_for(asset, purpose="inventory"):
+    if purpose == "runtime_logs":
+        if not asset or asset.distribution != "openwrt":
+            raise ValueError("runtime_logs_requires_openwrt")
+        return iot_devices.COLLECTOR.with_name("openwrt_logread_capture.sh"), "openwrt_logread"
     if asset and asset.distribution == "ubuntu":
         return iot_devices.COLLECTOR.with_name("collect_linux_asset.sh"), "linux_ssh"
     return iot_devices.COLLECTOR, "openwrt_ssh"
@@ -115,7 +180,7 @@ def validate_plan(db, run):
     if not connection or not connection.enabled or connection.asset_id != run.asset_id or device_access.connection_signature(connection) != plan["connection_hash"]:
         raise device_access.DeviceOperationError("connection_changed", "连接配置已变化，请创建新的采集任务")
     device_access.allowed_host(connection.host)
-    path, kind = collector_for(asset)
+    path, kind = collector_for(asset, plan.get("purpose", "inventory"))
     script = path.read_text(encoding="utf-8")
     if kind != plan["collector_type"] or hashlib.sha256(script.encode()).hexdigest() != plan["collector_sha256"]:
         raise device_access.DeviceOperationError("collector_changed", "固定 Collector 与计划不一致")
@@ -169,7 +234,7 @@ def preflight(db, connection):
             "cve_applicability": "not_evaluated"}
 
 
-def create_run(db, connection_id, request_id=None):
+def create_run(db, connection_id, request_id=None, purpose="inventory"):
     connection = db.get(models.DeviceConnection, connection_id)
     asset = db.get(models.LinuxAsset, connection.asset_id) if connection and connection.asset_id else None
     if not asset or asset.distribution not in {"openwrt", "ubuntu"}:
@@ -177,7 +242,10 @@ def create_run(db, connection_id, request_id=None):
     request_id = request_id or uuid.uuid4().hex
     if not re.fullmatch(r"[A-Za-z0-9_.\-]{1,128}", request_id):
         raise ValueError("采集请求编号格式无效")
-    run_id = hashlib.sha256(f"openwrt-collect:{connection_id}:{request_id}".encode()).hexdigest()[:32]
+    if purpose not in {"inventory", "runtime_logs"}:
+        raise ValueError("invalid_collection_purpose")
+    namespace = "openwrt-collect" if purpose == "inventory" else "openwrt-logs"
+    run_id = hashlib.sha256(f"{namespace}:{connection_id}:{request_id}".encode()).hexdigest()[:32]
     signature = device_access.connection_signature(connection)
     existing = db.get(models.HarnessRun, run_id)
     if existing:
@@ -185,11 +253,11 @@ def create_run(db, connection_id, request_id=None):
             raise ValueError("该采集请求编号已用于其他连接配置；请创建新任务")
         return existing
     try:
-        collector, collector_type = collector_for(asset)
+        collector, collector_type = collector_for(asset, purpose)
         script = collector.read_text(encoding="utf-8")
     except OSError as exc:
         raise ValueError("固定 OpenWrt Collector 不可用，任务未创建") from exc
-    plan = {"goal": "collect", "policy_version": "iotguard-collection-v1", "request_id": request_id,
+    plan = {"goal": "collect", "purpose": purpose, "policy_version": "iotguard-collection-v1", "request_id": request_id,
             "connection_id": connection.id, "asset_id": asset.id, "connection_hash": signature,
             "node": device_access.collector_node(), "collector_type": collector_type,
             "collector_sha256": hashlib.sha256(script.encode()).hexdigest(), "steps": ["collect_inventory"],
@@ -325,7 +393,16 @@ def execute(db, run):
         script_hash = hashlib.sha256(script.encode()).hexdigest()
         if script_hash != plan["collector_sha256"]:
             raise device_access.DeviceOperationError("collector_changed", "Collector 已变化，请创建新的采集任务")
-        if asset.distribution == "ubuntu":
+        if plan.get("purpose") == "runtime_logs":
+            client = device_access.open_connection(connection)
+            try:
+                audit.update(ssh_host_identity="verified", ssh_authentication="succeeded")
+                authenticated(audit)
+                text = device_access.run_fixed_script(client, script, timeout=60, max_bytes=4_000_000)
+            finally:
+                client.close()
+            ingest_runtime_logs(db, connection, text, audit)
+        elif asset.distribution == "ubuntu":
             client = device_access.open_connection(connection)
             try:
                 audit.update(ssh_host_identity="verified", ssh_authentication="succeeded")
@@ -489,7 +566,8 @@ def submit_result(db, run_id: str, payload: dict):
             text = payload.get("inventory_text") or ""
             if not local and payload.get("ssh_authentication") != "succeeded":
                 raise device_access.DeviceOperationError("authentication_not_attested", "节点未确认 SSH 认证成功")
-            if not text or "===== OS_RELEASE =====" not in text:
+            marker = "===== LOGREAD =====" if plan_collector_type(run) == "openwrt_logread" else "===== OS_RELEASE ====="
+            if not text or marker not in text:
                 raise device_access.DeviceOperationError(
                     "inventory_validation_failed", "采集结果不是固定 Collector 输出格式；不入库")
             raw = text.encode("utf-8")
@@ -500,7 +578,9 @@ def submit_result(db, run_id: str, payload: dict):
                          ssh_host_identity="not_applicable" if local else "verified",
                          ssh_authentication="not_applicable" if local else "succeeded",
                          node_identity="authenticated", execution="node_local" if local else "ssh")
-            if asset.distribution == "ubuntu":
+            if plan_collector_type(run) == "openwrt_logread":
+                ingest_runtime_logs(db, connection, text, audit)
+            elif asset.distribution == "ubuntu":
                 ingest_linux_inventory(db, connection, text, audit)
             else:
                 iot_devices.ingest_openwrt_inventory(
@@ -547,6 +627,34 @@ def submit_result(db, run_id: str, payload: dict):
         call.completed_at = run.completed_at
     db.commit()
     return db.get(models.HarnessRun, run_id)
+
+
+def ingest_runtime_logs(db, connection, text, audit):
+    from app.services.openwrt_runtime_log import parse_capture_output, build_events, _record_sensor
+    from app.services.ebpf_event_collector import append_events
+    asset = db.get(models.LinuxAsset, connection.asset_id)
+    capture = parse_capture_output(text)
+    if capture["identity"].get("hostname") != asset.hostname or not capture["identity"].get("boot_id"):
+        raise ValueError("runtime_log_device_identity_mismatch")
+    sha = hashlib.sha256(text.encode()).hexdigest()
+    evidence_id = "LOG-" + audit["run_id"]
+    prior = db.query(models.CollectionEvidence).filter_by(evidence_id=evidence_id).first()
+    if prior and prior.content_sha256 != sha:
+        raise ValueError("runtime_log_evidence_changed")
+    if not prior:
+        db.add(models.CollectionEvidence(evidence_id=evidence_id, run_id=audit["run_id"],
+            asset_id=asset.id, content_sha256=sha, raw_text=text))
+    sensor_id = f"openwrt-logread-{connection.id}"
+    events, meta = build_events(capture, asset_hostname=asset.hostname, asset_id=asset.id, sensor_id=sensor_id)
+    # Existing ingestion commits idempotent event batches. A crash before the
+    # final receipt can leave preserved raw evidence/events; replay deduplicates.
+    stored = append_events(events, db=db) if events else []
+    fresh = sum(not e.get("duplicate") for e in stored)
+    duplicates = sum(bool(e.get("duplicate")) for e in stored)
+    _record_sensor(db, asset_id=asset.id, sensor_id=sensor_id, meta=meta,
+        stored_new=fresh, duplicates=duplicates)
+    audit.update(runtime_evidence_id=evidence_id, output_sha256=sha, log_window=meta,
+        events_stored_new=fresh, events_duplicates=duplicates, runtime_collection="succeeded")
 
 
 def ingest_linux_inventory(db, connection, text, audit):

@@ -12,7 +12,13 @@ def apply_human_review(db, risk_id, decision, reason, actor="", expected_status=
         raise ValueError("active_risk_required_use_historical_adjudication_for_inactive")
     if not actor.strip() or not reason.strip() or expected_status != risk.review_status:
         raise ValueError("actor_reason_and_current_expected_status_required")
-    if risk.review_status not in {"pending_human_review", "human_reviewing", "reanalysis_required"}:
+    reviewable = {"pending_human_review", "human_reviewing", "reanalysis_required"}
+    # New inventory after remediation can invalidate a previously confirmed
+    # assessment. Requesting a review revokes its executable decision, without
+    # erasing the original approval or granting a new one.
+    if decision == "request_reanalysis":
+        reviewable |= {"human_confirmed", "auto_confirmed", "risk_accepted", "rejected"}
+    if risk.review_status not in reviewable:
         raise ValueError("risk_not_awaiting_review")
     before = snapshot(risk)
     target = {"begin": "human_reviewing", "request_reanalysis": "reanalysis_required",

@@ -234,6 +234,7 @@ def collect(connection_id: int, db: Session = Depends(get_db)):
 class CollectionRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     request_id: str = Field(pattern=r"^[A-Za-z0-9_.\-]{1,128}$")
+    purpose: str = Field(default="inventory", pattern=r"^(inventory|runtime_logs)$")
 
 
 @router.get("/connections/{connection_id}/preflight", dependencies=[Depends(require_control)])
@@ -247,7 +248,7 @@ def connection_preflight(connection_id: int, db: Session = Depends(get_db)):
 @router.post("/connections/{connection_id}/collection-runs", dependencies=[Depends(require_control)])
 def create_collection(connection_id: int, payload: CollectionRequest, db: Session = Depends(get_db)):
     try:
-        return collection_tasks.serialize(db, collection_tasks.create_run(db, connection_id, payload.request_id))
+        return collection_tasks.serialize(db, collection_tasks.create_run(db, connection_id, payload.request_id, payload.purpose))
     except ValueError as exc:
         raise HTTPException(400, str(exc)) from exc
 

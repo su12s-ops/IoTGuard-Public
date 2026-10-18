@@ -99,28 +99,22 @@ def capture_host_fingerprint() -> dict:
 
     import paramiko
     trusted = os.environ.get("LINUXGUARD_TRUSTED_OPENWRT_FINGERPRINT", "")
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    import socket
+    transport = None
     result: dict = {"method": "ssh_handshake_no_auth"}
     try:
-        try:
-            client.connect(OPENWRT_IP, port=22, username="probe", allow_agent=False,
-                           look_for_keys=False, timeout=6, banner_timeout=6)
-        except paramiko.SSHException:
-            pass  # 认证类失败即可：握手已完成
-        transport = client.get_transport()
-        key = transport.get_remote_server_key() if transport else None
-        if key is not None:
-            fingerprint = "SHA256:" + base64.b64encode(
-                hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
-            result.update({"host_key_sha256": fingerprint, "key_type": key.get_name(),
-                           "banner": transport.remote_version})
-            if trusted:
-                result["matches_trusted_record"] = fingerprint == trusted
-            else:
-                result["matches_trusted_record"] = None  # 未提供受信记录：不判定
+        sock = socket.create_connection((OPENWRT_IP, 22), timeout=6)
+        transport = paramiko.Transport(sock)
+        transport.start_client(timeout=6)
+        key = transport.get_remote_server_key()
+        fingerprint = "SHA256:" + base64.b64encode(
+            hashlib.sha256(key.asbytes()).digest()).decode().rstrip("=")
+        result.update({"host_key_sha256": fingerprint, "key_type": key.get_name(),
+                       "banner": transport.remote_version,
+                       "matches_trusted_record": fingerprint == trusted if trusted else None})
     finally:
-        client.close()
+        if transport is not None:
+            transport.close()
     return result
 
 

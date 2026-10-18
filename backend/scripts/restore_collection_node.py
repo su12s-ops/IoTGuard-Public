@@ -10,6 +10,7 @@ from pathlib import Path
 import secrets
 import subprocess
 import sys
+import time
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "backend"))
@@ -50,6 +51,8 @@ def registered_scope():
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["configure", "start"])
+    parser.add_argument("--supervise", action="store_true", help="Keep the existing SSH runner connected while this host is running")
+    parser.add_argument("--watch", action="store_true", help=argparse.SUPPRESS)
     args = parser.parse_args()
     scope = registered_scope()
     environment = ROOT / "backend/.env"
@@ -84,12 +87,32 @@ def main():
         "-R", "18445:127.0.0.1:8000", f"{scope['username']}@{scope['host']}", "python3 -"]
     output = ROOT / "reports/m5-final"
     output.mkdir(parents=True, exist_ok=True)
-    with (output / "collection-node.log").open("ab") as log:
-        process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-        process.stdin.write((bootstrap + runner.replace("from __future__ import annotations", "")).encode())
-        process.stdin.close()
-    (output / "collection-node.pid").write_text(str(process.pid))
+    if args.supervise:
+        with (output / "collection-node-supervisor.log").open("ab") as log:
+            process = subprocess.Popen([sys.executable, str(Path(__file__).resolve()), "start", "--watch"],
+                stdout=log, stderr=log, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        (output / "collection-node-supervisor.pid").write_text(str(process.pid))
+    else:
+        delay = 5
+        while True:
+            # Re-read the fixed runner on reconnect, without rotating node credentials.
+            runner = (ROOT / "backend/scripts/collection_node_runner.py").read_text(encoding="utf-8")
+            with (output / "collection-node.log").open("ab") as log:
+                process = subprocess.Popen(command, stdin=subprocess.PIPE, stdout=log, stderr=log,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+                try:
+                    process.stdin.write((bootstrap + runner.replace("from __future__ import annotations", "")).encode())
+                    process.stdin.close()
+                except (BrokenPipeError, OSError):
+                    process.terminate()
+            (output / "collection-node.pid").write_text(str(process.pid))
+            if not args.watch:
+                break
+            started = time.monotonic()
+            process.wait()
+            delay = 5 if time.monotonic() - started > 60 else min(60, delay * 2)
+            print(json.dumps({"event": "runner_disconnected", "retry_after_s": delay}), flush=True)
+            time.sleep(delay)
     print(json.dumps({"node_id": "m45-linux-node", "ssh_pid": process.pid, "existing_runner_reused": True,
                       "private_key_contents_exposed": False, "repair_switches": [0, 0]}))
 
