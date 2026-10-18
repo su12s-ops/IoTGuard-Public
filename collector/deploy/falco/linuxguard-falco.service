@@ -12,7 +12,9 @@ Type=simple
 EnvironmentFile=-/etc/linuxguard/falco.env
 ExecStartPre=/bin/sh -c '! systemctl is-active --quiet falco-modern-bpf.service || systemctl stop falco-modern-bpf.service'
 ExecStart=/opt/linuxguard/collector/deploy/falco/run_standing_capture.sh /var/lib/linuxguard/falco
-Restart=on-failure
+# 常驻转发器可能因网络中断以 1（spool 待续传）退出；同样需要自动恢复。
+# systemctl stop 的显式停止仍不会触发 Restart=always。
+Restart=always
 RestartSec=10
 # 停止语义：SIGINT 广播到整个 cgroup —— python 转发器经 KeyboardInterrupt
 # 走 finally（stopped 心跳 + spool 对账）；falco 同信号写出退出摘要

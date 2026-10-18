@@ -2,7 +2,7 @@
 # LinuxGuard Falco 常驻采集管线（P1-2 部署准备，未在本轮执行）。
 #
 # 管线：falco(JSON stdout) → 转发器 stdin（批量+重试+spool，P0 可靠性全保留）
-# 失败语义：转发器非零退出时 systemd Restart=on-failure 拉起；
+# 恢复语义：转发器自行退出时 systemd Restart=always 拉起；
 #           未确认批次在 spool 断点续传，不丢失。
 #
 # 用法（root，需已按 README 完成规则部署）:
@@ -57,7 +57,7 @@ cleanup() {
 trap cleanup EXIT
 on_term() {
   # 外部 SIGTERM（非 systemctl stop——stop 走 KillSignal=SIGINT）按异常退出
-  # 处理：保留 143 失败语义 → Restart=on-failure 自动拉起；EXIT trap 幂等复跑。
+  # 处理：保留 143 失败语义 → Restart=always 自动拉起；EXIT trap 幂等复跑。
   cleanup
   exit 143
 }

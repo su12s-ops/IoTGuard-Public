@@ -56,6 +56,13 @@ def lab_write_state(asset_id):
     return True, ""
 
 
+def root_preflight(preflight):
+    """Older/non-root dry-runs cannot establish package execution readiness."""
+    context = preflight.get("execution_context") if isinstance(preflight, dict) else None
+    uid = context.get("effective_uid") if isinstance(context, dict) else None
+    return type(uid) is int and uid == 0
+
+
 def official(db, cve, refresh=False):
     cve = cve.split(":")[0]
     if refresh:
@@ -174,6 +181,8 @@ def queue(db, run, operation):
         age = time.time() - plan.get("preflight_received_at", 0)
         if not plan.get("preflight") or not plan["preflight"]["ready"] or not 0 <= age <= 900:
             raise ValueError("预演缺失或已过期，须创建新计划")
+        if not root_preflight(plan["preflight"]):
+            raise ValueError("root_execution_node_required")
         allowed, reason = lab_write_state(run.asset_id)
         if not allowed:
             raise ValueError("隔离副本写未授权：" + reason)
@@ -235,6 +244,8 @@ def claim(db, run, node_id):
             raise ValueError("隔离副本写开关已关闭：" + reason)
         if not 0 <= time.time() - plan.get("preflight_received_at", 0) <= 900:
             raise ValueError("执行预演已过期")
+        if not root_preflight(plan.get("preflight")):
+            raise ValueError("root_execution_node_required")
     changed = db.execute(update(models.HarnessRun).where(models.HarnessRun.id == run.id,
         models.HarnessRun.status == "queued_remote").values(status="running"))
     if changed.rowcount != 1:
@@ -340,6 +351,9 @@ def submit(db, run, payload):
                 raise ValueError("preflight_identity_or_installed_version_changed")
             if set(pre["candidate_versions"]) != {p["binary"] for p in plan["targets"]}:
                 raise ValueError("preflight_candidate_scope_changed")
+            if not root_preflight(pre):
+                pre["ready"] = False
+                pre["issues"] = list(dict.fromkeys([*pre.get("issues", []), "root_execution_node_required"]))
             plan.update(preflight=pre, preflight_evidence_id=evidence_id, preflight_received_at=time.time())
             plan["identity"] = pre["identity"]
             plan["cve_id"] = h()._risk_and_match(db, run)[0].cve_id.split(":")[0]

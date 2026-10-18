@@ -62,6 +62,7 @@ def observation(plan, ready=True):
     return {"identity": identity, "packages": plan["targets"], "candidate_versions": {p["binary"]: NEW for p in plan["targets"]},
         "changes": [{"binary": p["binary"], "old": OLD, "new": NEW} for p in plan["targets"]],
         "candidate_metadata": {}, "policy": {}, "ready": ready, "issues": [] if ready else ["official_candidate_unavailable"],
+        "package_ready": ready, "execution_context": {"effective_uid": 0},
         "observed_at": time.time(), "simulation": "test only", "removals": [], "rollback": {"snapshot_restore": "not_checked_by_guest"}}
 
 
@@ -307,6 +308,79 @@ def maintenance():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+@pytest.mark.parametrize("uid", [0, 1000])
+def test_preflight_distinguishes_packages_from_execution_privileges(maintenance, monkeypatch, uid):
+    ident = {"hostname": "clone", "distribution": "ubuntu", "release": "24.04",
+             "codename": "noble", "architecture": "amd64", "machine_id_sha256": "a" * 64}
+    package = {"name": "curl", "binary": "curl", "version": OLD, "source": "curl",
+               "source_version": OLD, "architecture": "amd64"}
+    policy = f"curl:\n  Candidate: {NEW}\n     {NEW} 500\n        500 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages\n"
+    calls = []
+    def fixture_command(args, timeout=45):
+        calls.append(args)
+        if args[:2] == ["apt-cache", "show"]:
+            return 0, f"Source: curl\nVersion: {NEW}\nSHA256: {'b' * 64}\n", ""
+        if args[:2] == ["apt-get", "--simulate"]:
+            return 0, f"Inst curl [{OLD}] ({NEW} Ubuntu:24.04/noble-security [amd64])\n", ""
+        if args[:2] == ["dpkg", "--compare-versions"]:
+            return 0, "", ""
+        raise AssertionError(args)
+    def fixture_checked(args, timeout=45):
+        if args[:2] == ["apt-cache", "policy"]:
+            return policy
+        assert args in (["dpkg", "--audit"], ["apt-mark", "showhold"])
+        return ""
+    monkeypatch.setattr(maintenance, "identity", lambda: ident)
+    monkeypatch.setattr(maintenance, "source_packages", lambda: [package])
+    monkeypatch.setattr(maintenance, "command", fixture_command)
+    monkeypatch.setattr(maintenance, "checked", fixture_checked)
+    monkeypatch.setattr(maintenance.os, "geteuid", lambda: uid, raising=False)
+    monkeypatch.setattr(maintenance.os, "statvfs", lambda _: SimpleNamespace(f_bavail=1024**3, f_frsize=1), raising=False)
+    pre = maintenance.inspect({"identity": ident, "targets": [package], "fixed_version": NEW})
+    assert pre["package_ready"] is True
+    assert pre["ready"] is (uid == 0)
+    assert pre["issues"] == ([] if uid == 0 else ["root_execution_node_required"])
+    assert pre["execution_context"] == {"effective_uid": uid}
+    assert all(args[:2] != ["dpkg", "--install"] for args in calls)
+
+
+@pytest.mark.parametrize("context", [None, {}, {"effective_uid": 1000}, {"effective_uid": False}, {"effective_uid": "0"}])
+def test_nonroot_or_legacy_preflight_cannot_enter_approval(rig, context):
+    run = create(rig)
+    observed = observation(json.loads(run.plan_json))
+    if context is None:
+        observed.pop("execution_context")
+    else:
+        observed["execution_context"] = context
+    u.queue(rig.db, run, "dry_run")
+    submit(rig, run, {"preflight": observed})
+    assert run.status == "preflight_failed"
+    assert json.loads(run.plan_json)["preflight"]["package_ready"] is True
+    assert "root_execution_node_required" in json.loads(run.plan_json)["preflight"]["issues"]
+    with pytest.raises(ValueError):
+        h.approve(rig.db, run, run.plan_hash, "tester", "must not approve")
+    assert not run.approval_hash
+
+
+def test_legacy_approved_plan_cannot_queue_execution(rig):
+    run = preflight(rig)
+    plan = json.loads(run.plan_json)
+    plan["preflight"].pop("execution_context")
+    run.plan_json, run.plan_hash = h.encode(plan), h.digest(plan)
+    rig.db.commit()
+    h.approve(rig.db, run, run.plan_hash, "tester", "legacy fixture approval")
+    with pytest.raises(ValueError, match="root_execution_node_required"):
+        u.queue(rig.db, run, "execute")
+    assert not rig.db.query(models.HarnessToolCall).filter_by(run_id=run.id, side_effect=True).count()
+
+
+def test_node_losing_root_stops_before_any_commands(maintenance, monkeypatch):
+    monkeypatch.setattr(maintenance.os, "geteuid", lambda: 1000, raising=False)
+    monkeypatch.setattr(maintenance, "inspect", lambda _: pytest.fail("must reject before inspecting or downloading"))
+    with pytest.raises(ValueError, match="root_execution_node_required"):
+        maintenance.execute({})
 
 
 @pytest.mark.parametrize("url,suite,expected", [

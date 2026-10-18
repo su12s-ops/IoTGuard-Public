@@ -58,12 +58,13 @@ class DeepSeekChatClient:
                  max_retries: int = 1):
         from openai import OpenAI
         self._model = model
+        self._timeout = timeout
         # max_retries=1：限流退化时单次调用不再指数退避多次（实验实测单智能体
         # 曾因此拖到 17 分钟）；整体时限由编排器的 deadline 协同约束
         self._client = OpenAI(api_key=api_key, base_url=base_url.rstrip("/"), timeout=timeout,
                               max_retries=max_retries)
 
-    def complete(self, messages, tools=None):
+    def complete(self, messages, tools=None, *, timeout_s=None):
         kwargs: dict[str, Any] = {
             "model": self._model,
             "messages": messages,
@@ -76,7 +77,10 @@ class DeepSeekChatClient:
                               "parameters": tool["parameters"]}}
                 for tool in tools
             ]
-        response = self._client.chat.completions.create(**kwargs)
+        client = self._client
+        if timeout_s is not None:
+            client = client.with_options(timeout=max(0.001, min(self._timeout, timeout_s)), max_retries=0)
+        response = client.chat.completions.create(**kwargs)
         choice = response.choices[0]
         tool_calls = []
         for call in choice.message.tool_calls or []:
@@ -94,6 +98,9 @@ class DeepSeekChatClient:
                      "total_tokens": getattr(raw_usage, "total_tokens", None)}
         return {"content": choice.message.content, "tool_calls": tool_calls,
                 "model": self._model, "usage": usage}
+
+    def complete_with_timeout(self, messages, tools=None, *, timeout_s):
+        return self.complete(messages, tools, timeout_s=timeout_s)
 
 
 class AnthropicProtocolChatClient:
@@ -113,6 +120,7 @@ class AnthropicProtocolChatClient:
                  thinking: dict[str, Any] | None = None):
         import anthropic
         self._model = model
+        self._timeout = timeout
         self._max_tokens = max_tokens
         self._thinking = thinking
         # timeout 默认 400s：GLM 等模型生成完整结构化报告（5-15k 输出 tokens，
@@ -162,7 +170,7 @@ class AnthropicProtocolChatClient:
                 merged.append(turn)
         return "\n".join(system_parts), merged
 
-    def complete(self, messages, tools=None):
+    def complete(self, messages, tools=None, *, timeout_s=None):
         system, turns = self._convert_messages(messages)
         kwargs: dict[str, Any] = {
             "model": self._model, "max_tokens": self._max_tokens,
@@ -175,7 +183,10 @@ class AnthropicProtocolChatClient:
         if tools:
             kwargs["tools"] = [{"name": tool["name"], "description": tool["description"],
                                 "input_schema": tool["parameters"]} for tool in tools]
-        response = self._client.messages.create(**kwargs)
+        client = self._client
+        if timeout_s is not None:
+            client = client.with_options(timeout=max(0.001, min(self._timeout, timeout_s)), max_retries=0)
+        response = client.messages.create(**kwargs)
         text_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         for block in response.content or []:
@@ -195,6 +206,9 @@ class AnthropicProtocolChatClient:
                      "total_tokens": total}
         return {"content": "".join(text_parts) or None, "tool_calls": tool_calls,
                 "model": self._model, "usage": usage}
+
+    def complete_with_timeout(self, messages, tools=None, *, timeout_s):
+        return self.complete(messages, tools, timeout_s=timeout_s)
 
 
 def build_llm_client():

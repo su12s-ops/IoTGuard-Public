@@ -161,11 +161,17 @@ def inspect(request):
     free = os.statvfs("/var/cache/apt/archives")
     if free.f_bavail * free.f_frsize < 256 * 1024 * 1024:
         issues.append("insufficient_disk_space")
+    package_ready = not issues
+    effective_uid = os.geteuid()
+    if effective_uid != 0:
+        issues.append("root_execution_node_required")
     return {"identity": ident, "packages": packages, "candidate_versions": candidates,
             "policy": policies, "candidate_metadata": metadata, "simulation": simulation,
             "simulation_error": error, "changes": changes, "removals": removals,
             "dpkg_audit": audit, "held": held, "issues": issues,
-            "ready": not issues, "observed_at": time.time(), "apt_lists_refreshed": False,
+            "ready": not issues, "package_ready": package_ready,
+            "execution_context": {"effective_uid": effective_uid},
+            "observed_at": time.time(), "apt_lists_refreshed": False,
             "rollback": {"strategy": "isolated_vm_snapshot_restore", "automatic_downgrade": False,
                          "old_packages_retained": False, "snapshot_restore": "not_checked_by_guest"}}
 
@@ -186,6 +192,8 @@ def permit(request, ident):
 
 
 def execute(request):
+    if os.geteuid() != 0:
+        raise ValueError("root_execution_node_required")
     before = inspect(request)
     if not before["ready"]:
         raise ValueError("preflight_rejected")
@@ -194,8 +202,6 @@ def execute(request):
         if before[key] != pinned[key]:
             raise ValueError("approved_preflight_changed:" + key)
     grant = permit(request, before["identity"])
-    if os.geteuid() != 0:
-        raise ValueError("root_execution_node_required")
     specs = [p["binary"] + "=" + request["fixed_version"] for p in before["packages"]]
     # Download through apt's signed-index verification, then validate the exact
     # archive set and hashes. dpkg receives only those fixed paths; a solver

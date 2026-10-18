@@ -135,7 +135,7 @@ class RunContext:
 
 
 def _agent_deadline(ctx: RunContext) -> float:
-    return max(5.0, min(ctx.agent_budget_s, ctx.remaining_s()))
+    return max(0.0, min(ctx.agent_budget_s, ctx.remaining_s()))
 
 
 def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
@@ -152,11 +152,12 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
         ctx.emit(db, "agent_started", actor=spec.name, status="running", is_llm_step=True,
                  payload={"agent": spec.name}, started_at=started_at)
         agent_started = time.monotonic()
+        role_deadline = agent_started + _agent_deadline(ctx)
         agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter,
                                      tool_cache=ctx.tool_cache)
         with ctx._lock:
             ctx.first_contexts.setdefault(spec.name, context_text)
-        result = agent.run(db, context=context_text, deadline_s=_agent_deadline(ctx))
+        result = agent.run(db, context=context_text, deadline_s=max(0.0, role_deadline - time.monotonic()))
         degraded_reason = ""
         if result.status != "succeeded":
             degraded_reason = result.error or result.status
@@ -167,7 +168,10 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                 retry_context = (
                     f"{context_text}\n\n上一次输出未通过证据事实校验：{'; '.join(errors)}。"
                     "请只引用真实存在的 evidence_id，重新输出完整 JSON。")
-                retry = agent.run(db, context=retry_context, deadline_s=_agent_deadline(ctx))
+                retry = agent.run(db, context=retry_context,
+                                  deadline_s=max(0.0, min(role_deadline - time.monotonic(), ctx.remaining_s())))
+                if retry.status != "succeeded":
+                    degraded_reason = retry.error or retry.status
                 if retry.status == "succeeded":
                     retry_errors = validate_fn(retry.output or {})
                     if not retry_errors:

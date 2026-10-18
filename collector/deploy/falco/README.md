@@ -58,7 +58,7 @@ EOF'
 ```bash
 sudo systemctl start linuxguard-falco      # 启动（先停 falco-modern-bpf，Conflicts+ExecStartPre）
 journalctl -u linuxguard-falco -f          # 观察 falco stderr 与转发器日志
-sudo systemctl stop linuxguard-falco       # 停止（SIGTERM；转发器发 stopped 心跳并保留 spool）
+sudo systemctl stop linuxguard-falco       # 停止（SIGINT；转发器发 stopped 心跳并保留 spool）
 ```
 
 停止语义：未确认批次留在 spool（未确认≠丢失），下次启动先续传（P0 语义）。
@@ -66,6 +66,9 @@ sudo systemctl stop linuxguard-falco       # 停止（SIGTERM；转发器发 sto
 使 python 转发器经 KeyboardInterrupt 走 finally（stopped 心跳 + 在途批次
 入 spool），falco 同信号写出退出摘要（真实 drops 计数）；
 `SuccessExitStatus=1` 使"存在 spool 残留"的诚实退出码呈现为正常停止。
+`Restart=always` 使网络中断等导致的自行退出（包括退出码 1）在 10 秒后
+重新启动并续传 spool；显式 `systemctl stop` 不会触发重启。修改单元后需
+安装到 `/etc/systemd/system/linuxguard-falco.service` 并执行 `systemctl daemon-reload`。
 验收基线：常驻 ≥10 分钟，期间制造真实行为（见 §7），服务端收到对应事件。
 
 ## 6. 失败回滚方案

@@ -52,6 +52,10 @@ class BudgetExceeded(RuntimeError):
     """run 级预算耗尽：调用方应把当前 Agent 降级，而不是重试。"""
 
 
+class AgentDeadlineExceeded(TimeoutError):
+    """The shared role deadline expired, including time spent inside HTTP calls."""
+
+
 class UsageMeter:
     """线程安全的 run 级 LLM 预算与真实用量计量。"""
 
@@ -167,6 +171,39 @@ class UnifiedToolLoopAgent:
         return [{"name": tool.name, "description": tool.description,
                  "parameters": tool.parameters} for tool in self.spec.tools]
 
+    def _complete(self, messages, tools, deadline):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise AgentDeadlineExceeded("智能体总时限已耗尽")
+        if self.meter:
+            self.meter.ensure_budget()
+        # Only the HTTP call runs here: no Session, tool execution or persistence
+        # is passed to the worker. A late response cannot resume the agent or
+        # write to the database. SDK read timeouts alone are not wall deadlines.
+        finished = threading.Event()
+        outcome = {}
+
+        def request():
+            try:
+                bounded = getattr(self.client, "complete_with_timeout", None)
+                outcome["response"] = (bounded(messages, tools=tools, timeout_s=remaining)
+                                       if bounded else self.client.complete(messages, tools=tools))
+            except Exception as exc:
+                outcome["error"] = exc
+            finally:
+                finished.set()
+
+        threading.Thread(target=request, name="unified-llm-request", daemon=True).start()
+        if not finished.wait(max(0, deadline - time.monotonic())) or time.monotonic() >= deadline:
+            raise AgentDeadlineExceeded("LLM 等待超过智能体总时限；迟到响应不再消费")
+        if "error" in outcome:
+            raise outcome["error"]
+        response = outcome["response"]
+        self._count_response(response)
+        if self.meter:
+            self.meter.register_call(response.get("usage"))
+        return response
+
     def run(self, db: Session, context: str, deadline_s: float = 150.0) -> UnifiedAgentResult:
         started = time.monotonic()
         deadline = started + deadline_s
@@ -200,13 +237,20 @@ class UnifiedToolLoopAgent:
                 )
             try:
                 result = self._run_once(db, attempt_context, deadline, feedback_history, triaged)
+            except AgentDeadlineExceeded as exc:
+                return UnifiedAgentResult(self.spec.name, "timeout", None,
+                                          attempts=attempt + 1,
+                                          latency_ms=int((time.monotonic() - started) * 1000),
+                                          error=str(exc), feedback_history=feedback_history,
+                                          triaged_fields=triaged, llm_calls=self._calls,
+                                          llm_usage=dict(self._usage))
             except TimeoutError as exc:
                 last_error = str(exc) or "timeout"
-                time.sleep(_RETRY_BACKOFF_S)   # 限流/抖动退避，避免重试风暴
+                time.sleep(min(_RETRY_BACKOFF_S, max(0, deadline - time.monotonic())))
                 continue
             except Exception as exc:   # LLM 网络错误、解析失败等 → 重试/降级，绝不击穿图节点
                 last_error = f"{type(exc).__name__}: {exc}"
-                time.sleep(_RETRY_BACKOFF_S)
+                time.sleep(min(_RETRY_BACKOFF_S, max(0, deadline - time.monotonic())))
                 continue
             result.attempts = attempt + 1
             result.latency_ms = int((time.monotonic() - started) * 1000)
@@ -244,17 +288,14 @@ class UnifiedToolLoopAgent:
                 except BudgetExceeded as exc:
                     return UnifiedAgentResult(self.spec.name, "degraded", None,
                                               error=str(exc), tool_calls=tool_calls_log)
-            response = self.client.complete(messages, tools=self._tool_schemas() or None)
-            self._count_response(response)
-            if self.meter:
-                self.meter.register_call(response.get("usage"))
+            response = self._complete(messages, self._tool_schemas() or None, deadline)
             calls = response.get("tool_calls") or []
             if not calls:
                 parsed, moved = triage_extra_fields(
                     parse_structured_output(response.get("content") or ""),
                     self.spec.output_model)
                 triaged.extend(moved)
-                validated, error = self._validate_with_feedback(parsed, messages, max_validation_attempts)
+                validated, error = self._validate_with_feedback(parsed, messages, max_validation_attempts, deadline)
                 if error is not None:
                     feedback_history.append(error)
                     return UnifiedAgentResult(self.spec.name, "failed", None,
@@ -271,6 +312,8 @@ class UnifiedToolLoopAgent:
             ]
             messages.append(assistant)
             for call in calls:
+                if time.monotonic() >= deadline:
+                    raise AgentDeadlineExceeded("工具执行前智能体总时限已耗尽")
                 entry = {"name": call["name"], "arguments": call["arguments"], "ok": False}
                 tool = allowed.get(call["name"])
                 cache_key = ""
@@ -309,7 +352,7 @@ class UnifiedToolLoopAgent:
                                   tool_calls=tool_calls_log)
 
     def _validate_with_feedback(self, parsed: dict[str, Any], messages: list[dict[str, Any]],
-                                max_attempts: int) -> tuple[dict[str, Any] | None, str | None]:
+                                max_attempts: int, deadline: float) -> tuple[dict[str, Any] | None, str | None]:
         """结构化校验 + 带反馈的立即重试（F3：模型知道上一轮错在哪）。
 
         空对象（无任何字段）一律视为无效输出：全默认值通过校验会把「模型
@@ -331,15 +374,10 @@ class UnifiedToolLoopAgent:
                               "没有发现时也要如实填写 scope/runtime_status/data_gaps 等字段")
             if attempt + 1 >= max_attempts:
                 break
-            if self.meter:
-                self.meter.register_call(None)   # 反馈重试也占用调用预算
             messages.append({"role": "user", "content": (
                 f"你刚才的输出未通过结构化校验。错误：{last_error}\n"
                 "请只输出一个修正后的完整 JSON 对象，不要输出其他文字。")})
-            response = self.client.complete(messages, tools=None)
-            self._count_response(response)
-            if self.meter:
-                self.meter.register_call(response.get("usage"))
+            response = self._complete(messages, None, deadline)
             if response.get("tool_calls"):
                 break   # 校验反馈阶段不允许再开工具循环
             parsed, _moved = triage_extra_fields(

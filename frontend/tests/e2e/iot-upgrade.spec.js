@@ -35,29 +35,39 @@ async function token(page) {
   await page.getByLabel("设备操作令牌").fill("fixture-token");
 }
 
-test("Ubuntu dry-run exposes actual candidate gap and never offers approval or rollback", async ({ page }) => {
+for (const blocker of ["official_candidate_unavailable", "root_execution_node_required", "cancelled_plan"]) {
+test(`Ubuntu dry-run blocks approval and rollback for ${blocker}`, async ({ page }) => {
   const old = "8.5.0-2ubuntu10.15", fixed = "8.5.0-2ubuntu10.16";
-  const run = { id: "fixture-ubuntu", asset_id: 1, risk_id: 1, status: "preflight_failed", attempts: 1,
+  const run = { id: "fixture-ubuntu", asset_id: 1, risk_id: 1, status: blocker === "cancelled_plan" ? "cancelled" : "preflight_failed", attempts: 1,
     trace_id: "TR-fixture", plan_hash: "a".repeat(64), result: { execution_status: "not_executed" }, tool_calls: [],
     plan: { adapter: "ubuntu-apt-v1", goal: "repair", node_id: "fixture-node", steps: ["ubuntu_dry_run"],
       identity: { hostname: "fixture-ubuntu", release: "24.04" },
       official: { url: "https://ubuntu.com/security/notices/USN-TEST-1", notices: ["USN-TEST-1"], evidence_id: "ADV-fixture", fixed_version: fixed },
       targets: ["curl", "libcurl4t64"].map(binary => ({ binary, source: "curl", version: old })),
-      rollback: { status: "awaiting_clone_and_restore_test" }, preflight: { ready: false,
-        candidate_versions: { curl: old, libcurl4t64: old }, issues: ["official_candidate_unavailable"], simulation: "TEST ONLY no candidate", removals: [] } } };
+      rollback: { status: "awaiting_clone_and_restore_test" }, preflight: { ready: blocker === "cancelled_plan",
+        package_ready: blocker === "root_execution_node_required", execution_context: { effective_uid: 1000 },
+        candidate_versions: { curl: old, libcurl4t64: old }, issues: blocker === "cancelled_plan" ? [] : [blocker], simulation: "TEST ONLY blocked preflight", removals: [] } } };
   const errors = await setup(page, { "/api/assets": [{ ...asset, hostname: "fixture-ubuntu", distribution: "ubuntu" }],
     "/api/harness/runs": [run], "/api/harness/runs/fixture-ubuntu": run });
   await page.goto("/device-tasks?run=fixture-ubuntu");
   await expect(page.getByRole("heading", { name: "Ubuntu 修复与复检证据" })).toBeVisible();
-  await expect(page.getByText("official_candidate_unavailable", { exact: false })).toBeVisible();
+  await expect(page.getByText(blocker === "cancelled_plan" ? "审批：计划已取消" : blocker, { exact: false })).toBeVisible();
+  if (blocker === "root_execution_node_required") {
+    await expect(page.getByText("软件包检查：通过 · 节点管理员权限：缺少管理员权限")).toBeVisible();
+  }
   await expect(page.getByRole("button", { name: "审批此计划", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "审批并回退", exact: true })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "执行已审批修复", exact: true })).toHaveCount(0);
-  await expect(page.getByRole("button", { name: "只读修复预演", exact: true })).toBeDisabled();
+  if (blocker === "cancelled_plan") {
+    await expect(page.getByRole("button", { name: "只读修复预演", exact: true })).toHaveCount(0);
+  } else {
+    await expect(page.getByRole("button", { name: "只读修复预演", exact: true })).toBeDisabled();
+  }
   await expect(page.getByRole("row").filter({ hasText: "curl / curl" })).toContainText(fixed);
   await expect(page.getByText(/尚无修复后采集/).first()).toBeVisible();
   expect(errors).toEqual([]);
 });
+}
 
 test("IoT registration requires token and displays structured validation errors", async ({ page }, testInfo) => {
   const errors = await setup(page, { "/api/iot/connections": async route => {

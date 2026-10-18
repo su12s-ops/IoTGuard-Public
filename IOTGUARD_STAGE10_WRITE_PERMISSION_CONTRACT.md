@@ -31,6 +31,7 @@
 5. 官方原文 SHA256 与计划生成时一致（变化即审批失效）；
 6. 节点侧 `LINUXGUARD_UBUNTU_LAB_PERMIT` 许可文件独立成立：`asset_id`、`machine_id_sha256`、`plan_hash`、`isolated_clone=true`、`restore_verified=true`、`snapshot_id`、`approved_by`、`expires_at` 全部精确匹配且未过期；
 7. 预演（dry-run）证据与计划逐字段一致。
+8. 预演须记录执行节点真实 `execution_context.effective_uid=0`（整数）。普通用户节点可完成只读软件包检查，但 `package_ready=true` 不代表可执行安装；非 root、缺失或格式无效的权限证据均进入 `preflight_failed`。后端排队/领取独立拒绝缺失权限证明的旧计划，节点执行时再次核对实际 UID。
 
 实验环境作用域由**隔离数据库、独立节点、独立资产、独立配置、独立许可**共同定义；绝不允许通过在生产后端打开全局开关来"实现"实验。
 
