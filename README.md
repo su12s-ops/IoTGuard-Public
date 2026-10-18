@@ -1,10 +1,14 @@
 # IoTGuard
 
+**面向多类型物联网设备的多智能体漏洞检测、动态风险研判与安全修复平台。** 物联网设备是研究对象，漏洞检测与修复是核心业务，四智能体是创新方法；资产采集、Falco/eBPF 与 Harness 提供支撑，SOC 汇总呈现。Ubuntu 作为基础设施与对照环境。
+
+当前定位、实现边界和设备验收要求以 [产品定位与验收基线](IOTGUARD_PRODUCT_POSITIONING.md) 为准。默认首页为物联网安全工作台，SOC 位于 `/soc`。OpenWrt 虚拟机与 Zephyr QEMU 的已测结果不能代替实体设备验收；Zephyr 自动固件更新尚未接通，整体闭环仍是部分实现。下述历史“最终交付”仅代表其报告限定范围。
+
 IoT 设备更新实测（2026-10-18）：既有 OpenWrt 已升级至 25.12.6 并通过关机快照恢复；Zephyr 应用已更新至 0.3.0-iotguard，通过回退、崩溃恢复和平台复采。测试随机源与旧组件台账问题已处理。参见 [更新闭环报告](IOTGUARD_IOT_UPDATE_CLOSURE_REPORT.md)；官方公告覆盖仍待补齐，不能宣称漏洞清零。
 
 最终交付（2026-10-18）：参见 [最终产品验收报告](IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md)、[部署说明](DEPLOYMENT.md)、[技术架构](TECHNICAL_ARCHITECTURE.md)、[演示手册](IOTGUARD_FINAL_DEMO_GUIDE.md) 与 [回滚准备](IOTGUARD_FINAL_ROLLBACK_PLAN.md)。这些文件优先于历史阶段报告。正式验证入口为 `http://127.0.0.1:18080`，使用 nginx 生产 dist；设备在线、传感器健康与证据新鲜度分别判断。源风险126未修复，克隆风险127三包已修复，Mimosa仍为partial，修复后快照恢复未执行。
 
-IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检测与修复平台**：从授权网段的资产自动发现、协议级设备指纹、多源 CVE 情报匹配，到四智能体协同研判、eBPF 运行时行为取证，以及带审批与回滚的 Agent Harness 修复工作流。
+IoTGuard 从授权网段发现、设备指纹与组件识别、多源漏洞匹配，进入四智能体证据研判，再按设备能力选择带审批、回滚和复验的修复方式。eBPF 仅适用于具备相应内核与传感器条件的设备。
 
 > 定位：实验/教学性质的安全工程项目。所有探测、扫描与修复能力均内置授权边界（网段白名单、控制令牌、主机指纹钉扎、审批哈希），默认不启用任何设备写操作。
 

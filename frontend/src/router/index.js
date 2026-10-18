@@ -12,7 +12,8 @@ const ReportExport = () => import("../views/ReportExport.vue");
 
 // 一级路由体现真实业务主线；旧入口保留重定向，避免历史链接失效。
 const routes = [
-  { path: "/", component: Dashboard, meta: { title: "安全总览" } },
+  { path: "/", component: () => import("../views/IoTOverview.vue"), meta: { title: "物联网安全工作台" } },
+  { path: "/soc", component: Dashboard, meta: { title: "SOC 安全总览" } },
   { path: "/assets", component: AssetCenter, meta: { title: "资产管理" } },
   { path: "/iot", component: () => import("../views/IoTWorkspace.vue"), meta: { title: "物联网接入" } },
   { path: "/devices", component: () => import("../views/DeviceCenter.vue"), meta: { title: "智能设备中心" } },

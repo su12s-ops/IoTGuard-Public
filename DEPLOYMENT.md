@@ -1,5 +1,7 @@
 # IoTGuard Deployment
 
+Scope: [current product and device acceptance baseline](IOTGUARD_PRODUCT_POSITIONING.md). The latest source adds `/api/devices/business/overview` and makes the IoT workbench the default frontend route (`/soc` retains the SOC). Deploy backend and frontend together; old running containers do not automatically load these changes. A successful build does not establish device connectivity or repair acceptance.
+
 The supported product entry point is Docker Compose. Copy `backend/.env.example` to a local environment file, set the control token, and keep both repair flags at `0`. The compose file binds the API to `127.0.0.1:18000` and the nginx SPA to `127.0.0.1:18080`; override these ports only on a trusted local reverse proxy.
 
 `docker compose build --build-arg VCS_REF=$(git rev-parse HEAD) --build-arg BUILD_DATE=$(date -u +%FT%TZ)` builds the API and nginx images. `docker compose up -d` starts a non-root API and an unprivileged nginx worker with a separate named database volume. The API image contains only application code, migrations, collector scripts, and the non-secret configuration template. Device keys, node tokens, databases, and local archives stay outside the image.

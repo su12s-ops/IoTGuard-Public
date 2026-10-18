@@ -60,8 +60,12 @@ def tool_query_device_profile(db: Session, device_id: str = "", host: str = "") 
                             "type": "package"} for p in asset.packages[:200]],
             "open_ports": [s.port for s in asset.services],
         }
+    from app.services.discovery_pipeline import _capability_marks
     return {
         "found": True, "asset_kind": "iot_device", **_device_brief(device),
+        "capability_limits": _capability_marks(device) or {},
+        "security_status": device.security_status,
+        "evidence_policy": "Missing runtime evidence is unknown; unsupported eBPF is not a healthy sensor. Firmware writes require an implemented device adapter and authorization.",
         "services": [{
             "port": s.port, "service_type": s.service_type, "product": s.product,
             "version": s.version, "auth_state": s.auth_state, "status": s.status,

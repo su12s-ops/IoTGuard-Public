@@ -8,7 +8,7 @@ from app.services.iot_official import import_snapshot, assess_snapshot, version_
 
 ROW = {"ghsa_id": "GHSA-82gq-cmqw-xgx2", "cve_id": "CVE-2026-76787",
        "html_url": "https://github.com/zephyrproject-rtos/zephyr/security/advisories/GHSA-82gq-cmqw-xgx2",
-       "vulnerabilities": [{"vulnerable_version_range": ">= 2.4.0, <= 4.4.2",
+       "vulnerabilities": [{"package": {"name": "zephyr"}, "vulnerable_version_range": ">= 2.4.0, <= 4.4.2",
                             "patched_versions": "4.5.0"}]}
 
 
@@ -59,3 +59,24 @@ def test_coverage_endpoint_is_read_only_and_reports_empty_snapshot(client):
     assert response.json()["coverage_status"] == "unassessed"
     assert response.json()["count"] == 0
     assert client.get("/api/devices/official-coverage/ubuntu?version=24.04.0").status_code == 422
+
+
+def test_agent_can_read_official_evidence_without_generic_cve_row(session_factory):
+    from app.services.unified.agents_def import tool_query_intelligence_sources
+    with session_factory() as db:
+        import_snapshot(db, "zephyr", [ROW])
+        result = tool_query_intelligence_sources(db, cve_id=ROW["cve_id"])
+        evidence = result["sources"]["iot_official_snapshot"]
+        assert not result["known_in_library"]
+        assert evidence["status"] == "snapshot_available"
+        assert evidence["records"][0]["source_url"] == ROW["html_url"]
+        assert len(evidence["records"][0]["snapshot_sha256"]) == 64
+        assert db.query(models.DeviceVulnerabilityMatch).count() == 0
+
+
+def test_other_component_range_cannot_exclude_zephyr_kernel(session_factory):
+    row = copy.deepcopy(ROW)
+    row["vulnerabilities"][0]["package"]["name"] = "unrelated-library"
+    with session_factory() as db:
+        import_snapshot(db, "zephyr", [row])
+        assert assess_snapshot(db, "zephyr", "4.5.0")["results"][0]["status"] == "insufficient_data"

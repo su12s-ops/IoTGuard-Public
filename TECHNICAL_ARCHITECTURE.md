@@ -1,5 +1,7 @@
 # IoTGuard Technical Architecture
 
+Current product scope and acceptance criteria: [IoT business positioning](IOTGUARD_PRODUCT_POSITIONING.md). IoT discovery, evidence-based vulnerability assessment and device-specific repair are the business flow. Four agents, runtime sensors and Harness support that flow. The default SPA route is the IoT workbench; SOC is `/soc`. Zephyr firmware automation remains incomplete; Ubuntu validation is infrastructure evidence only.
+
 The formal review path is the four-role pipeline `asset_investigator -> vulnerability_analyst` and `runtime_analyst` -> `decision_planner`. The API stores each run, trace, role execution, evidence reference, and policy gate. Models produce recommendations; operator acceptance remains a separate governance event.
 
 Post-repair reassessment is an authenticated, read-only admission for a resolved historical risk. It requires an intact current inventory evidence record, records the original risk snapshot, and writes a separate reassessment event. It does not reactivate or rewrite the historical risk and cannot sign business acceptance. Source asset 1/risk 126 and repaired clone asset 3/risk 127 remain independent.

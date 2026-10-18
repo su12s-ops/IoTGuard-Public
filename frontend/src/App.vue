@@ -2,20 +2,20 @@
   <el-container class="app-shell">
     <el-aside class="sidebar" width="224px">
       <div class="brand">
-        <div class="brand-mark">LG</div>
+        <div class="brand-mark">IG</div>
         <div>
-          <h1>LinuxGuard</h1>
-          <p>漏洞安全运营平台</p>
+          <h1>IoTGuard</h1>
+          <p>物联网漏洞检测与安全修复</p>
         </div>
       </div>
       <el-menu router :default-active="activeMenu" class="nav-menu">
         <el-menu-item index="/">
           <el-icon><DataBoard /></el-icon>
-          <span>安全总览</span>
+          <span>物联网安全工作台</span>
         </el-menu-item>
         <el-menu-item index="/assets">
           <el-icon><Monitor /></el-icon>
-          <span>资产管理</span>
+          <span>主机与基础设施</span>
         </el-menu-item>
         <el-menu-item index="/vulnerabilities">
           <el-icon><Search /></el-icon>
@@ -42,6 +42,7 @@
           <span>修复处置</span>
         </el-menu-item>
         <el-menu-item index="/device-tasks"><el-icon><Finished /></el-icon><span>智能体设备任务</span></el-menu-item>
+        <el-menu-item index="/soc"><el-icon><DataBoard /></el-icon><span>SOC 安全总览</span></el-menu-item>
         <el-menu-item index="/reports">
           <el-icon><Document /></el-icon>
           <span>报告与归档</span>
@@ -51,7 +52,7 @@
     <el-container>
       <el-header class="topbar">
         <div class="topbar-title">
-          <span class="topbar-context">Linux / IoT 漏洞安全运营</span>
+          <span class="topbar-context">异构物联网设备 · 多智能体风险研判 · 受控修复</span>
           <h2>{{ $route.meta.title }}</h2>
         </div>
         <div v-if="demoState.running" class="global-collect">

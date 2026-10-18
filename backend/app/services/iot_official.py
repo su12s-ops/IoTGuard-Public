@@ -81,6 +81,8 @@ def assess_snapshot(db, ecosystem, version):
         entries = row.get("vulnerabilities", [])
         # OpenWrt package versions and release versions are different domains.
         ranges = [version_in_range(version, entry.get("vulnerable_version_range", ""))
+                  if (entry.get("package", {}).get("name", "").lower()
+                      in {"zephyr", "zephyrproject-rtos/zephyr"}) else None
                   for entry in entries] if ecosystem == "zephyr" else []
         status = "insufficient_data"
         if ranges and all(value is False for value in ranges):

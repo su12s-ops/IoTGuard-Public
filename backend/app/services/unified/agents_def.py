@@ -62,6 +62,21 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
                 "note": "操作员依据官方公告人工登记，需结合原文核对；仅适用于对应 release。",
             } for item in advisories],
         }
+    official = []
+    for item in db.query(models.IotOfficialAdvisory).all():
+        payload = json.loads(item.payload_json)
+        if payload.get("cve_id") != cve_id:
+            continue
+        official.append({
+            "ecosystem": item.ecosystem, "advisory_id": item.advisory_id,
+            "source_url": item.source_url, "snapshot_sha256": item.content_sha256,
+            "vulnerabilities": payload.get("vulnerabilities", []),
+        })
+    bundle["iot_official_snapshot"] = {
+        "status": "snapshot_available" if official else "not_in_snapshot",
+        "records": official,
+        "limitations": "Preserved snapshot, not a live fetch. Match device component and version domain; build configuration and reachability need evidence. Missing records do not prove safety.",
+    }
     return {
         "cve_id": cve_id,
         "known_in_library": vulnerability is not None,

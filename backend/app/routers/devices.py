@@ -24,6 +24,12 @@ from app.services.device_vulnerability import (
 router = APIRouter(prefix="/devices", tags=["IoT device inventory"])
 
 
+@router.get("/business/overview")
+def business_overview(db: Session = Depends(get_db)):
+    from app.services.iot_business import overview
+    return overview(db)
+
+
 @router.get("/official-coverage/{ecosystem}")
 def official_coverage(ecosystem: str, version: str, db: Session = Depends(get_db)):
     """Official snapshot coverage, separate from operational risk decisions."""
@@ -85,7 +91,8 @@ def serialize_device(device: models.IotDevice, include_detail: bool = False, db:
         "component_count": len(device.components),
         # 设备级 CVE 匹配结果的真实计数（未匹配时为真实的 0）。
         "vulnerability_count": affected_count,
-        "vulnerability_assessment": "cve_match" if db is not None else "not_available",
+        "vulnerability_assessment": ("unassessed" if device.security_status == "unassessed"
+                                     else "cve_match") if db is not None else "not_available",
         "first_seen_at": device.first_seen_at, "last_seen_at": device.last_seen_at,
     }
     if include_detail:
