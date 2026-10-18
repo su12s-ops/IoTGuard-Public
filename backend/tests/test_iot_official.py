@@ -51,3 +51,11 @@ def test_openwrt_does_not_compare_release_with_package_range(session_factory):
         import_snapshot(db, "openwrt", [row])
         assert assess_snapshot(db, "openwrt", "25.12.6")["results"][0]["status"] == "insufficient_data"
         assert assess_snapshot(db, "zephyr", "4.4.2")["coverage_status"] == "unassessed"
+
+
+def test_coverage_endpoint_is_read_only_and_reports_empty_snapshot(client):
+    response = client.get("/api/devices/official-coverage/zephyr?version=4.4.2")
+    assert response.status_code == 200
+    assert response.json()["coverage_status"] == "unassessed"
+    assert response.json()["count"] == 0
+    assert client.get("/api/devices/official-coverage/ubuntu?version=24.04.0").status_code == 422
