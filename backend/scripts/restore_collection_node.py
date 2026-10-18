@@ -70,9 +70,12 @@ def main():
     values = dotenv_values(environment)
     if values.get("LINUXGUARD_COLLECTION_NODE_ID") != "m45-linux-node" or not values.get("LINUXGUARD_COLLECTION_NODE_TOKEN"):
         raise RuntimeError("existing_node_configuration_required")
+    tunnel_port = int(os.getenv("IOTGUARD_COLLECTION_TUNNEL_PORT", "18445"))
+    if not 1024 <= tunnel_port <= 65535:
+        raise RuntimeError("invalid_collection_tunnel_port")
     remote_env = {"LINUXGUARD_COLLECTION_NODE_ID": "m45-linux-node",
         "LINUXGUARD_NODE_TOKEN": values["LINUXGUARD_COLLECTION_NODE_TOKEN"],
-        "LINUXGUARD_NODE_BACKEND_URL": "http://127.0.0.1:18445",
+        "LINUXGUARD_NODE_BACKEND_URL": f"http://127.0.0.1:{tunnel_port}",
         "LINUXGUARD_NODE_ALLOWED_BACKEND_HOSTS": "127.0.0.1/32",
         "LINUXGUARD_ENABLE_DEVICE_REPAIR": "0", "LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR": "0"}
     runner = (ROOT / "backend/scripts/collection_node_runner.py").read_text(encoding="utf-8")
@@ -84,7 +87,7 @@ def main():
         raise RuntimeError("existing_ssh_key_reference_unavailable")
     command = ["ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ExitOnForwardFailure=yes",
         "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", "-i", str(key), "-p", str(scope["port"]),
-        "-R", "18445:127.0.0.1:8000", f"{scope['username']}@{scope['host']}", "python3 -"]
+        "-R", f"{tunnel_port}:127.0.0.1:8000", f"{scope['username']}@{scope['host']}", "python3 -"]
     output = ROOT / "reports/m5-final"
     output.mkdir(parents=True, exist_ok=True)
     if args.supervise:
