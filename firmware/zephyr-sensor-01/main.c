@@ -14,6 +14,7 @@
 #include <zephyr/net/net_mgmt.h>
 #include <zephyr/net/net_event.h>
 #include <zephyr/sys/printk.h>
+#include <zephyr/random/random.h>
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -153,7 +154,7 @@ static int send_all(int fd, const char *buf, size_t len)
 	size_t off = 0;
 	while (off < len) {
 		ssize_t n = zsock_send(fd, buf + off, len - off, 0);
-		if (n < 0) {
+		if (n <= 0) {
 			return -1;
 		}
 		off += (size_t)n;
@@ -181,6 +182,10 @@ static void build_identity_json(struct builder *b)
 	b_field(b, "arch", APP_ARCH);
 	b_field(b, "build_id", __DATE__ " " __TIME__);
 	b_field(b, "status", "online");
+	if (IS_ENABLED(CONFIG_APP_QEMU_HOST_ENTROPY)) {
+		b_field(b, "entropy_source", "qemu_host_urandom_semihost");
+		b_field(b, "entropy_self_test", "passed");
+	}
 	b_field(b, "mac_address", mac);
 	snprintf(ver, sizeof(ver), "%d.%d", t / 10, ((t < 0) ? -t : t) % 10);
 	b_lit(b, "\"telemetry\":{\"temperature_c\":{\"value\":");
@@ -203,19 +208,52 @@ static void handle_client(int fd)
 	char rx[RX_BUF_SIZE];
 	char body[TX_BUF_SIZE];
 	struct builder b;
-
-	ssize_t n = zsock_recv(fd, rx, sizeof(rx) - 1, 0);
-	if (n <= 0) {
+	struct zsock_timeval timeout = { .tv_sec = 2, .tv_usec = 0 };
+	if (zsock_setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout)) < 0 ||
+	    zsock_setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout)) < 0) {
 		zsock_close(fd);
 		return;
 	}
-	if ((size_t)n >= sizeof(rx)) {
-		n = (ssize_t)(sizeof(rx) - 1);
-	}
-	rx[n] = '\0';
 
-	bool identity = (strncmp(rx, "GET /api/system", 15) == 0) ||
-			(strncmp(rx, "GET /system/info", 16) == 0);
+	/* A total deadline also bounds clients which trickle a byte at a time. */
+	size_t used = 0;
+	int64_t deadline = k_uptime_get() + 2000;
+	bool complete = false;
+	while (used < sizeof(rx) - 1 && k_uptime_get() < deadline) {
+		ssize_t n = zsock_recv(fd, rx + used, sizeof(rx) - used - 1, 0);
+		if (n <= 0) {
+			break;
+		}
+		used += (size_t)n;
+		rx[used] = '\0';
+		if (strstr(rx, "\r\n") != NULL) {
+			complete = true;
+			break;
+		}
+	}
+	if (!complete) {
+		zsock_close(fd);
+		return;
+	}
+	char method[8], path[128], protocol[16], extra;
+	char *line_end = strstr(rx, "\r\n");
+	*line_end = '\0';
+	if (sscanf(rx, "%7s %127s %15s %c", method, path, protocol, &extra) != 3 ||
+	    strcmp(method, "GET") != 0 ||
+	    (strcmp(protocol, "HTTP/1.0") != 0 && strcmp(protocol, "HTTP/1.1") != 0)) {
+		static const char bad[] = "HTTP/1.0 400 Bad Request\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+		send_all(fd, bad, sizeof(bad) - 1);
+		zsock_close(fd);
+		return;
+	}
+
+	bool identity = strcmp(path, "/api/system") == 0 || strcmp(path, "/system/info") == 0;
+	if (!identity && strcmp(path, "/") != 0) {
+		static const char missing[] = "HTTP/1.0 404 Not Found\r\nConnection: close\r\nContent-Length: 0\r\n\r\n";
+		send_all(fd, missing, sizeof(missing) - 1);
+		zsock_close(fd);
+		return;
+	}
 
 	b_reset(&b, body, sizeof(body));
 	if (identity) {
@@ -280,6 +318,17 @@ static bool check_ipv4_up(void)
 
 int main(void)
 {
+	/* Fail closed: do not expose a network service if host entropy is absent.
+	 * Unequal samples are a plumbing check, not statistical RNG certification. */
+	uint8_t sample_a[32], sample_b[32];
+	if (sys_csrand_get(sample_a, sizeof(sample_a)) != 0 ||
+	    sys_csrand_get(sample_b, sizeof(sample_b)) != 0 ||
+	    memcmp(sample_a, sample_b, sizeof(sample_a)) == 0) {
+		printk("entropy self-test failed; service disabled\n");
+		return -EIO;
+	}
+	memset(sample_a, 0, sizeof(sample_a));
+	memset(sample_b, 0, sizeof(sample_b));
 	printk("zephyr-sensor-01 booting (board %s)\n", CONFIG_BOARD);
 	net_dhcpv4_start(net_if_get_default());
 

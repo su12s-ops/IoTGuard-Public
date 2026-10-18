@@ -1,0 +1,10 @@
+/* QEMU-only entropy device; no physical TRNG is claimed. */
+/ {
+	chosen {
+		zephyr,entropy = &host_entropy;
+	};
+	host_entropy: host-entropy {
+		compatible = "iotguard,qemu-host-entropy";
+		status = "okay";
+	};
+};

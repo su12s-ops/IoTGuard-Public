@@ -382,7 +382,8 @@ def build_identity(host: str, service_results: dict[int, dict]) -> dict:
             identity["metadata"]["serial_number"] = str(system_info["serial_number"])
         # 固件扩展元数据（第七阶段：board/build_id/遥测等来自设备自报或编译配置），
         # 仅原样保存为证据，不参与身份判重。
-        for extra in ("board", "soc", "arch", "build_id", "device_id", "status", "uptime_s", "telemetry"):
+        for extra in ("board", "soc", "arch", "build_id", "device_id", "status", "uptime_s", "telemetry",
+                      "entropy_source", "entropy_self_test"):
             if extra in system_info:
                 identity["metadata"][extra] = system_info[extra]
         # 设备自报的服务产品信息比横幅推断更权威，覆盖到识别结果。
@@ -442,6 +443,11 @@ def _service_component(service: dict) -> tuple[str, str] | None:
     if service_type == "rtsp":
         return (product or "rtsp-service", version)
     return (product, version) if product else None
+
+
+def _service_component_name(name: str) -> str:
+    """Keep a stable component identity; versions belong in the version field."""
+    return re.sub(r"\s+\d+(?:[A-Za-z0-9_.:+~-]*)$", "", name).strip() or name
 
 
 def _exposure_baseline(service_results: dict[int, dict]) -> tuple[float, dict]:
@@ -533,7 +539,7 @@ def upsert_device(db, host: str, ports: list[int] | None = None, timeout: float 
         db.flush()
 
     known_ports = {service.port for service in device.services}
-    for port in known_ports - set(service_results):
+    for port in (known_ports & set(target_ports)) - set(service_results):
         closed = db.query(models.IotDeviceService).filter_by(device_row_id=device.id, port=port).one()
         closed.status = "closed"
         closed.last_seen_at = models.utcnow()
@@ -567,10 +573,30 @@ def upsert_device(db, host: str, ports: list[int] | None = None, timeout: float 
         if not derived:
             continue
         name, version = derived
+        name = _service_component_name(name)
         service_row = db.query(models.IotDeviceService).filter_by(device_row_id=device.id, port=port).one()
         put_component(name, "software", version, "", "service_banner", service_row.id)
 
+    # The current inventory is replaceable; matching/trace history is independent
+    # of component rows and is retained under its original name.
+    db.flush()
+    for component in db.query(models.IotDeviceComponent).filter_by(device_row_id=device.id).all():
+        stable = _service_component_name(component.component_name)
+        if stable == component.component_name or component.source != "service_banner":
+            continue
+        current = db.query(models.IotDeviceComponent).filter_by(
+            device_row_id=device.id, component_name=stable).one_or_none()
+        if current is None:
+            component.component_name = stable
+        elif current.id != component.id:
+            db.delete(component)
+
+    kernel = re.fullmatch(r"Zephyr RTOS\s+(\d+\.\d+\.\d+(?:[-+][\w.-]+)?)", device.os or "")
+    if kernel:
+        put_component("Zephyr RTOS", "kernel", kernel.group(1), "", "device_identity", None)
+
     db.commit()
+    db.expire(device, ["components"])
     report = {
         "host": host,
         "probed_ports": target_ports,

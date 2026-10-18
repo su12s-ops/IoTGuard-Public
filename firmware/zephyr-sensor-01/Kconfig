@@ -27,6 +27,17 @@ config APP_FW_VERSION
 	string "Firmware version"
 	default "0.1.0-stage7"
 
+config APP_QEMU_HOST_ENTROPY
+	bool "QEMU-only entropy from the Linux host via semihosting"
+	depends on BOARD_QEMU_CORTEX_A9
+	select SEMIHOST
+	select ENTROPY_GENERATOR
+	select ENTROPY_HAS_DRIVER
+	help
+	  Only for the trusted IoTGuard QEMU firmware on an unprivileged host.
+	  Reads /dev/urandom via ARM semihosting. Never use this configuration
+	  for a physical device, or enable semihosting for untrusted guest code.
+
 config APP_DEVICE_UID
 	string "Stable device UID (instance identity)"
 	default "ZEPHYR-SENSOR-0001"

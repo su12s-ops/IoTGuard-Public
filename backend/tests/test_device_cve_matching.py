@@ -81,6 +81,30 @@ def test_matching_fixed_when_version_patched(device_with_components):
     assert device.security_status == "no_known_cve"
 
 
+def test_unknown_exact_version_is_not_safe(device_with_components):
+    db, device = device_with_components
+    DV.register_advisory(db, ADVISORY)
+    next(c for c in device.components if c.component_name == ADVISORY['component_name']).version = '9.0'
+    db.commit()
+    result = DV.run_device_matching(db, device)
+    assert result['stats']['insufficient_data'] == 1
+    assert result['affected_count'] == 1
+
+
+def test_vendor_scope_and_obsolete_matches(device_with_components):
+    db, device = device_with_components
+    DV.register_advisory(db, ADVISORY)
+    DV.run_device_matching(db, device)
+    device.vendor = 'Different vendor with same model'
+    db.commit()
+    result = DV.run_device_matching(db, device)
+    assert result['affected_count'] == 0
+    assert result['security_status'] == 'unassessed'
+    assert DV.device_matches(db, device) == []
+    assert db.query(models.DeviceVulnerabilityMatch).count() == 1
+    assert db.query(models.DeviceVulnerabilityMatch).one().active is False
+
+
 def test_matching_component_absent_is_not_applicable(session_factory):
     """公告针对另一台设备型号或组件缺失时，不下受影响结论。"""
     db = session_factory()

@@ -40,6 +40,25 @@ def _allow(monkeypatch):
     monkeypatch.setenv("LINUXGUARD_DISCOVERY_CIDRS", "192.168.50.0/24")
 
 
+def test_refresh_replaces_legacy_versioned_service_component(session_factory, monkeypatch):
+    identities = {Z1: _zephyr_identity('ZEPHYR-SENSOR-0001', '52:54:00:12:34:56')}
+    _mock_zephyr(monkeypatch, {Z1: [80]}, identities)
+    db = session_factory()
+    try:
+        device, _ = device_inventory.upsert_device(db, Z1, [80])
+        service = next(c for c in device.components if c.component_name == 'zephyr-sensor-httpd')
+        service.component_name = 'zephyr-sensor-httpd 0.1.0-stage7'
+        db.commit()
+        identities[Z1] = _zephyr_identity('ZEPHYR-SENSOR-0001', '52:54:00:12:34:56', '0.3.0-iotguard')
+        refreshed, _ = device_inventory.upsert_device(db, Z1, [80])
+        assert refreshed.id == device.id
+        components = {c.component_name: c.version for c in refreshed.components}
+        assert components['zephyr-sensor-httpd'] == '0.3.0-iotguard'
+        assert not any(name.startswith('zephyr-sensor-httpd ') for name in components)
+    finally:
+        db.close()
+
+
 def _mock_zephyr(monkeypatch, responders: dict[str, list[int]],
                  identities: dict[str, dict]):
     def probe(address, ports, timeout):
@@ -96,7 +115,8 @@ def test_zephyr_discovery_enrollment_with_metadata(session_factory, monkeypatch)
         # 组件：固件（版本化）+ httpd（版本化）→ 进入 CVE 消费
         components = {c.component_name: c.version for c in device.components}
         assert components.get("Zephyr-Sensor-01 firmware") == FW_VERSION
-        assert components.get(f"zephyr-sensor-httpd {FW_VERSION}") == FW_VERSION
+        assert components.get("zephyr-sensor-httpd") == FW_VERSION
+        assert components.get("Zephyr RTOS") == "4.4.2"
         assert summary["cve_matched"] == 1
         # 能力边界如实标注（不伪造支持）
         observation = db.query(models.DeviceObservation).filter_by(source="tcp_connect").one()
@@ -152,7 +172,7 @@ def test_zephyr_cve_three_tiers(session_factory, monkeypatch):
         # 层2：NVD 通用情报（httpd 组件，低于修复版本 → 候选）
         db.add(models.VulnerabilityInfo(
             cve_id="CVE-2026-80002", title="generic httpd issue",
-            affected_package=f"zephyr-sensor-httpd {FW_VERSION}", fixed_version="1.0.0",
+            affected_package="zephyr-sensor-httpd", fixed_version="1.0.0",
             cvss_score=5.3, cvss_severity="Medium", source="nvd_synthetic"))
         db.commit()
         summary = discover_and_enroll(db, CIDR, [80])

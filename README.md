@@ -1,5 +1,7 @@
 # IoTGuard
 
+IoT 设备更新实测（2026-10-18）：既有 OpenWrt 已升级至 25.12.6 并通过关机快照恢复；Zephyr 应用已更新至 0.3.0-iotguard，通过回退、崩溃恢复和平台复采。测试随机源与旧组件台账问题已处理。参见 [更新闭环报告](IOTGUARD_IOT_UPDATE_CLOSURE_REPORT.md)；官方公告覆盖仍待补齐，不能宣称漏洞清零。
+
 最终交付（2026-10-18）：参见 [最终产品验收报告](IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md)、[部署说明](DEPLOYMENT.md)、[技术架构](TECHNICAL_ARCHITECTURE.md)、[演示手册](IOTGUARD_FINAL_DEMO_GUIDE.md) 与 [回滚准备](IOTGUARD_FINAL_ROLLBACK_PLAN.md)。这些文件优先于历史阶段报告。正式验证入口为 `http://127.0.0.1:18080`，使用 nginx 生产 dist；设备在线、传感器健康与证据新鲜度分别判断。源风险126未修复，克隆风险127三包已修复，Mimosa仍为partial，修复后快照恢复未执行。
 
 IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检测与修复平台**：从授权网段的资产自动发现、协议级设备指纹、多源 CVE 情报匹配，到四智能体协同研判、eBPF 运行时行为取证，以及带审批与回滚的 Agent Harness 修复工作流。
@@ -109,9 +111,12 @@ cd frontend && npm run test:e2e
 - **修复工作流**：确定性授权（高危自动结论永不放行）、MQTT 匿名接入真实修复状态机（备份→修复→重探→回滚）；设备侧修复默认关闭
 - **互联网授权目标扫描**：双重授权（网段白名单 + 显式登记）→ 端口扫描 → 指纹 → CVE，全程审计留痕
 
-## 后续方向
+## 当前产品方向
 
-- **OpenWrt 异构终端接入**（进行中）：复用既有 `openwrt_ssh` 适配器与采集器，在授权实验网段（VMware 隔离段）打通"发现 → SSH 采集 → 精确版本 CVE"全链路
-- **异构 IoT 操作系统**：在 `DeviceConnection.adapter` 框架上扩展更多设备系统（含资源受限 RTOS，如 Zephyr 的观测性接入）
-- **Agent Harness 智能体运行监控**：trace_id 贯穿编排/Harness/工具调用/LLM 审计，构建运行时序视图（可选 OpenTelemetry）
-- **台账统一**：设备线（IotDevice）与主机线（LinuxAsset）的关联与统一视图；资产变更事件与周期发现调度
+IoTGuard 的主体是**面向多类型物联网设备的智能漏洞检测与修复系统**。OpenWrt 与 Zephyr 是下一阶段的主要开发和验收对象；Ubuntu 用于控制面、采集节点和对照验证。
+
+- **OpenWrt**：已有 VMware 实例的真实包清单与日志采集，优先补齐官方公告适用性、设备身份统一、实际修复与回退闭环。
+- **Zephyr**：使用原 QEMU 固件实例，优先补齐内核与 Kconfig 构建证据、配置感知匹配，再开发固件更新与回退。
+- **共用平台**：围绕上述两条设备链维护四智能体、证据、授权、审计与展示；暂停扩展 Ubuntu 漏洞专题和克隆实验。
+
+当前两种 IoT 系统均运行在虚拟环境，尚不能视为实体硬件验收。详见 [设备状态报告](IOTGUARD_IOT_DEVICE_STATUS_REPORT.md) 与 [开发路线及验收标准](IOTGUARD_IOT_FIRST_ROADMAP.md)。

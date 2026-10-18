@@ -11,10 +11,18 @@ KERNEL="$BUILD/zephyr/zephyr.elf"
 
 [ -f "$KERNEL" ] || { echo "kernel not found: $KERNEL" >&2; exit 2; }
 
+# Semihosting grants trusted guest code host-file access. Enable it only for
+# builds which explicitly selected the QEMU-only entropy transport.
+SEMIHOST_ARGS=()
+if grep -qx 'CONFIG_APP_QEMU_HOST_ENTROPY=y' "$BUILD/zephyr/.config"; then
+  SEMIHOST_ARGS=(-semihosting-config enable=on,target=native)
+fi
+
 # cadence_gem 为 SoC 不可插拔设备：经 -nic model= 由机器内建实例挂载到
 # SLIRP netdev（QEMU 8.2 验证通过；SDK 捆绑 xilinx-aarch64 二进制此前不可行）。
 exec "$Q" \
   -machine xilinx-zynq-a9 -cpu cortex-a9 -m 512M \
   -kernel "$KERNEL" \
+  "${SEMIHOST_ARGS[@]}" \
   -nic user,model=cadence_gem,hostfwd=tcp::${HOST_PORT}-:80 \
   -nographic -no-reboot
