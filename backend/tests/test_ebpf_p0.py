@@ -77,6 +77,21 @@ def _upload(db, events):
     return collector.append_events([dict(e) for e in events], db=db)
 
 
+def test_runtime_page_count_and_sparse_mode_filter(session_factory, monkeypatch):
+    with session_factory() as db:
+        _upload(db, [_event(pid=1, source="openwrt_logread")])
+        _upload(db, [_event(pid=n) for n in range(2, 22)])
+        # The matching event is older than four result windows. Filtering must
+        # happen before pagination, and counting must not deserialize raw rows.
+        assert collector.load_runtime_events(db, limit=1, mode="syslog")[0]["process_id"] == 1
+        assert len(collector.load_runtime_events(db, limit=2)) == 2
+        monkeypatch.setattr(collector, "_runtime_event_to_dict", lambda row: pytest.fail("count loaded event payload"))
+        assert collector.count_runtime_events(db) == 21
+        assert collector.count_runtime_events(db, mode="ebpf", hostname="host-a", severity_min=1) == 20
+        assert collector.count_runtime_events(db, mode="syslog") == 1
+        assert collector.count_runtime_events(db, mode="missing") == 0
+
+
 def test_same_batch_reupload_no_duplicates(session_factory):
     db = session_factory()
     try:

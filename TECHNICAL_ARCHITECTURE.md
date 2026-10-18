@@ -1,0 +1,17 @@
+# IoTGuard Technical Architecture
+
+The formal review path is the four-role pipeline `asset_investigator -> vulnerability_analyst` and `runtime_analyst` -> `decision_planner`. The API stores each run, trace, role execution, evidence reference, and policy gate. Models produce recommendations; operator acceptance remains a separate governance event.
+
+Post-repair reassessment is an authenticated, read-only admission for a resolved historical risk. It requires an intact current inventory evidence record, records the original risk snapshot, and writes a separate reassessment event. It does not reactivate or rewrite the historical risk and cannot sign business acceptance. Source asset 1/risk 126 and repaired clone asset 3/risk 127 remain independent.
+
+Collection uses the existing Harness queue, pinned connection signature, pinned collector hash, asset lock, registered Linux pull runner, and official ingestion path. OpenWrt runtime logs use the existing `openwrt_logread_capture.sh` collector and normalize into the existing runtime event table. Evidence is raw, boot-id bound, timestamp-qualified, and deduplicated by the existing event fingerprint.
+
+The production Docker boundary is an unprivileged API plus unprivileged nginx. Kernel sensors and device SSH credentials stay on their respective external hosts. Repair switches are fail-closed and disabled in the delivered configuration.
+
+The model's post-repair advice is separate from a delegated operator disposition. The current user explicitly delegated judgment; audit actors are identified as agents and payloads describe the exact acceptance scope. No field is used to fabricate a personal human signature. Source126 remains open; risk12 retains its original match and official correction and has a separate archive adjudication. The clone's original risk snapshot is preserved and acceptance is append-only.
+
+Periodic OpenWrt acquisition uses persistent time-bucket request IDs, at most two attempts per60–3600 second interval, pinned host/collector hashes, the shared Harness asset lock and a900 second timeout for its own stalled log jobs. It never releases unrelated repair locks or replays a device write. Each receipt preserves the complete raw log output; events use the established fingerprint with boot identity and actual device timestamps. Events/raw evidence may commit before the final Harness receipt; crash replay is idempotent, not a cross-table atomic transaction. Ring-buffer history loss remains unavailable. SSH supervisor recovery is bounded by the current host session, not an installed autostart service.
+
+Security checks cover authenticated ingestion and governance APIs, node credentials, fixed-script execution, Harness approvals, independent lab scope, browser calls and Docker isolation. Pip/npm vulnerability audits and Bandit are independent checks; they do not upgrade the historical Mimosa partial coverage to full coverage. See the final acceptance report for actual counts and residual boundaries.
+
+Behavior-chain runtime calculations are reused only within one request for the same asset, package and scenario. There is no cross-request cache. Runtime event counts use a database aggregate; source classification is applied before pagination so sparse observation modes remain discoverable. Post-repair review, scoped delegated acceptance and audit corrections are displayed separately from the preserved historical risk judgment.

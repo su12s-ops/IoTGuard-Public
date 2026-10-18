@@ -60,7 +60,7 @@
                 :status="stepStatus((unifiedRun.stage_status || {})[stage] ? { status: unifiedRun.stage_status[stage] === 'succeeded' ? 'succeeded' : unifiedRun.stage_status[stage] } : null)" />
             </el-steps>
             <el-row :gutter="12">
-              <el-col :span="12">
+              <el-col :xs="24" :lg="12">
                 <el-descriptions title="确定性门禁（程序审计策略）" :column="1" border size="small">
                   <el-descriptions-item label="门禁状态">
                     <el-tag size="small" :type="(unifiedRun.final?.policy?.status) === 'auto_confirmed' ? 'success' : 'warning'">
@@ -72,7 +72,7 @@
                   <el-descriptions-item label="LLM 用量">{{ JSON.stringify(unifiedRun.usage?.usage || unifiedRun.usage || {}) }}</el-descriptions-item>
                 </el-descriptions>
               </el-col>
-              <el-col :span="12">
+              <el-col :xs="24" :lg="12">
                 <el-descriptions :title="unifiedRun.mode === 'formal' ? '正式研判与人审门禁' : unifiedRun.mode === 'historical' ? '历史归档建议稿（待操作员裁定）' : '历史影子结论'" :column="1" border size="small">
                   <el-descriptions-item label="风险变化与基线">{{ unifiedVerdict.risk_direction }} / {{ unifiedVerdict.risk_baseline_ref }}：{{ unifiedVerdict.risk_change_basis }}</el-descriptions-item><el-descriptions-item label="软件包方向">{{ unifiedRun.plan?.package_change || unifiedVerdict.package_change || "undetermined" }}</el-descriptions-item><el-descriptions-item label="置信度分层解释">{{ JSON.stringify(unifiedVerdict.confidence_explanation || {}) }}</el-descriptions-item><el-descriptions-item label="影响判定">{{ unifiedVerdict.impact_status || '—' }}</el-descriptions-item>
                   <el-descriptions-item label="建议处置">{{ unifiedVerdict.recommended_action || '—' }}（优先级 {{ unifiedVerdict.recommended_priority || '—' }}，置信度 {{ unifiedVerdict.confidence ?? '—' }}）</el-descriptions-item>
@@ -120,7 +120,7 @@
             <p v-if="unifiedRun.plan?.technical_gate">技术依据门禁：{{ unifiedRun.plan.technical_gate.status }}；{{ unifiedRun.plan.technical_gate.reasons.join('、') || '仍需人工审批' }}；未执行，未授予 Harness 授权。</p>
             <p v-if="unifiedRun.plan?.original_evidence_ids?.length" class="cell-sub">原始依据：{{ unifiedRun.plan.original_evidence_ids.join('、') }}</p>
             <el-row :gutter="12">
-              <el-col :span="8">
+              <el-col :span="24">
                 <h3 class="drawer-section-title">建议动作（白名单）</h3>
                 <el-descriptions :column="1" border size="small">
                   <el-descriptions-item v-for="(a, i) in unifiedPlanActions" :key="i" :label="a.action">
@@ -129,11 +129,11 @@
                   </el-descriptions-item>
                 </el-descriptions>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :lg="12">
                 <h3 class="drawer-section-title">验证条件</h3>
                 <ul class="plan-list"><li v-for="(v, i) in (unifiedRun.plan?.verification_plan || [])" :key="i">{{ v.step || v.description || JSON.stringify(v) }}</li></ul>
               </el-col>
-              <el-col :span="8">
+              <el-col :xs="24" :lg="12">
                 <h3 class="drawer-section-title">回滚要求</h3>
                 <ul class="plan-list"><li v-for="(r, i) in (unifiedRun.plan?.rollback_plan || [])" :key="i">{{ r }}</li></ul>
               </el-col>
@@ -235,7 +235,7 @@
 
           <el-row :gutter="12">
             <!-- C. Harness 安全监控 -->
-            <el-col :span="12">
+            <el-col :xs="24" :lg="12">
               <section class="operation-section">
                 <div class="section-head"><div><h2>Harness 安全监控</h2></div></div>
                 <el-descriptions :column="1" border size="small">
@@ -261,7 +261,7 @@
               </section>
             </el-col>
             <!-- D. 证据关联视图 -->
-            <el-col :span="12">
+            <el-col :xs="24" :lg="12">
               <section class="operation-section">
                 <div class="section-head">
                   <div><h2>证据关联</h2></div>
@@ -556,5 +556,8 @@ onMounted(async () => {
 .trace-payload { margin: 0; white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 220px; overflow: auto; }
 .cell-sub { color: var(--el-text-color-secondary); font-size: 12px; }
 .plan-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--el-text-color-regular); }
-.plan-list li { margin-bottom: 4px; }
+.plan-list li { margin-bottom: 8px; overflow-wrap: anywhere; line-height: 1.6; }
+:deep(.el-descriptions__table) { table-layout: fixed; width: 100%; }
+:deep(.el-descriptions__label) { width: 120px; }
+:deep(.el-descriptions__cell) { overflow-wrap: anywhere; word-break: normal; vertical-align: top; }
 </style>

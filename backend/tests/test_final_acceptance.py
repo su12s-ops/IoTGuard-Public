@@ -15,6 +15,27 @@ from tests.test_unified_adapter import FULL_SCRIPT
 from tests.test_unified_pipeline import ScriptedClient
 
 
+def test_behavior_runtime_reuse_is_scoped_to_request_and_scenario(session_factory, monkeypatch):
+    from app.services import agent_intelligence as A
+    from tests.test_unified_adapter import _setup_risk
+    for suffix in (1, 2, 3):
+        _setup_risk(session_factory, cve_id=f"CVE-2099-{suffix:04}")
+    with session_factory() as db:
+        db.query(models.VulnerabilityInfo).filter_by(cve_id="CVE-2099-0003").one().description = "local user privilege escalation"
+        db.commit()
+        calls = []
+        real = A._runtime_matches
+        def observe(*args):
+            calls.append(args[-1]["id"])
+            return real(*args)
+        monkeypatch.setattr(A, "_runtime_matches", observe)
+        monkeypatch.setattr(A, "load_runtime_events", lambda **kw: [])
+        assert len(A.build_behavior_chains(db)) == 3
+        assert len(calls) == 2 and len(set(calls)) == 2
+        A.build_behavior_chains(db)
+        assert len(calls) == 4  # No stale cross-request runtime cache.
+
+
 def test_postrepair_full_pipeline_keeps_original_history(case, session_factory, monkeypatch):
     import app.services.unified.runner as runner
     monkeypatch.setattr(runner, "SessionLocal", session_factory)
@@ -114,3 +135,20 @@ def test_periodic_times_out_only_own_lock(rig, monkeypatch):
 def test_periodic_and_postrepair_require_control_token(client, control_headers):
     assert client.post("/api/analysis/runs?risk_id=1&post_repair=true").status_code == 401
     assert client.post("/api/iot/connections/1/collection-runs", json={"purpose":"runtime_logs"}).status_code == 401
+
+
+@pytest.mark.parametrize("mac", ["02:00:00:00:00:41", ""])
+def test_runtime_identity_matches_inventory_suffix_and_rejects_foreign_host(rig, monkeypatch, mac):
+    setup_logs(rig, monkeypatch)
+    with rig.factory() as db:
+        asset = db.get(models.LinuxAsset, rig.initial["id"])
+        connection = db.get(models.DeviceConnection, rig.connection["id"])
+        suffix = mac.replace(":", "") if mac else hashlib.sha256(connection.host_key_sha256.encode()).hexdigest()[:12]
+        asset.hostname, asset.mac_address = "synthetic-openwrt-" + suffix, mac
+        db.commit()
+        C.ingest_runtime_logs(db, connection, LOG, {"run_id":"suffix-regression"})
+        assert db.query(models.RuntimeEvent).one().asset_id == asset.id
+        assert db.query(models.CollectionEvidence).one().raw_text == LOG
+        with pytest.raises(ValueError, match="identity_mismatch"):
+            C.ingest_runtime_logs(db, connection, LOG.replace("synthetic-openwrt", "foreign"), {"run_id":"rejected"})
+        assert db.query(models.CollectionEvidence).count() == 1

@@ -1,5 +1,19 @@
 <template>
   <section class="page cve-detail-page" v-if="chain">
+    <el-alert v-if="riskRecord.active === false" title="历史对象：下方保留原始研判与评分；修复后复评和委托接受单独列示，不授予新的执行权限。" type="info" :closable="false" />
+    <section v-if="postRepairEvent" class="detail-section" aria-label="修复后复评与接受">
+      <h2>修复后复评与接受</h2>
+      <p>模型原始建议：{{ postRepairVerdict.impact_status || '-' }} / {{ postRepairVerdict.recommended_action || '-' }}；审计门禁：{{ postRepairEvent.payload.policy?.status || '-' }}。</p>
+      <p>运行：{{ postRepairEvent.payload.run_id }}；Trace：{{ postRepairEvent.payload.trace_id }}。<el-button text @click="goUnifiedRun(postRepairEvent.payload.run_id)">查看修复后四角色与原始证据</el-button></p>
+      <template v-if="businessAcceptance">
+        <p>委托接受：{{ businessAcceptance.payload.status }}；执行主体：{{ businessAcceptance.actor }}（代理，非用户本人亲签）。</p>
+        <p>范围：{{ businessAcceptance.payload.scope }}；官方公告：{{ businessAcceptance.payload.canonical_notice }}；修复版本：{{ businessAcceptance.payload.fixed_version }}。</p>
+        <p>已通过：{{ (businessAcceptance.payload.passed_checks || []).join('；') }}</p>
+        <p>保留边界：{{ (businessAcceptance.payload.limitations || []).join('；') }}。不代表所有业务通过。</p>
+        <p v-for="correction in businessAcceptance.payload.raw_model_corrections || []" :key="correction">审计纠正：{{ correction }}</p>
+      </template>
+      <p v-else>尚无本次修复后的独立业务接受记录。</p>
+    </section>
     <header class="cve-header"><el-button :icon="ArrowLeft" @click="back">返回风险列表</el-button><div class="cve-identity"><span class="section-kicker">VULNERABILITY RECORD</span><h1>{{ chain.intelligence.cve_id }}</h1><p>{{ vulnerabilityDetail.title || chain.intelligence.title || "Linux 软件包漏洞研判记录" }}</p></div><span class="severity-block" :class="lvlClass(displayLevel)">{{ (archivedCorrected ? "历史基线 / " : "") + riskLevelText(displayLevel) }}</span></header>
     <el-alert v-if="archivedCorrected" :title="`历史 inactive 对象：当前精确官方判断为不受影响。Critical 等级及分数仅为保留的历史错误基线；旧修复建议失效。归档状态：${historicalDecision || '等待授权操作员裁定'}。`" type="warning" :closable="false" />
     <section class="cve-metrics"><div><span>{{ archivedCorrected ? "历史基线分" : "风险分" }}</span><strong>{{ displayScore }}</strong></div><div><span>CVSS</span><strong>{{ Number(vulnerabilityDetail.cvss_score || chain.intelligence.cvss_score || 0).toFixed(1) }}</strong></div><div><span>EPSS</span><strong>{{ epssDisplay }}</strong></div><div><span>KEV</span><strong>{{ vulnerabilityDetail.is_kev || chain.intelligence.is_kev ? "是" : "否" }}</strong></div><div><span>受影响资产</span><strong>1</strong></div><div><span>Ubuntu 状态</span><strong>{{ archivedCorrected ? "官方不受影响" : chain.matching.affected ? "受影响" : "未命中" }}</strong></div></section>
@@ -50,7 +64,7 @@
 </div>
 </section>
 
-    <section class="detail-section"><header><span>06</span><div><h2>风险研判</h2><p>专业分析、冲突复议与最终裁决</p></div></header><table class="data-table"><thead><tr><th>研判角色</th><th>核心结论</th><th>置信度 / 方向</th><th>证据引用</th></tr></thead><tbody><tr v-for="row in agentRows" :key="row.id"><td><strong>{{ row.label }}</strong><small class="cell-sub mono">{{ row.id }}</small></td><td>{{ row.reason }}</td><td>{{ row.meta }}</td><td class="mono">{{ row.evidence || "-" }}</td></tr><tr v-if="!agentRows.length"><td colspan="4" class="empty-cell">暂无专业分析记录。</td></tr></tbody></table><div class="final-decision"><div><span>{{ archivedCorrected ? "历史风险基线" : "当前风险" }}</span><strong>{{ displayScore }} / {{ riskLevelText(displayLevel) }}</strong></div><div><span>风险裁决</span><strong>{{ riskRecord.review_verdict || decisionText(chain.risk.decision) }}</strong></div><div><span>处置建议</span><strong>{{ riskRecord.recommended_action || decisionText(chain.risk.decision) }}</strong></div><p>{{ riskRecord.review_reason || chain.risk.decision_reason }}</p></div></section>
+    <section class="detail-section"><header><span>06</span><div><h2>风险研判</h2><p>{{ riskRecord.active === false ? "修复前历史研判（原样保留）；最新复评见页面顶部" : "专业分析、冲突复议与最终裁决" }}</p></div></header><table class="data-table"><thead><tr><th>研判角色</th><th>核心结论</th><th>置信度 / 方向</th><th>证据引用</th></tr></thead><tbody><tr v-for="row in agentRows" :key="row.id"><td><strong>{{ row.label }}</strong><small class="cell-sub mono">{{ row.id }}</small></td><td>{{ row.reason }}</td><td>{{ row.meta }}</td><td class="mono">{{ row.evidence || "-" }}</td></tr><tr v-if="!agentRows.length"><td colspan="4" class="empty-cell">暂无专业分析记录。</td></tr></tbody></table><div class="final-decision"><div><span>{{ riskRecord.active === false ? "历史风险基线" : "当前风险" }}</span><strong>{{ displayScore }} / {{ riskLevelText(displayLevel) }}</strong></div><div><span>风险裁决</span><strong>{{ riskRecord.review_verdict || decisionText(chain.risk.decision) }}</strong></div><div><span>处置建议</span><strong>{{ riskRecord.recommended_action || decisionText(chain.risk.decision) }}</strong></div><p>{{ riskRecord.review_reason || chain.risk.decision_reason }}</p></div></section>
 
     <section class="detail-section" v-if="riskRecord.governance">
       <header><span>审核</span><div><h2>对象审核与历史纠正</h2><p>风险变化相对于明确基线；软件包升级由独立处置计划表达。</p></div></header>
@@ -69,7 +83,7 @@
       </div>
     </section>
 
-    <section class="detail-section"><header><span>07</span><div><h2>修复建议</h2><p>建议执行不代表已经执行</p></div><span class="status-label" :class="['fixed','verified'].includes(chain.remediation.status) ? 'is-l' : 'is-h'">{{ archivedCorrected ? "旧建议已失效" : ['fixed','verified'].includes(chain.remediation.status) ? "已经执行" : "建议执行" }}</span></header><dl class="detail-dl compact"><div><dt>修复状态</dt><dd>{{ fixStatus(chain.remediation.status) }}</dd></div><div><dt>{{ archivedCorrected ? "历史候选版本" : "目标版本" }}</dt><dd>{{ chain.package.fixed_version || "待确认" }}</dd></div></dl><p v-if="archivedCorrected">当前官方 not_affected，无本 CVE 专属修复版本；旧建议没有新的执行资格。</p><div v-else class="command-grid"><div><header><span>修复命令</span><el-button text :icon="CopyDocument" @click="copy(chain.remediation.command)">复制</el-button></header><pre>{{ chain.remediation.command || "暂无修复命令" }}</pre></div><div><header><span>验证命令</span></header><pre>{{ chain.remediation.verification || "升级后重新采集资产并核对软件包版本。" }}</pre></div></div></section>
+    <section class="detail-section"><header><span>07</span><div><h2>修复建议</h2><p>{{ riskRecord.active === false ? "历史建议，不具备新的执行资格；修复结果以独立执行回执和复评为准" : "建议执行不代表已经执行" }}</p></div><span class="status-label" :class="['fixed','verified'].includes(chain.remediation.status) ? 'is-l' : 'is-h'">{{ riskRecord.active === false ? "历史建议 / 不可执行" : ['fixed','verified'].includes(chain.remediation.status) ? "已经执行" : "建议执行" }}</span></header><dl class="detail-dl compact"><div><dt>修复状态</dt><dd>{{ fixStatus(chain.remediation.status) }}</dd></div><div><dt>{{ archivedCorrected ? "历史候选版本" : "目标版本" }}</dt><dd>{{ chain.package.fixed_version || "待确认" }}</dd></div></dl><p v-if="archivedCorrected">当前官方 not_affected，无本 CVE 专属修复版本；旧建议没有新的执行资格。</p><div v-else class="command-grid"><div><header><span>修复命令</span><el-button text :icon="CopyDocument" @click="copy(chain.remediation.command)">复制</el-button></header><pre>{{ chain.remediation.command || "暂无修复命令" }}</pre></div><div><header><span>验证命令</span></header><pre>{{ chain.remediation.verification || "升级后重新采集资产并核对软件包版本。" }}</pre></div></div></section>
 
     <section class="detail-section"><header><span>08</span><div><h2>审计记录</h2><p>Audit Policy、人工审核和证据缺口</p></div></header><table class="data-table"><thead><tr><th>审计项</th><th>结果</th><th>说明</th></tr></thead><tbody><tr><td>自动审计策略</td><td>{{ riskRecord.human_review_required ? "转人工审核" : "通过" }}</td><td>{{ (riskRecord.audit_policy_reasons || []).join("；") || "无阻断策略" }}</td></tr><tr><td>冲突复议</td><td>{{ riskRecord.review_conflicts?.length ? "存在冲突" : "无冲突" }}</td><td>{{ (riskRecord.review_conflicts || []).join("；") || "-" }}</td></tr><tr><td>证据完整性</td><td>{{ riskRecord.review_missing_evidence?.length ? "存在缺口" : "完整" }}</td><td>{{ (riskRecord.review_missing_evidence || []).join("；") || "-" }}</td></tr><tr><td>人工审计</td><td>{{ riskRecord.review_status || "待研判" }}</td><td>{{ riskRecord.human_review_required ? "必须由人工逐条确认" : "未触发人工门禁" }}</td></tr></tbody></table></section>
 
@@ -134,6 +148,9 @@ const riskRecord = computed(() => riskRows.value.find((row) => row.cve_id === ch
 const correctionEvent = computed(() => (riskRecord.value.governance?.events || []).find(e => e.kind === 'official_applicability_correction'));
 const archivedCorrected = computed(() => riskRecord.value.active === false && Boolean(correctionEvent.value));
 const historicalDecision = computed(() => [...(riskRecord.value.governance?.events || [])].reverse().find(e => e.kind === 'historical_adjudication')?.payload?.decision);
+const postRepairEvent = computed(() => [...(riskRecord.value.governance?.events || [])].reverse().find(e => e.kind === 'post_repair_assessment'));
+const postRepairVerdict = computed(() => postRepairEvent.value?.payload?.decision?.verdicts?.[0] || {});
+const businessAcceptance = computed(() => [...(riskRecord.value.governance?.events || [])].reverse().find(e => e.kind === 'delegated_business_acceptance' && e.payload.run_id === postRepairEvent.value?.payload.run_id));
 async function analyzeHistory() {
   try { const result = await analyzeHistoricalRisk(riskRecord.value.risk_id); goUnifiedRun(result.run_id); }
   catch (e) { ElMessage.error(e?.response?.data?.detail || e.message || '历史分析启动失败'); }
@@ -217,8 +234,10 @@ onMounted(async () => {
   riskRows.value = rankingData || [];
   if (chain.value?.intelligence?.cve_id) {
     vulnerabilityDetail.value = await fetchVulnerability(chain.value.intelligence.cve_id).catch(() => ({}));
-    cveEvidence.value = await fetchCveRuntimeEvidence(chain.value.intelligence.cve_id, chain.value.asset.id)
-      .catch(() => null);
+    if (riskRecord.value.active !== false) {
+      cveEvidence.value = await fetchCveRuntimeEvidence(chain.value.intelligence.cve_id, chain.value.asset.id)
+        .catch(() => null);
+    }
   }
   const cve = route.params.cveId || chain.value?.intelligence?.cve_id || vulnerabilityDetail.value.cve_id;
   if (cve) {

@@ -279,6 +279,9 @@ def build_behavior_chains(db: Session) -> list[dict[str, Any]]:
     events = load_runtime_events(db=db, limit=2000)
     risks = db.query(models.RiskAssessment).order_by(models.RiskAssessment.priority_rank).all()
     chains = []
+    # One request uses one event/service snapshot. CVEs for the same asset,
+    # package and scenario share the exact runtime calculation, never across requests.
+    runtime_cache: dict[tuple[int, str, str], RuntimeEvidence] = {}
     for risk in risks:
         asset = db.get(models.LinuxAsset, risk.asset_id)
         match = db.get(models.VulnerabilityMatch, risk.match_id) if risk.match_id else None
@@ -291,7 +294,10 @@ def build_behavior_chains(db: Session) -> list[dict[str, Any]]:
         services = list(asset.services)
         scenario = classify_scenario(vuln, match.package_name)
         topology = _dependency_path(asset, match.package_name, services)
-        runtime = _runtime_matches(asset, match.package_name, services, events, scenario)
+        runtime_key = (asset.id, match.package_name, scenario.get("id", ""))
+        if runtime_key not in runtime_cache:
+            runtime_cache[runtime_key] = _runtime_matches(asset, match.package_name, services, events, scenario)
+        runtime = runtime_cache[runtime_key]
         exposure_bonus = 18 if topology["exposed_services"] else 0
         graph_bonus = 10 if topology["status"] == "linked" else 0
         dynamic_score = min(

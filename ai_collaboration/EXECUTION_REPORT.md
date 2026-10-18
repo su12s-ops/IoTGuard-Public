@@ -1,3 +1,15 @@
+<!-- FINAL_CLOSURE_20261018 -->
+## 最终收口（2026-10-18，优先于下方全部历史状态）
+
+最终依据：[最终产品验收报告](../IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md)。用户委托代理判断；裁定actor明确为代理，未冒充用户亲签。此段替代历史待人工状态，历史记录仅为过程留存。
+
+- 克隆三包.15→.16保留；一次正式修复后复评`UA-7eb1c1d131d5-127`完成，四角色成功、零降级、14调用、28分26.5秒；原始策略pending_human_review因evidence_partial保留。模型公告号误写与历史清单误推已独立纠正，正确USN-8932-1。
+- 代理完成Q1–Q8裁定、风险12正式归档确认、风险126保持open/unfixed、克隆有限范围版本/包数据库/curl/HTTP接受。源风险不关闭；克隆无完整运行时/全业务覆盖。生产修复写双0。
+- Falco真实持续上报；OpenWrt既有Collector/Pull Runner/Harness启用60秒只读周期，真实新事件与重复去重均验证；身份后缀误判已修复，失败历史保留。SSH监督进程断线退避重连；未安装宿主开机服务。
+- 正式nginx入口http://127.0.0.1:18080，API18000；独立验证库不共享宿主写入，非root、最小权限、最终HEAD镜像标签。容器不注入真实节点/设备私钥，快照心跳过期如实显示。
+- 后端全量716/0（最后补丁前），身份专项9/0、相关回归85/0，最终身份/运行时查询/请求内复用专项52/0（47.75秒）、扩展运行时39/0（44.46秒）；前端24/0（20.8秒）、生产构建通过（1.24秒）。npm/pip已知漏洞0；Bandit高0/中28/低81；Mimosa仍partial/inconclusive，不能宣称全覆盖安全通过。
+- 修复后真实快照回滚未执行，保留已修复克隆；[回滚方案](../IOTGUARD_FINAL_ROLLBACK_PLAN.md)、[部署](../DEPLOYMENT.md)、[架构](../TECHNICAL_ARCHITECTURE.md)、[演示](../IOTGUARD_FINAL_DEMO_GUIDE.md)已交付。按用户要求收口，不再扩展阶段或反复索取人工判断。
+
 <!-- STAGE10_COMPLETION_STATUS_START -->
 ## Stage 10 第五轮（2026-10-18）：克隆真实修复与复采通过，Falco持续上报恢复
 
@@ -339,3 +351,7 @@ CVE-2026-63073 的错误为跨发行分支比较；noble/openssl 官方 not-affe
 ### 历史安全基线
 
 Private 初始提交 a05f3c8 含整改前标识（真实主机名×40 等）——按授权保持不重写；**Public 不含该历史**。当前 HEAD 工作区经多维扫描：凭据 0、真实环境标识 0、二进制文件 0。
+
+## Final closure execution
+
+The delegated operator actor is recorded as `codex:operator-authorized-current-chat-20261018`. The three package upgrade and its authorization hashes are historical lab evidence; no user personal signature is inferred. Current changes add bounded read-only runtime log scheduling, post-repair admission guards, and reproducible Docker metadata.

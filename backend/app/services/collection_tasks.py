@@ -634,7 +634,14 @@ def ingest_runtime_logs(db, connection, text, audit):
     from app.services.ebpf_event_collector import append_events
     asset = db.get(models.LinuxAsset, connection.asset_id)
     capture = parse_capture_output(text)
-    if capture["identity"].get("hostname") != asset.hostname or not capture["identity"].get("boot_id"):
+    hostname = capture["identity"].get("hostname", "")
+    # Inventory uses a MAC (or pinned-key) suffix to disambiguate default
+    # OpenWrt hostnames. Reproduce that exact rule, never strip arbitrary suffixes.
+    suffix = (asset.mac_address.replace(":", "") if asset.mac_address else
+              hashlib.sha256(connection.host_key_sha256.encode()).hexdigest()[:12])
+    inventory_hostname = hostname if hostname.endswith("-" + suffix) else hostname + "-" + suffix
+    if (not hostname or asset.hostname not in (hostname, inventory_hostname)
+            or not capture["identity"].get("boot_id")):
         raise ValueError("runtime_log_device_identity_mismatch")
     sha = hashlib.sha256(text.encode()).hexdigest()
     evidence_id = "LOG-" + audit["run_id"]
@@ -646,6 +653,11 @@ def ingest_runtime_logs(db, connection, text, audit):
             asset_id=asset.id, content_sha256=sha, raw_text=text))
     sensor_id = f"openwrt-logread-{connection.id}"
     events, meta = build_events(capture, asset_hostname=asset.hostname, asset_id=asset.id, sensor_id=sensor_id)
+    if not asset.mac_address:
+        # The authenticated connection establishes the suffixed inventory name;
+        # keep the device's original name in raw for stable event fingerprints.
+        for event in events:
+            event["hostname"] = asset.hostname
     # Existing ingestion commits idempotent event batches. A crash before the
     # final receipt can leave preserved raw evidence/events; replay deduplicates.
     stored = append_events(events, db=db) if events else []

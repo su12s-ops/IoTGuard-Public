@@ -27,6 +27,7 @@ from app.services.security_evidence import (
 from app.services.ebpf_event_collector import (
     append_events,
     clear_events,
+    count_runtime_events,
     correlate_runtime_events,
     generate_demo_runtime_events,
     load_runtime_events,
@@ -57,16 +58,13 @@ def list_ebpf_events(
         severity_min=severity_min,
         mode=mode,
     )
-    total = len(
-        load_runtime_events(
-            db=db,
-            limit=100000,
-            hostname=hostname,
-            category=category,
-            source=source,
-            severity_min=severity_min,
-            mode=mode,
-        )
+    total = count_runtime_events(
+        db=db,
+        hostname=hostname,
+        category=category,
+        source=source,
+        severity_min=severity_min,
+        mode=mode,
     )
     return {"count": total, "events": events}
 

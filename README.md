@@ -1,5 +1,7 @@
 # IoTGuard
 
+最终交付（2026-10-18）：参见 [最终产品验收报告](IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md)、[部署说明](DEPLOYMENT.md)、[技术架构](TECHNICAL_ARCHITECTURE.md)、[演示手册](IOTGUARD_FINAL_DEMO_GUIDE.md) 与 [回滚准备](IOTGUARD_FINAL_ROLLBACK_PLAN.md)。这些文件优先于历史阶段报告。正式验证入口为 `http://127.0.0.1:18080`，使用 nginx 生产 dist；设备在线、传感器健康与证据新鲜度分别判断。源风险126未修复，克隆风险127三包已修复，Mimosa仍为partial，修复后快照恢复未执行。
+
 IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检测与修复平台**：从授权网段的资产自动发现、协议级设备指纹、多源 CVE 情报匹配，到四智能体协同研判、eBPF 运行时行为取证，以及带审批与回滚的 Agent Harness 修复工作流。
 
 > 定位：实验/教学性质的安全工程项目。所有探测、扫描与修复能力均内置授权边界（网段白名单、控制令牌、主机指纹钉扎、审批哈希），默认不启用任何设备写操作。
@@ -38,7 +40,7 @@ IoTGuard（LinuxGuard）是一套面向物联网与 Linux 资产的**安全检�
 ## 运行环境
 
 - 后端：Python 3.12+（开发机为 3.14），`pip install -r backend/requirements.txt`（测试另加 `requirements-test.txt`）
-- 前端：Node 18+，`npm install`（Vue3 + Vite + Element Plus + ECharts + Playwright）
+- 前端：Node 24 LTS，`npm ci`（Vue3 + Vite + Element Plus + ECharts + Playwright）
 - 设备采集节点：Linux（Ubuntu）；OpenWrt 目标经 SSH（ed25519 密钥引用 + 主机指纹钉扎）
 
 ## 配置
@@ -57,8 +59,8 @@ cp frontend/.env.example frontend/.env # 仅 API 地址
 ```bash
 cp backend/.env.example backend/.env.docker   # 按需填写；绝不提交
 docker compose up -d --build
-# 前端(nginx 生产构建 + /api 反代): http://localhost:8080
-# 后端 API: http://localhost:8000/api/health
+# 前端(nginx 生产构建 + /api 反代): http://127.0.0.1:18080
+# 后端 API: http://127.0.0.1:18000/api/health
 ```
 
 - 前端镜像为多阶段构建：Vite 生产构建 `dist` → nginx 提供（SPA 路由刷新回退、`/api` 反代到后端）；**不由 Vite 开发服务器对外服务**。

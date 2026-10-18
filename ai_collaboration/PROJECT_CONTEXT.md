@@ -1,3 +1,15 @@
+<!-- FINAL_CLOSURE_20261018 -->
+## 最终收口（2026-10-18，优先于下方全部历史状态）
+
+最终依据：[最终产品验收报告](../IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md)。用户委托代理判断；裁定actor明确为代理，未冒充用户亲签。此段替代历史待人工状态，历史记录仅为过程留存。
+
+- 克隆三包.15→.16保留；一次正式修复后复评`UA-7eb1c1d131d5-127`完成，四角色成功、零降级、14调用、28分26.5秒；原始策略pending_human_review因evidence_partial保留。模型公告号误写与历史清单误推已独立纠正，正确USN-8932-1。
+- 代理完成Q1–Q8裁定、风险12正式归档确认、风险126保持open/unfixed、克隆有限范围版本/包数据库/curl/HTTP接受。源风险不关闭；克隆无完整运行时/全业务覆盖。生产修复写双0。
+- Falco真实持续上报；OpenWrt既有Collector/Pull Runner/Harness启用60秒只读周期，真实新事件与重复去重均验证；身份后缀误判已修复，失败历史保留。SSH监督进程断线退避重连；未安装宿主开机服务。
+- 正式nginx入口http://127.0.0.1:18080，API18000；独立验证库不共享宿主写入，非root、最小权限、最终HEAD镜像标签。容器不注入真实节点/设备私钥，快照心跳过期如实显示。
+- 后端全量716/0（最后补丁前），身份专项9/0、相关回归85/0，最终身份/运行时查询/请求内复用专项52/0（47.75秒）、扩展运行时39/0（44.46秒）；前端24/0（20.8秒）、生产构建通过（1.24秒）。npm/pip已知漏洞0；Bandit高0/中28/低81；Mimosa仍partial/inconclusive，不能宣称全覆盖安全通过。
+- 修复后真实快照回滚未执行，保留已修复克隆；[回滚方案](../IOTGUARD_FINAL_ROLLBACK_PLAN.md)、[部署](../DEPLOYMENT.md)、[架构](../TECHNICAL_ARCHITECTURE.md)、[演示](../IOTGUARD_FINAL_DEMO_GUIDE.md)已交付。按用户要求收口，不再扩展阶段或反复索取人工判断。
+
 <!-- STAGE10_COMPLETION_STATUS_START -->
 ## Stage 10 第五轮（2026-10-18）：克隆真实修复与复采通过，Falco持续上报恢复
 
@@ -186,3 +198,7 @@ simulator/  SmartCam-X1 摄像头模拟器（真实监听 SSH/MQTT/HTTP/RTSP）
 9. ✅ Stage 9B M4.2 深化 + 收尾闭环（2026-10-16）：四 Agent 分工 Schema/四维分层/E2-E3a-E1-X2 整改/Y1–Y10 独立案例（主轮 637 passed）→ 收尾补齐全部遗留实验（E4a/E4b/X2/X3/资产消融）+ Y6 反事实修正 2×2（放大因子断言 4/4、处置与因子一一对应）+ RT-A/B/C/D 正向贡献（RT-D 承重实证）+ 方向四层分析；650 passed / 0 failed；Mimosa 0 findings；**flag=off 维持**，切换准备状态=候选具备（报告 IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md）
 10. ⏳ 后续（需指令）：真实设备 Shadow 验证启动（人工决策）→ 达标后经用户确认 flag=on（影子观察 ≥1 周）→ M5 退役清单；方向评分规范另建版本提案（E5 混同整改）
 11. ✅ Stage 10 第三轮（2026-10-17，授权 A+B 获批后）：隔离克隆实验第一阶段全链执行完毕——full clone + 八维身份隔离（WSL2 离线 root）+ 源机窗口恢复 + 基线快照真实恢复验证（restore_verified=true）+ 克隆登记（asset 3/连接 3/stage10-clone-node）+ 首次认证采集（INV-3bef62a8…，1790 包）+ 克隆内仅官方源索引刷新（三包候选 .16 实证可获得）+ 风险 127 四智能体正式研判（pending_human_review，未代签）+ ubuntu-apt-v1 dry-run 本 CVE 首次全绿（最终计划 SHA256 `35220882…4848cf` awaiting_approval）；Falco 启动仍停 sudo 凭据门禁（如实四态分层）；**停在授权二门禁**（报告 IOTGUARD_STAGE10_ISOLATED_CLONE_PREFLIGHT_REPORT.md）
+
+## Final closure context
+
+The current closure work preserves risk 126 as the unrepaired source and risk 12 as inactive. Clone risk 127 is reassessed through the authenticated post-repair path using the current inventory evidence. Repair writes remain disabled.

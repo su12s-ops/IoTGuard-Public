@@ -26,6 +26,36 @@ test.beforeEach(async ({ page }) => {
   });
 });
 
+test("keeps historical risk separate from scoped postrepair acceptance", async ({ page }) => {
+  const cve = "CVE-2099-9001";
+  const chain = { chain_id: `3-${cve}`, asset: { id: 3, hostname: "fixture-clone" },
+    intelligence: { cve_id: cve }, package: { name: "curl", installed_version: "fixed" },
+    matching: {}, attack_scenario: {}, dependency_graph: {}, runtime_verification: {},
+    risk: {}, remediation: {} };
+  const events = [
+    { id: 1, kind: "post_repair_assessment", payload: { run_id: "UA-fixture", trace_id: "TR-fixture",
+      decision: { verdicts: [{ impact_status: "not_affected", recommended_action: "monitor" }] }, policy: { status: "pending_human_review" } } },
+    { id: 2, kind: "delegated_business_acceptance", actor: "codex:fixture-delegate", payload: {
+      run_id: "UA-fixture", status: "fixed_accepted_scoped", scope: "fixture version smoke only",
+      limitations: ["no runtime coverage"], raw_model_corrections: ["fixture official notice corrected"] } }
+  ];
+  await page.route("**/api/workflow/behavior-chains", r => r.fulfill({ json: [chain] }));
+  await page.route("**/api/risk/ranking", r => r.fulfill({ json: [{ risk_id: 127, cve_id: cve, hostname: "fixture-clone", active: false,
+    review_verdict: "confirmed_affected", governance: { events } }] }));
+  await page.route("**/api/vulnerabilities/official/records?**", r => r.fulfill({ json: { records: [], corrections: [] } }));
+  let runtimeRequests = 0;
+  await page.route("**/api/runtime/cve-evidence?**", r => { runtimeRequests++; return r.fulfill({ status: 404 }); });
+  await page.goto(`/behavior-chain/detail?chain_id=3-${cve}`);
+  const current = page.getByRole("region", { name: "修复后复评与接受" });
+  await expect(current).toContainText("not_affected / monitor");
+  await expect(current).toContainText("fixed_accepted_scoped");
+  await expect(current).toContainText("codex:fixture-delegate");
+  await expect(current).toContainText("不代表所有业务通过");
+  await expect(current).toContainText("fixture official notice corrected");
+  await expect(page.getByText("历史风险基线", { exact: true })).toBeVisible();
+  expect(runtimeRequests).toBe(0);
+});
+
 test("opens asset details without runtime data shape errors and counts affected matches only", async ({ page }) => {
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));

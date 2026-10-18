@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app import models
@@ -493,6 +494,28 @@ def _apply_runtime_filters(
     return filtered
 
 
+def _runtime_event_query(db, hostname=None, category=None, source=None, severity_min=None, mode=None):
+    query = db.query(models.RuntimeEvent)
+    if hostname:
+        query = query.filter(models.RuntimeEvent.hostname == hostname)
+    if category:
+        query = query.filter(models.RuntimeEvent.category == category)
+    if source:
+        query = query.filter(models.RuntimeEvent.source == source)
+    if severity_min is not None:
+        query = query.filter(models.RuntimeEvent.severity_score >= severity_min)
+    if mode:
+        # Classify distinct sources with the same rules used by the response.
+        sources = [value for (value,) in query.with_entities(models.RuntimeEvent.source).distinct()
+                   if _observation_mode(value) == mode]
+        query = query.filter(models.RuntimeEvent.source.in_(sources))
+    return query
+
+
+def count_runtime_events(db: Session, **filters) -> int:
+    return _runtime_event_query(db, **filters).with_entities(func.count(models.RuntimeEvent.id)).scalar()
+
+
 def load_runtime_events(
     db: Session | None = None,
     limit: int = 500,
@@ -507,16 +530,8 @@ def load_runtime_events(
         rows = _apply_runtime_filters(rows, hostname=hostname, category=category, source=source, severity_min=severity_min, mode=mode)
         return rows[-limit:]
 
-    query = db.query(models.RuntimeEvent).order_by(models.RuntimeEvent.id.desc())
-    if hostname:
-        query = query.filter(models.RuntimeEvent.hostname == hostname)
-    if category:
-        query = query.filter(models.RuntimeEvent.category == category)
-    if source:
-        query = query.filter(models.RuntimeEvent.source == source)
-    if severity_min is not None:
-        query = query.filter(models.RuntimeEvent.severity_score >= severity_min)
-    rows = [_runtime_event_to_dict(row) for row in query.limit(max(limit * 4, limit)).all()]
+    query = _runtime_event_query(db, hostname, category, source, severity_min, mode)
+    rows = [_runtime_event_to_dict(row) for row in query.order_by(models.RuntimeEvent.id.desc()).limit(limit).all()]
     rows.reverse()
     rows = _apply_runtime_filters(rows, hostname=hostname, category=category, source=source, severity_min=severity_min, mode=mode)
     return rows[-limit:]
