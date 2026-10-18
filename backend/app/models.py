@@ -751,6 +751,20 @@ class RemediationWorkflowRun(Base):
 # ── 设备级 CVE 匹配（阶段六：厂商公告登记 → 精确版本匹配 → 设备风险） ────────
 
 
+class IotOfficialAdvisory(Base):
+    """Official repository snapshots, separate from operator exact-version records."""
+
+    __tablename__ = "iot_official_advisory"
+    __table_args__ = (UniqueConstraint("ecosystem", "advisory_id"),)
+    id = Column(Integer, primary_key=True)
+    ecosystem = Column(String(32), nullable=False, index=True)
+    advisory_id = Column(String(64), nullable=False)
+    source_url = Column(Text, nullable=False)
+    payload_json = Column(Text, nullable=False)
+    content_sha256 = Column(String(64), nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class IotDeviceAdvisory(Base):
     """智能设备厂商安全公告（操作员依据官方公告人工登记，与 OpenWrt 公告同语义）。
 

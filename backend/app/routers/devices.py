@@ -24,6 +24,16 @@ from app.services.device_vulnerability import (
 router = APIRouter(prefix="/devices", tags=["IoT device inventory"])
 
 
+@router.get("/official-coverage/{ecosystem}")
+def official_coverage(ecosystem: str, version: str, db: Session = Depends(get_db)):
+    """Official snapshot coverage, separate from operational risk decisions."""
+    from app.services.iot_official import assess_snapshot
+    try:
+        return assess_snapshot(db, ecosystem, version)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+
+
 class DiscoverInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
     host: str = Field(max_length=64)
