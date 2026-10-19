@@ -51,4 +51,6 @@ VMX 工具仅创建虚拟机配置，不创建磁盘、安装系统或启动虚�
 
 ## 2026-10-20 五项修复交付
 
-具体代码、锁定依赖、安全扫描、真实 QEMU 及模型复评结果见 [本轮交付](DELIVERY_20261020.md)。Python 3.12 首轮全量 810 passed / 1 teardown error 的失败留存；修复测试线程方法名冲突后，以最终 Git 提交的 Windows/Linux 全量 CI 为准。前端生产构建、26 项浏览器回归通过。
+具体代码、锁定依赖、安全扫描、真实 QEMU 及模型复评结果见 [本轮交付](DELIVERY_20261020.md)。Python 3.12 首轮全量 810 passed / 1 teardown error 的失败留存；修复测试线程方法名冲突后，最终代码 `4dfc91d` 的 Linux CI 为 817 passed / 3 skipped；Windows 托管回归仍在运行，未计通过。前端生产构建、26 项浏览器回归通过。
+
+真实隔离模型标准预算复评耗时 1805.28 秒，四角色全部 succeeded、无 degraded；最终因部分证据与快照时效保持 pending_human_review，不代签业务接受。相关端口重启及 WAL 跨平台修复在本地 Windows/Linux 各 18 项通过。

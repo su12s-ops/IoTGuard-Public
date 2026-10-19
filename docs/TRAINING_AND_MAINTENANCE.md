@@ -8,11 +8,11 @@
 
 | 历史文件 | 本轮沿用的约束 | 当前落点 |
 |---|---|---|
-| `IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md` | 原始失败留存；真实模型、规则兜底和模拟测试分开；证据不足不等于安全 | 注册证据、引用校验、独立 shadow 回归 |
-| `IOT_UNIFIED_FOUR_AGENT_QUALITY_REPORT.md` | 分支、版本、backport、公告特异性分层；事实与推断分离 | evidence_prep 与漏洞分析员 |
-| `IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md` | 控制/节点令牌与设备/实验写域互不授权；计划与身份绑定 | 持久 repair_domain、最终安装入口门禁 |
-| `IOTGUARD_M5_MIGRATION_CONTRACT_V2.md` | 单一正式四角色管线；模型不可代签；治理事件追加留痕 | 现有 formal/shadow 管线 |
-| `IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md` | 功能验收、运行时覆盖与业务接受分开 | 设备验收与本轮交付报告 |
+| [IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md](https://github.com/su12s-ops/IoTGuard-Public/blob/7cc1297b65fabfb490aaa694642e60d854d6e9ae/IOT_UNIFIED_FOUR_AGENT_QUALITY_CLOSURE.md) | 原始失败留存；真实模型、规则兜底和模拟测试分开；证据不足不等于安全 | 注册证据、引用校验、独立 shadow 回归 |
+| [IOT_UNIFIED_FOUR_AGENT_QUALITY_REPORT.md](https://github.com/su12s-ops/IoTGuard-Public/blob/7cc1297b65fabfb490aaa694642e60d854d6e9ae/IOT_UNIFIED_FOUR_AGENT_QUALITY_REPORT.md) | 分支、版本、backport、公告特异性分层；事实与推断分离 | evidence_prep 与漏洞分析员 |
+| [IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md](https://github.com/su12s-ops/IoTGuard-Public/blob/7cc1297b65fabfb490aaa694642e60d854d6e9ae/IOTGUARD_STAGE10_WRITE_PERMISSION_CONTRACT.md) | 控制/节点令牌与设备/实验写域互不授权；计划与身份绑定 | 持久 repair_domain、最终安装入口门禁 |
+| [IOTGUARD_M5_MIGRATION_CONTRACT_V2.md](https://github.com/su12s-ops/IoTGuard-Public/blob/7cc1297b65fabfb490aaa694642e60d854d6e9ae/IOTGUARD_M5_MIGRATION_CONTRACT_V2.md) | 单一正式四角色管线；模型不可代签；治理事件追加留痕 | 现有 formal/shadow 管线 |
+| [IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md](https://github.com/su12s-ops/IoTGuard-Public/blob/7cc1297b65fabfb490aaa694642e60d854d6e9ae/IOTGUARD_FINAL_PRODUCT_ACCEPTANCE_REPORT.md) | 功能验收、运行时覆盖与业务接受分开 | 设备验收与本轮交付报告 |
 
 查看命令（不会恢复或覆盖当前文件）：
 
