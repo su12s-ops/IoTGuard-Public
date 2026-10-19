@@ -312,6 +312,79 @@ def _collect(db, connection):
     return inventory(iot_devices.collect_openwrt(db, connection))
 
 
+def verification_proposal(db, run):
+    """Read-only addendum: server registry selects checks, never a caller path."""
+    plan = json.loads(run.plan_json)
+    if (plan.get("goal") != "repair" or plan.get("adapter") or
+            digest(plan) != run.plan_hash or run.approval_hash != run.plan_hash):
+        raise ValueError("original_approved_openwrt_plan_required")
+    connection = db.get(models.DeviceConnection, run.connection_id)
+    if (not connection or connection.asset_id != run.asset_id or not connection.enabled or
+            connection_signature(connection) != plan["connection_hash"]):
+        raise ValueError("original_device_identity_required")
+    original, _, _ = load_artifact(plan["artifact_id"])
+    if digest(original) != plan["artifact_hash"]:
+        raise ValueError("original_artifact_registration_changed")
+    calls = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package").all()
+    if len(calls) != 1:
+        raise ValueError("one_successful_original_installation_required")
+    receipt = calls[0]
+    output, args = json.loads(receipt.output_json), json.loads(receipt.arguments_json)
+    if (receipt.status != "completed" or not receipt.completed_at or not receipt.side_effect or
+            output.get("command_exit_success") is not True or
+            any(args.get(k) != original[v] or output.get(k) != original[v]
+                for k, v in (("artifact_id", "id"), ("sha256", "sha256")))):
+        raise ValueError("intact_successful_installation_receipt_required")
+    item, _, _ = load_artifact(os.getenv("LINUXGUARD_VERIFICATION_ARTIFACT_ID", ""))
+    if {k: v for k, v in item.items() if k not in {"id", "checks", "notes"}} != {
+            k: v for k, v in original.items() if k not in {"id", "checks", "notes"}}:
+        raise ValueError("verification_addendum_may_only_change_checks")
+    proposal = {"run_id": run.id, "asset_id": run.asset_id, "risk_id": run.risk_id,
+                "original_plan_sha256": run.plan_hash, "connection_hash": plan["connection_hash"],
+                "installation_call_id": receipt.id,
+                "installation_receipt_sha256": digest({"args": args, "output": output,
+                    "completed_at": receipt.completed_at.isoformat()}),
+                "artifact_id": item["id"], "artifact_hash": digest(item), "checks": item["checks"],
+                "allowed_operations": ["collect_inventory", "version_and_scope", "regression_check", "business_check", "read_logread_and_device_clock"],
+                "device_writes": False, "business_accepted": False}
+    return {"proposal": proposal, "sha256": digest(proposal)}
+
+
+def approve_verification(db, run, plan_hash, actor, reason):
+    proposal = verification_proposal(db, run)
+    if proposal["sha256"] != plan_hash:
+        raise ValueError("verification_addendum_hash_mismatch")
+    prior = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="verification_addendum_approved", status="completed").all()
+    if any(json.loads(c.output_json).get("sha256") == plan_hash for c in prior):
+        return proposal
+    if run.status not in {"verification_required", "interrupted"}:
+        raise ValueError("verification_resume_state_required")
+    return tool(db, run, "verification_addendum_approved", lambda: proposal,
+                {"actor": actor, "reason": reason, "previous_result": json.loads(run.result_json),
+                 "previous_error": run.error}, phase="verification_approval")
+
+
+def _verification_item(db, run):
+    proposal = verification_proposal(db, run)
+    approvals = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="verification_addendum_approved", status="completed").all()
+    if not any(json.loads(c.output_json) == proposal for c in approvals):
+        raise ValueError("verification_addendum_requires_operator_approval")
+    return load_artifact(proposal["proposal"]["artifact_id"])
+
+
+def _read_verification_logs(connection):
+    client = device_access.open_connection(connection)
+    try:
+        output = device_access.run_fixed_script(client, "date -u '+%Y-%m-%dT%H:%M:%SZ'\nlogread | tail -n 120\n", timeout=20)
+        # Coverage is bounded to this tail; absence of a hit is not proof of no compromise.
+        text = output if isinstance(output, str) else encode(output)
+        hits = re.findall(r"(?im)^.*(?:kernel panic|segmentation fault|out of memory|oom-kill|uhttpd.*crash|dnsmasq.*failed).*$", text)
+        return {"passed": len(text.splitlines()) > 1 and not hits, "evidence": {"output": output, "severe_hits": hits,
+                "coverage": "latest_120_logread_lines_only", "received_at": models.utcnow().isoformat()}}
+    finally:
+        client.close()
+
+
 def _run_check(item, root, kind, target):
     config = item["checks"][kind]
     path = checked_file(root, config["path"], config["sha256"], max_bytes=1_000_000)
@@ -394,6 +467,7 @@ def install_registered_package(connection, item, path, rollback=False):
 
 
 def _verify(db, run, connection, item, root):
+    verification_started = models.utcnow()
     fresh = tool(db, run, "collect_inventory", lambda: _collect(db, connection))
     risk, match = _risk_and_match(db, run, require_active=False)
     run_matching(db, cve_ids=[risk.cve_id])
@@ -406,10 +480,23 @@ def _verify(db, run, connection, item, root):
                   and match.match_status == "fixed" and match.reason_code == "openwrt_exact_fixed_version")
     target = {"host": connection.host, "asset_id": run.asset_id, "cve_id": risk.cve_id,
               "package_name": item["package_name"], "expected_version": item["version"]}
+    installation = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package", status="completed").first()
+    asset = db.get(models.LinuxAsset, run.asset_id)
+    from app.services.evidence_freshness import freshness
+    timing = freshness(asset.inventory_collected_at, installation.completed_at if installation else None, verification_started)
+    target.update(installation_completed_at=installation.completed_at.isoformat() if installation and installation.completed_at else None,
+                  verification_started_at=verification_started.isoformat())
     results = {"version_verified": bool(version_ok), "inventory_scope_verified": bool(scope_ok), "regression": None, "business": None}
     if version_ok and scope_ok:
         for kind in ("regression", "business"):
             results[kind] = tool(db, run, kind + "_check", lambda kind=kind: _run_check(item, root, kind, target), {"check_sha256": item["checks"][kind]["sha256"]})
+    # Historical adapters retain their original contract; addenda require receipt-based timing.
+    if os.getenv("LINUXGUARD_VERIFICATION_ARTIFACT_ID") == item["id"]:
+        results["evidence_freshness"] = timing
+        version_ok = version_ok and timing["passed"]
+        if version_ok and scope_ok:
+            results["logread"] = tool(db, run, "verification_logread", lambda: _read_verification_logs(connection))
+            version_ok = version_ok and results["logread"]["passed"]
     passed = version_ok and scope_ok and all(results[kind] and results[kind]["passed"] for kind in ("regression", "business"))
     results["verified"] = bool(passed)
     installation = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package").first()
@@ -442,6 +529,8 @@ def _claim(db, run, allowed_states):
 
 def execute(db, run, verify_only=False):
     plan = json.loads(run.plan_json)
+    if not isinstance(plan, dict) or digest(plan) != run.plan_hash:
+        raise ValueError("计划完整性校验失败")
     if plan.get("model_review"):
         raise ValueError("harness_embedded_llm_retired_use_formal_analysis")
     if plan.get("adapter") == "ubuntu-apt-v1":
@@ -461,6 +550,11 @@ def execute(db, run, verify_only=False):
         raise ValueError("计划完整性校验失败")
     if repair and run.approval_hash != run.plan_hash:
         raise ValueError("尚未批准当前计划")
+    verification_item = None
+    if verify_only and repair and os.getenv("LINUXGUARD_VERIFICATION_ARTIFACT_ID"):
+        verification_item = _verification_item(db, run)
+        if run.status == "verified":
+            return run
     states = {"verification_required", "interrupted"} if verify_only else {"approved"} if repair else {"pending", "needs_evidence", "failed"}
     if verify_only and not repair:
         raise ValueError("调查任务无需修复复查")
@@ -502,8 +596,8 @@ def execute(db, run, verify_only=False):
         else:
             if connection is None:
                 raise ValueError("设备连接不存在")
-            item, path, root = load_artifact(plan["artifact_id"])
-            if digest(item) != plan["artifact_hash"]:
+            item, path, root = verification_item or load_artifact(plan["artifact_id"])
+            if not verification_item and digest(item) != plan["artifact_hash"]:
                 raise ValueError("修复产物清单已变化，审批已失效")
             if not verify_only:
                 risk, match = _risk_and_match(db, run)

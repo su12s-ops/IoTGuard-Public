@@ -45,6 +45,10 @@ def test_postrepair_full_pipeline_keeps_original_history(case, session_factory, 
     db.add(models.CollectionEvidence(evidence_id="INV-final-test", asset_id=risk.asset_id,
         run_id="fixture", raw_text=raw, content_sha256=hashlib.sha256(raw.encode()).hexdigest()))
     db.commit()
+    # A newer logread snapshot must not hide the intact latest inventory.
+    db.add(models.CollectionEvidence(evidence_id="LOG-newer-test", asset_id=risk.asset_id,
+        run_id="logs", raw_text="newer log", content_sha256=hashlib.sha256(b"newer log").hexdigest()))
+    db.commit()
     before = G.snapshot(risk)
     result = generate_and_save_report_unified(db, run_id="postrepair-fixture", risk_id=risk.id,
         post_repair=True, client_factory=lambda: ScriptedClient(copy.deepcopy(FULL_SCRIPT)))

@@ -363,7 +363,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
     eligible = selection["_selected_risks"]
     if post_repair:
         risk = db.get(models.RiskAssessment, risk_id) if risk_id else None
-        evidence = db.query(models.CollectionEvidence).filter_by(asset_id=risk.asset_id).order_by(
+        evidence = db.query(models.CollectionEvidence).filter_by(asset_id=risk.asset_id).filter(
+            models.CollectionEvidence.evidence_id.startswith("INV-")).order_by(
             models.CollectionEvidence.id.desc()).first() if risk else None
         from app.services.review_common.governance import correction
         if not risk or risk.active or risk.review_status != "resolved" or correction(db, risk) or not evidence:

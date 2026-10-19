@@ -125,6 +125,22 @@ def verify(run_id: str, db: Session = Depends(get_db)):
         raise HTTPException(409, str(exc)) from exc
 
 
+@router.get("/runs/{run_id}/verification-proposal", dependencies=[Depends(require_control)])
+def verification_proposal(run_id: str, db: Session = Depends(get_db)):
+    try:
+        return harness.verification_proposal(db, get_run(db, run_id))
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
+@router.post("/runs/{run_id}/verification-approve", dependencies=[Depends(require_control)])
+def verification_approve(run_id: str, payload: Approval, db: Session = Depends(get_db)):
+    try:
+        return harness.approve_verification(db, get_run(db, run_id), **payload.model_dump())
+    except (ValueError, OSError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+
 @router.post("/runs/{run_id}/dry-run", dependencies=[Depends(require_control)])
 def dry_run(run_id: str, db: Session = Depends(get_db)):
     from app.services import ubuntu_repair
