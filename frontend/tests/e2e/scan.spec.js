@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 // 阶段六：互联网授权目标扫描——登记授权、令牌门禁、扫描生命周期与结果呈现。
 // API fixtures 均为合成数据；浏览器测试不接触任何真实主机。

@@ -259,6 +259,10 @@ def detect_vendor_patch_semantics(source_bundle: dict[str, Any],
         return {"release_status": "", "backport": False, "statement": "",
                 "note": "厂商精确公告不可用；补丁语义未定（不得据此下确定性结论）"}
     status = str(record.get("status") or "")
+    # Fetch/cache transport states are not vendor applicability statements.
+    if status not in {"not_affected", "released", "needed", "affected", "pending",
+                      "deferred", "ignored", "DNE", "under_investigation", "investigating"}:
+        status = ""
     text = " ".join(str(record.get(key) or "") for key in
                     ("note", "description", "status_comment"))
     backport = bool(_BACKPORT_RE.search(text))
@@ -383,6 +387,12 @@ def _source_texts(db: Session, cve_id: str, release: str,
     from app.services.vulnerability_intelligence.service import get_source_bundle
 
     bundle = dict(get_source_bundle(db, cve_id, release=release, package_name=package_name))
+    from app.services.iot_official import registered_snapshot_records
+    official = registered_snapshot_records(db, cve_id)
+    bundle["iot_official_snapshot"] = {
+        "status": "snapshot_available" if official else "not_in_snapshot",
+        "value": {"records": official},
+    }
     advisories = db.query(models.OpenWrtAdvisory).filter_by(
         cve_id=cve_id.split(":", 1)[0]).all()
     if advisories:

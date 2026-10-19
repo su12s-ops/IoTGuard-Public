@@ -43,6 +43,7 @@ class DemoTargetBase(BaseModel):
     ssh_port: int = 22
     username: str = ""
     password: str = ""
+    credential_env: str = Field(default="", pattern=r"^(?:VM_PASS|LINUXGUARD_DEMO_[A-Z0-9_]{1,80})?$")
     asset_hostname: str = ""
     container_name: str = ""
     install_falco_if_missing: bool = False

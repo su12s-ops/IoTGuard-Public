@@ -22,6 +22,7 @@ from pathlib import Path
 
 from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import object_session
 
 from app import models
 from app.services import device_access, iot_devices
@@ -154,6 +155,7 @@ def create_run(db, asset_id, risk_id=None, goal="investigate", artifact_id="", m
     connection = db.query(models.DeviceConnection).filter_by(asset_id=asset_id, enabled=True).one_or_none()
     snapshot = inventory(asset)
     plan = {"policy_version": POLICY_VERSION, "goal": goal, "asset_id": asset_id, "risk_id": risk_id,
+            "repair_domain": asset.repair_domain,
             "model_review": bool(model_review), "inventory_hash": digest(snapshot),
             "connection_hash": connection_signature(connection) if connection else "",
             "agent_recommended_action": risk.recommended_action if risk else "",
@@ -421,14 +423,23 @@ def openwrt_lab_write_state(asset_id):
     return True, ""
 
 
-def _device_write_enabled(asset_id):
-    if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1":
-        return True
-    return openwrt_lab_write_state(asset_id)[0]
+def _device_write_enabled(asset_id, db=None):
+    # Only an operator-enrolled persistent domain grants eligibility. Inventory,
+    # hostnames and environment allowlists cannot assign or change that domain.
+    asset = db.get(models.LinuxAsset, asset_id) if db is not None else None
+    if asset is None or asset.distribution != "openwrt":
+        return False
+    db.refresh(asset, attribute_names=["repair_domain"])
+    if asset.repair_domain == "openwrt_lab":
+        return openwrt_lab_write_state(asset_id)[0]
+    if asset.repair_domain == "production":
+        return os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1"
+    return False
 
 
 def install_registered_package(connection, item, path, rollback=False):
-    if not _device_write_enabled(connection.asset_id):
+    db = object_session(connection) if isinstance(connection, models.DeviceConnection) else None
+    if not _device_write_enabled(connection.asset_id, db):
         raise ValueError("设备写操作未启用；请先完成产物、回退和检查配置")
     client = device_access.open_connection(connection)
     remote = "/tmp/linuxguard-" + uuid.uuid4().hex + path.suffix
@@ -600,6 +611,8 @@ def execute(db, run, verify_only=False):
             if not verification_item and digest(item) != plan["artifact_hash"]:
                 raise ValueError("修复产物清单已变化，审批已失效")
             if not verify_only:
+                if plan.get("repair_domain") != db.get(models.LinuxAsset, run.asset_id).repair_domain:
+                    raise ValueError("资产授权域与审批计划不一致，必须重新制定计划")
                 risk, match = _risk_and_match(db, run)
                 if not _authorized(risk) or review_signature(risk) != plan["review_hash"]:
                     raise ValueError("风险审核或漏洞证据已变化，必须重新审批")
@@ -613,7 +626,7 @@ def execute(db, run, verify_only=False):
                 old, _, _ = load_artifact(plan["rollback_artifact_id"])
                 if digest(old) != plan["rollback_artifact_hash"]:
                     raise ValueError("回退产物变化，审批已失效")
-                if not _device_write_enabled(run.asset_id):
+                if not _device_write_enabled(run.asset_id, db):
                     raise ValueError("设备写操作未启用")
                 write_started = True
                 tool(db, run, "install_registered_package", lambda: install_registered_package(connection, item, path),
@@ -667,6 +680,9 @@ def rollback(db, run, plan_hash, actor, reason):
         raise ValueError("回退审批与原始计划不一致")
     if plan.get("adapter") == "ubuntu-apt-v1":
         raise ValueError("Ubuntu 回滚依据为隔离 VM 快照；恢复操作须另行批准，禁止套用 OpenWrt 降级命令")
+    if (not _device_write_enabled(run.asset_id, db) or
+            plan.get("repair_domain") != db.get(models.LinuxAsset, run.asset_id).repair_domain):
+        raise ValueError("设备写操作未启用或回退审批授权域已变化")
     if not db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package").first():
         raise ValueError("任务尚未尝试修复，无需回退")
     connection = db.get(models.DeviceConnection, run.connection_id)

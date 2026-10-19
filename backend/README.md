@@ -10,7 +10,7 @@ python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
 python -m pytest -q
 ```
 
-本地填写模型接口、控制令牌与授权范围。`.env.example` 为变量规范；真实凭据不提交。正式流水线为 on，两个修复开关默认 0。
+本地填写模型接口、控制令牌与授权范围。`.env.example` 为变量规范；真实凭据不提交。正式流水线为 on，三个修复开关默认 0。已知权限边界见 [权限治理](../docs/SECURITY_MODEL.md)。
 
 - API 文档：<http://127.0.0.1:8000/docs>
 - 健康分层：`GET /api/health`

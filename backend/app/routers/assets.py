@@ -2,6 +2,9 @@ import json
 import hashlib
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
+from sqlalchemy import update
+from pydantic import BaseModel, ConfigDict, Field
+from typing import Literal
 
 from app import models
 from app.database import get_db
@@ -24,6 +27,7 @@ def serialize_asset(asset: models.LinuxAsset, include_detail: bool = False):
         "architecture": asset.architecture,
         "exposure_level": asset.exposure_level,
         "business_level": asset.business_level,
+        "repair_domain": asset.repair_domain,
         "owner": asset.owner,
         "description": asset.description,
         "device_type": asset.device_type,
@@ -64,15 +68,50 @@ def serialize_asset(asset: models.LinuxAsset, include_detail: bool = False):
     return payload
 
 
+class RepairDomainEnrollment(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    domain: Literal["production", "openwrt_lab"]
+    actor: str = Field(min_length=1, max_length=128)
+    reason: str = Field(min_length=1, max_length=2000)
+
+
+@router.post("/{asset_id}/repair-domain", dependencies=[Depends(require_control)])
+def enroll_repair_domain(asset_id: int, payload: RepairDomainEnrollment,
+                         db: Session = Depends(get_db)):
+    asset = db.get(models.LinuxAsset, asset_id)
+    if asset is None:
+        raise HTTPException(404, "Asset not found")
+    if asset.distribution != "openwrt":
+        raise HTTPException(409, "此授权域仅适用于 OpenWrt")
+    # One-time compare-and-set: no inventory/API update can relabel an existing
+    # production device as a lab clone (or vice versa), including concurrent calls.
+    changed = db.execute(update(models.LinuxAsset).where(
+        models.LinuxAsset.id == asset_id,
+        models.LinuxAsset.repair_domain == "unassigned",
+    ).values(repair_domain=payload.domain, repair_domain_actor=payload.actor,
+             repair_domain_reason=payload.reason)).rowcount
+    if changed != 1:
+        db.rollback()
+        raise HTTPException(409, "授权域已登记，不能通过此入口改写；请登记独立资产")
+    db.commit()
+    db.refresh(asset)
+    return serialize_asset(asset)
+
+
 @router.get("")
 def list_assets(db: Session = Depends(get_db)):
     assets = db.query(models.LinuxAsset).order_by(models.LinuxAsset.hostname).all()
     rows = []
     for asset in assets:
         row = serialize_asset(asset)
-        top_risk = db.query(models.RiskAssessment).filter_by(asset_id=asset.id).order_by(models.RiskAssessment.final_score.desc()).first()
-        row["risk_level"] = top_risk.risk_level if top_risk else "Low"
-        row["risk_score"] = top_risk.final_score if top_risk else 0
+        top_risk = db.query(models.RiskAssessment).filter(
+            models.RiskAssessment.asset_id == asset.id,
+            models.RiskAssessment.active.is_(True),
+            models.RiskAssessment.review_status.notin_(("resolved", "inactive")),
+        ).order_by(models.RiskAssessment.final_score.desc()).first()
+        row["risk_level"] = top_risk.risk_level if top_risk else None
+        row["risk_score"] = top_risk.final_score if top_risk else None
+        row["risk_assessment_status"] = "current" if top_risk else "unassessed"
         rows.append(row)
     return rows
 

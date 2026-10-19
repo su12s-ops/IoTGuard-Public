@@ -108,7 +108,7 @@
               <el-input v-model="target.host" placeholder="连接地址"><template #prepend>Host</template></el-input>
               <el-input-number v-model="target.ssh_port" :min="1" :max="65535" controls-position="right" />
               <el-input v-model="target.username" placeholder="SSH 用户名"><template #prepend>User</template></el-input>
-              <el-input v-model="target.password" type="password" show-password :placeholder="target.password_configured ? '已配置；留空保留，输入则替换' : 'SSH 或 sudo 密码'"><template #prepend>Password</template></el-input>
+              <el-input v-model="target.credential_env" placeholder="LINUXGUARD_DEMO_ 开头的后端凭据变量名"><template #prepend>凭据引用</template></el-input>
               <el-input v-model="target.asset_hostname" placeholder="可选：资产主机名覆盖值"><template #prepend>Asset</template></el-input>
               <label class="checkbox-row"><input v-model="target.install_falco_if_missing" type="checkbox" /><span>缺少 Falco 时自动安装</span></label>
             </template>
@@ -178,7 +178,7 @@ const statusText = (status) => ({ completed: "已完成", partial: "部分完成
 const openRisk = (row) => router.push({ path: "/risk", query: { risk_id: row.risk_id || row.id, tab: "detail" } });
 
 function cloneTarget(target) { return { ...JSON.parse(JSON.stringify(target)), password: "" }; }
-function defaultTarget(type) { return { label: type === "ssh" ? "新建 SSH 目标" : "新建容器目标", target_type: type, enabled: true, host: "", ssh_port: 22, username: "", password: "", asset_hostname: "", container_name: "", install_falco_if_missing: false, collect_asset: true, collect_runtime: true, notes: "" }; }
+function defaultTarget(type) { return { label: type === "ssh" ? "新建 SSH 目标" : "新建容器目标", target_type: type, enabled: true, host: "", ssh_port: 22, username: "", password: "", credential_env: "", asset_hostname: "", container_name: "", install_falco_if_missing: false, collect_asset: true, collect_runtime: true, notes: "" }; }
 async function loadTargets() { const response = await fetchDemoTargets(); targets.value = response.targets || []; }
 async function openTargetDialog() { try { await loadTargets(); editableTargets.value = targets.value.map(cloneTarget); if (!editableTargets.value.length) editableTargets.value = [defaultTarget("ssh")]; targetDialogVisible.value = true; } catch (error) { ElMessage.error(error?.response?.data?.detail || "无法读取历史目标配置"); } }
 function addSshTarget() { editableTargets.value.push(defaultTarget("ssh")); }
@@ -187,7 +187,7 @@ function removeTarget(index) { editableTargets.value.splice(index, 1); }
 async function saveTargets() {
   savingTargets.value = true;
   try {
-    const payload = editableTargets.value.map((target) => { const item = { ...target }; delete item.password_configured; return item; });
+    const payload = editableTargets.value.map((target) => { const item = { ...target }; delete item.password_configured; delete item.credential_migration_required; return item; });
     const response = await updateDemoTargets(payload);
     targets.value = response.targets || [];
     targetDialogVisible.value = false;

@@ -85,6 +85,9 @@ RISK_ASSESSMENT_COLUMN_MIGRATIONS = {
 }
 
 ASSET_COLUMN_MIGRATIONS = {
+    "repair_domain": "VARCHAR(32) NOT NULL DEFAULT 'unassigned'",
+    "repair_domain_actor": "VARCHAR(128) DEFAULT ''",
+    "repair_domain_reason": "TEXT DEFAULT ''",
     "device_type": "VARCHAR(32) DEFAULT 'linux_server'",
     "device_model": "VARCHAR(128) DEFAULT ''",
     "mac_address": "VARCHAR(32) DEFAULT ''",
@@ -381,6 +384,7 @@ def _migrate_sqlite_schema():
         return added_columns
     with engine.begin() as conn:
         for table_name, migrations in [
+            ("demo_target", {"credential_env": "VARCHAR(128) DEFAULT ''"}),
             ("linux_asset", ASSET_COLUMN_MIGRATIONS),
             ("device_connection", DEVICE_CONNECTION_COLUMN_MIGRATIONS),
             ("runtime_event", RUNTIME_COLUMN_MIGRATIONS),

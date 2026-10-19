@@ -497,23 +497,40 @@ def _next_link(link_header: str) -> str | None:
     return None
 
 
-def fetch_advisory_rows(token: str | None = None, timeout: int = 20) -> list[dict]:
-    """从 GitHub 官方 API 分页拉取 openwrt/openwrt 安全公告列表。"""
+def fetch_advisory_rows(token: str | None = None, timeout: int = 20,
+                        ecosystem: str = "openwrt") -> list[dict]:
+    """从固定 GitHub 官方仓库分页拉取安全公告列表。"""
+    from app.services.iot_official import REPOSITORIES
+    if ecosystem not in REPOSITORIES:
+        raise ValueError("Unsupported ecosystem")
+    path = f"/repos/{REPOSITORIES[ecosystem]}/security-advisories"
+    # GitHub emits numeric repository URLs in cursor Link headers. Pin both
+    # forms to the same official repository, never accept arbitrary repo IDs.
+    repository_ids = {"openwrt": 45821540, "zephyr": 59771425}
+    allowed_paths = {path, f"/repositories/{repository_ids[ecosystem]}/security-advisories"}
     headers = {"Accept": "application/vnd.github+json",
                "User-Agent": "iotguard-openwrt-intel"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     opener = build_opener(_NoRedirect)
     rows: list[dict] = []
-    url: str | None = GITHUB_ADVISORIES_URL + "?per_page=100"
+    url: str | None = "https://api.github.com" + path + "?per_page=100"
+    seen = set()
     while url:
+        if url in seen or len(seen) >= 20 or urlsplit(url).path not in allowed_paths:
+            raise RuntimeError("advisory pagination is cyclic, oversized or outside repository")
+        seen.add(url)
         _assert_pinned_public_https(url)
         request = Request(url, headers=headers)
         with opener.open(request, timeout=timeout) as response:
             if response.status != 200:
                 raise RuntimeError(f"github advisory api status {response.status}")
-            rows.extend(json.loads(response.read().decode("utf-8")))
+            raw = response.read(8_000_001)
+            if len(raw) > 8_000_000:
+                raise RuntimeError("advisory page exceeds size limit")
+            page = json.loads(raw.decode("utf-8"))
+            if not isinstance(page, list) or len(page) > 100 or any(not isinstance(row, dict) for row in page):
+                raise RuntimeError("invalid advisory page")
+            rows.extend(page)
             url = _next_link(response.headers.get("Link", ""))
-        if len(rows) % 100 != 0 or len(rows) > 500:  # 不足一页或超过安全上限即止
-            break
     return rows

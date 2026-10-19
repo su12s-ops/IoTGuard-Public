@@ -149,6 +149,12 @@ class TestVendorConflict:
 class TestPrepPacket:
     def _seed(self, db):
         asset = make_asset(db)
+        # These tests assert distro-version facts, so supply a release-scoped
+        # vendor record instead of accidentally treating 'unavailable' as proof.
+        from app.services.vulnerability_intelligence.service import upsert_source_record
+        upsert_source_record(db, "CVE-2026-83001", "canonical", {
+            "records": [{"release": "jammy", "package": "nginx", "status": "released",
+                         "fixed_version": "1.18.1"}]})
         make_evidence(db, evidence_id="SE-9", asset_id=asset.id)
         db.add(models.VulnerabilityInfo(
             cve_id="CVE-2026-83001:jammy", title="t", cvss_score=7.5,
@@ -348,6 +354,8 @@ class TestDecisionSemanticConstraints:
         db.commit()
         if seed:
             self._seed_intel(db, **seed)
+        else:
+            self._seed_intel(db, canonical_status="released")
         db.close()
         client = FullRecorderClient({
             "资产与证据调查员": GOOD_ASSET,

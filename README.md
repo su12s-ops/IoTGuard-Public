@@ -4,7 +4,7 @@
 
 IoTGuard 围绕设备身份、软件组件、官方漏洞公告和运行时证据组织安全检测，通过四智能体进行风险研判，再以审批、审计和复验约束修复。当前主要研究对象为 OpenWrt 与 Zephyr RTOS；Ubuntu 用作采集节点、构建宿主和对照环境。
 
-> 当前阶段：平台可运行、可演示，两类 IoT 虚拟实例已接入；OpenWrt 已建立"原机对照 + 隔离实验克隆"双设备结构（OpenWrt-Lab 经 S0 基准快照与真实恢复测试，实验写入由独立 fail-closed 资产作用域开关约束），受影响态与修复执行的完整闭环等待独立授权批复（详见 `IOTGUARD_OPENWRT_REAL_SECURITY_CLOSURE_REPORT.md`）。配置感知漏洞判定、Zephyr 签名 OTA 和实体硬件验收仍在完善。无匹配、无告警或证据不足均不代表设备安全。
+> 当前阶段：平台可运行，两类 IoT 虚拟实例已接入；OpenWrt-Lab 已完成 cgi-io 修复、复验和快照恢复实验。2026-10-20 已修复证据引用、写权限域及凭据问题，并通过真实隔离 QEMU 的宿主签名发布和失败恢复检查，详见 [本轮交付](docs/DELIVERY_20261020.md)。当前验收仅覆盖虚拟设备；宿主签名更新不等于设备侧 OTA/安全启动。逐公告适用性、人工业务签收和长期稳定性仍有开放项；无匹配、无告警或证据不足均不代表设备安全。
 
 ## 功能
 
@@ -37,7 +37,7 @@ flowchart LR
 
 | 对象 | 已有实现与验证 | 主要边界 |
 |---|---|---|
-| OpenWrt | VMware 中的 25.12.6；182 包采集、日志回传、系统更新、快照恢复及复采 | 官方公告与包修订、配置条件的精确适用性和漏洞级修复验收待补齐 |
+| OpenWrt | 原机 25.12.6、Lab 25.12.4；各 182 包；Lab cgi-io 机器修复、复验和快照恢复已完成 | 其他候选、配置条件与运行时覆盖待核验；人工业务签收未完成 |
 | Zephyr | QEMU `qemu_cortex_a9`，RTOS 4.4.2，应用 0.3.0；构建、HTTP 身份、固件切换、回退与崩溃恢复 | 尚非签名 OTA；无实体板验收；温湿度为模拟数据，熵通道仅适用于受信任 QEMU |
 | Ubuntu | Linux 采集节点、Falco、Zephyr 构建宿主及独立克隆修复实验 | 基础设施与对照验证不替代 IoT 设备验收 |
 
@@ -51,7 +51,7 @@ flowchart LR
 git clone https://github.com/su12s-ops/IoTGuard-Public.git
 cd IoTGuard-Public
 Copy-Item backend/.env.example backend/.env.docker
-# 本地填写控制令牌；使用模型时配置模型接口与密钥。两个修复开关保持 0。
+# 本地填写控制令牌；使用模型时配置模型接口与密钥。三个修复开关保持 0。
 $env:IOTGUARD_BUILD_REVISION = git rev-parse HEAD
 $env:IOTGUARD_BUILD_DATE = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
 docker compose up -d --build
@@ -111,7 +111,7 @@ npm run build
 npm run test:e2e
 ```
 
-浏览器测试使用 Microsoft Edge。构建通过不代表现场设备连通、全部漏洞已修复或完整安全审计通过。
+浏览器测试默认使用 Playwright Chromium，首次运行前执行 `npx playwright install chromium`；Windows 已安装 Edge 时可先设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。构建通过不代表现场设备连通、全部漏洞已修复或完整安全审计通过。
 
 - [产品状态与待完成工作](docs/STATUS.md)
 - [环境重建与软件配置](deploy/README.md)
@@ -119,5 +119,10 @@ npm run test:e2e
 - [技术架构](TECHNICAL_ARCHITECTURE.md)
 - [权限与风险治理](docs/SECURITY_MODEL.md)
 - [构建与验证](docs/VALIDATION.md)
+- [设备验收与收尾边界](docs/DEVICE_ACCEPTANCE.md)
 
 本项目用于授权环境中的安全研究与教学。扫描仅面向显式授权目标；设备写须另行完成身份、作用域、审批和恢复准备。
+
+## 2026-10-20 维护交付
+
+[本轮交付报告](docs/DELIVERY_20261020.md)汇总权限域隔离、注册证据引用、依赖安全升级和虚拟设备验证。[训练与维护规范](docs/TRAINING_AND_MAINTENANCE.md)保留 Git 历史训练材料的可追溯入口。[QEMU 签名更新](docs/VIRTUAL_FIRMWARE.md)仅承诺受信任宿主上的更新与恢复，不等同于设备侧安全启动。

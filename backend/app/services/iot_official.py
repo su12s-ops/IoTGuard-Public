@@ -45,8 +45,39 @@ def import_snapshot(db, ecosystem, rows):
         record.source_url = url
         record.payload_json = payload
         record.content_sha256 = hashlib.sha256(payload.encode()).hexdigest()
+        cve = json.loads(payload).get("cve_id") or ""
+        if re.fullmatch(r"CVE-\d{4}-\d{4,}", cve):
+            # Immutable content-addressed evidence survives later snapshot updates.
+            evidence_id = "ADV-IOT-" + record.content_sha256[:48]
+            if db.query(models.OfficialCveRecord).filter_by(evidence_id=evidence_id).first() is None:
+                db.add(models.OfficialCveRecord(
+                    evidence_id=evidence_id, cve_id=cve, source_url=url,
+                    content_sha256=record.content_sha256, raw_json=payload,
+                    evidence_status="available"))
+                db.flush()
     db.flush()
     return len(validated)
+
+
+def registered_snapshot_records(db, cve_id):
+    """Read only: no invented references for old snapshots not yet registered."""
+    results = []
+    for item in db.query(models.IotOfficialAdvisory).all():
+        payload = json.loads(item.payload_json)
+        if payload.get("cve_id") != cve_id.split(":")[0]:
+            continue
+        evidence_id = "ADV-IOT-" + item.content_sha256[:48]
+        registered = db.query(models.OfficialCveRecord).filter_by(
+            evidence_id=evidence_id, cve_id=payload["cve_id"],
+            content_sha256=item.content_sha256, evidence_status="available").first()
+        results.append({
+            "ecosystem": item.ecosystem, "advisory_id": item.advisory_id,
+            "evidence_id": evidence_id if registered else None,
+            "source_url": item.source_url, "snapshot_sha256": item.content_sha256,
+            "summary": payload.get("summary", ""), "description": payload.get("description", ""),
+            "vulnerabilities": payload.get("vulnerabilities", []),
+        })
+    return results
 
 
 def version_in_range(version, expression):

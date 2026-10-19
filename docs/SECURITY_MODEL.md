@@ -14,8 +14,13 @@
 |---|---|---|
 | `LINUXGUARD_ENABLE_DEVICE_REPAIR` | OpenWrt 设备包修复 | `0` |
 | `LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` | 独立 Ubuntu 克隆实验写 | `0` |
+| `LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR` | OpenWrt 隔离实验写，另需精确资产范围 | `0` |
 
-两个域互不授权。开关不能替代身份、风险治理、精确计划审批、执行节点与恢复检查。默认部署保持关闭。
+开关不能替代身份、风险治理、精确计划审批、执行节点与恢复检查。默认部署保持关闭；标准 Compose 显式覆盖三个开关为 0，并清空 `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`。
+
+2026-10-20 已修复最终写入口的域混用：每个 OpenWrt 资产持久保存 `repair_domain`，初始为 `unassigned`（拒绝任何安装）。控制端 `POST /api/assets/{id}/repair-domain` 一次性登记 `production` 或 `openwrt_lab`，必须提供 `actor`、`reason`；不能通过清单、IP、主机名或环境白名单修改。生产域只读取生产开关，实验域只读取实验开关与精确资产范围。安装和回退入口均核验；计划哈希绑定域，缺少域或域变化的旧安装审批失效。Ubuntu 独立实验契约保持不变。登记只说明资产所属域，仍须另行批准具体修复计划。
+
+演示目标不再接收明文密码：数据库只保存专用 `credential_env` 引用（`LINUXGUARD_DEMO_*`，兼容 `VM_PASS`）。旧明文行阻止运行，需操作员迁移后重新保存；不存在从旧密码静默回退的路径。演示运行时检查读取已有 Falco 日志，不再停止传感器或制造敏感文件读取事件。
 
 Ubuntu 克隆实验还须满足：显式资产白名单（空白即拒绝）、对象级治理、计划与审批哈希一致、官方原文哈希及 24 小时时效、15 分钟内预演、节点独立许可、隔离克隆与恢复证明、真实 root 执行权限。后端排队和节点领取独立复核；只读预演通过不代表允许安装。
 

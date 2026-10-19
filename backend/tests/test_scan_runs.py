@@ -85,7 +85,7 @@ class _TlsHttpServer(threading.Thread):
         super().__init__(daemon=True)
         self.host, self.port = host, port
         self._cert, self._key = cert, key
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._ready = threading.Event()
 
     def run(self):
@@ -97,7 +97,7 @@ class _TlsHttpServer(threading.Thread):
         server.listen(8)
         server.settimeout(0.2)
         self._ready.set()
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 conn, _ = server.accept()
             except socket.timeout:
@@ -119,7 +119,7 @@ class _TlsHttpServer(threading.Thread):
                 pass
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
         self.join(timeout=3)
 
 
@@ -132,7 +132,7 @@ class _BannerServer(threading.Thread):
     def __init__(self, host: str, port: int):
         super().__init__(daemon=True)
         self.host, self.port = host, port
-        self._stop = threading.Event()
+        self._stop_event = threading.Event()
         self._ready = threading.Event()
 
     def run(self):
@@ -142,7 +142,7 @@ class _BannerServer(threading.Thread):
         server.listen(8)
         server.settimeout(0.2)
         self._ready.set()
-        while not self._stop.is_set():
+        while not self._stop_event.is_set():
             try:
                 conn, _ = server.accept()
             except socket.timeout:
@@ -168,7 +168,7 @@ class _BannerServer(threading.Thread):
                 pass
 
     def stop(self):
-        self._stop.set()
+        self._stop_event.set()
         self.join(timeout=3)
 
 

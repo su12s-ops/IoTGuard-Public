@@ -14,7 +14,7 @@ LangGraph 四角色为资产调查、漏洞分析、运行时分析和决策规�
 
 Harness 使用计划哈希、连接签名、Collector 摘要、资产锁、预算与产物注册表约束任务。外部 Linux Pull Runner 领取已排队任务，经 SSH 指纹钉扎执行固定采集脚本并回传原文。OpenWrt logread 周期拉取、保留 boot_id 与原始时间、幂等去重；不是 eBPF，也不能证明零丢失。
 
-设备写入采用双轨开关：生产总开关 `LINUXGUARD_ENABLE_DEVICE_REPAIR` 与隔离实验作用域（Ubuntu `LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` + 精确资产声明、OpenWrt `LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR` + `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`）互不替代、双向 fail-closed；实验授权无法通过打开生产开关获得，反之亦然。
+设备写入配置包括生产总开关 `LINUXGUARD_ENABLE_DEVICE_REPAIR`、Ubuntu 实验开关与资产声明、OpenWrt 实验开关与 `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`。OpenWrt 实验子门禁拒绝范围外资产，但最终门禁为生产总开关 OR 实验作用域，尚未实现生产与实验资产域的完整隔离。标准 Compose 及本轮验收均关闭三个开关；确定性权限局限见 [权限规范](docs/SECURITY_MODEL.md)。
 
 ## 实验隔离（OpenWrt-Lab）
 

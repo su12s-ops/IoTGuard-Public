@@ -27,7 +27,6 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
-from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app import models
@@ -42,7 +41,6 @@ from app.services.unified import (
 )
 from app.services.unified.agent_base import (
     BudgetExceeded,
-    UnifiedAgentResult,
     UnifiedToolLoopAgent,
     UsageMeter,
 )
@@ -167,7 +165,11 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                 # 一次带事实反馈的重试（继承 System A RUNTIME 阶段语义，F3 反馈）
                 retry_context = (
                     f"{context_text}\n\n上一次输出未通过证据事实校验：{'; '.join(errors)}。"
-                    "请只引用真实存在的 evidence_id，重新输出完整 JSON。")
+                    "请只引用真实存在的 evidence_id，重新输出完整 JSON。"
+                    "这是引用/事实纠错，不要重复已完成的工具调查；不能支持的结论必须降为证据不足。"
+                    f"\n待纠正的原始报告：{json.dumps(result.output, ensure_ascii=False)}")
+                ctx.emit(db, "evidence_validation_failed", actor=spec.name, status="failed",
+                         payload={"errors": errors, "output_summary": _summary(result.output)})
                 retry = agent.run(db, context=retry_context,
                                   deadline_s=max(0.0, min(role_deadline - time.monotonic(), ctx.remaining_s())))
                 if retry.status != "succeeded":
@@ -177,17 +179,15 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                     if not retry_errors:
                         result, errors = retry, []
                     else:
-                        # 重试输出仍含伪造引用：strip 必须与「它自己的错误」配对
+                        # 保留重试报告及其自身校验错误，交由统一降级处理。
                         result, errors = retry, retry_errors
                 if errors:
-                    stripped = _strip_invalid_evidence_refs(result, errors)
-                    if stripped is not None:
-                        result = stripped
-                    else:
-                        degraded_reason = "; ".join(errors)
+                    # Removing an ID is not proof of the claim it supported.
+                    # Keep the failed report in the audit trail and fail closed.
+                    degraded_reason = "; ".join(errors)
         elapsed_ms = int((time.monotonic() - agent_started) * 1000)
         # 事实校验未通过（degraded_reason 非空）时绝不放行原始输出——
-        # 即使 result.status 仍为 succeeded（strip 失败的场景）
+        # 即使模型调用自身的 result.status 仍为 succeeded
         output = result.output if (result.status == "succeeded" and not degraded_reason) else None
         ctx.log_agent(spec.name, {
             "status": result.status if not degraded_reason else "degraded",
@@ -241,50 +241,6 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
         return None, f"budget_exceeded: {exc}"
     finally:
         db.close()
-
-
-def _strip_invalid_evidence_refs(result: UnifiedAgentResult,
-                                 errors: list[str]) -> UnifiedAgentResult | None:
-    """剔除引用了不存在 ID 的字段后重新校验；剔除后仍非法则放弃（降级）。
-
-    保留其余有效内容（F7：部分失败不全丢），剔除记录写入 notes。
-    """
-    output = dict(result.output or {})
-    import re as _re
-
-    invalid_ids: set[str] = set()
-    for error in errors:
-        invalid_ids.update(_re.findall(r"EV-[A-Za-z0-9._\-]+", error))
-        invalid_ids.update(_re.findall(r"SE-[A-Za-z0-9._\-]+", error))
-    if not invalid_ids:
-        return None
-
-    def _clean(ids: list[str]) -> list[str]:
-        cleaned = [i for i in ids if i not in invalid_ids]
-        return cleaned
-
-    output["evidence_ids"] = _clean(list(output.get("evidence_ids") or []))
-    findings = []
-    for finding in output.get("findings") or []:
-        if isinstance(finding, dict):
-            finding = dict(finding)
-            finding["supporting_evidence_ids"] = _clean(
-                list(finding.get("supporting_evidence_ids") or []))
-        findings.append(finding)
-    output["findings"] = findings
-    output["notes"] = list(output.get("notes") or []) + [
-        f"stripped_invalid_evidence_refs: {sorted(invalid_ids)[:5]}"]
-    try:
-        revalidated = result_output_model(result).model_validate(output)
-    except Exception:
-        return None
-    result.output = revalidated.model_dump()
-    result.status = "succeeded"
-    return result
-
-
-def result_output_model(result: UnifiedAgentResult) -> type[BaseModel]:
-    return SPEC_BY_NAME[result.agent].output_model
 
 
 def _summary(output: dict[str, Any] | None, limit: int = 12) -> dict[str, Any]:
@@ -617,8 +573,6 @@ def _vulnerability_evidence_validator(ctx: RunContext, state=None):
                 if finding.get("cve_id", "").split(":")[0] == candidate.get("cve_id", "").split(":")[0]:
                     if finding.get("fixed_version") or finding.get("version_impact") == "fixed":
                         errors.append("精确官方 not_affected：无本 CVE 专属修复版本；不得将综合 USN 版本解释为该 CVE 已修复")
-        if not known:
-            return errors
         cited: set[str] = set()
         for finding in output.get("findings") or []:
             if isinstance(finding, dict):
@@ -638,7 +592,8 @@ def _vulnerability_evidence_validator(ctx: RunContext, state=None):
             finally:
                 db.close()
         if unknown:
-            errors.append(f"引用了证据包之外的分析师自造证据 ID（防幻觉校验失败）: {unknown[:5]}")
+            errors.append(f"引用了证据包之外的分析师自造证据 ID（防幻觉校验失败）: {unknown}; "
+                          f"可引用的注册证据 ID: {sorted(known)}。CVE/GHSA 编号、URL 和哈希是来源属性，不是 evidence_id")
         return errors
     return validate
 
@@ -680,6 +635,9 @@ def node_analyze_vulnerability(ctx: RunContext):
             "fixed 仅属于 version_impact，不能当作 applicability 枚举。官方精确发行版、源包、版本和授权清单"
             "足够时可确认静态受影响；触发条件与实际利用另外表达，缺少利用痕迹不否定静态适用性。"
             "branch_check 未定或冲突必须保留，不能通过提高置信度消除分歧。"
+            f"\n可引用的注册证据 ID（supporting_evidence_ids 只能从中选择）: {json.dumps(sorted(ctx.packet_evidence_ids))}\n"
+            "CVE/GHSA 编号、URL、SHA256 不是注册证据 ID；写入 rationale 说明来源，不能放进引用字段。"
+            "没有注册证据时引用列表留空并明确证据缺口，禁止自造引用。"
             + _vulnerability_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, VULNERABILITY_ANALYST_SPEC, context_text,

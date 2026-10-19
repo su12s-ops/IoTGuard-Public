@@ -34,6 +34,7 @@ def rig(session_factory, tmp_path, monkeypatch):
     monkeypatch.setenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "1")
     with session_factory() as db:
         asset = seed_openwrt(db)
+        asset.repair_domain = "production"
         add_advisory(db)
         run_matching(db)
         match = db.query(models.VulnerabilityMatch).one()
@@ -93,6 +94,17 @@ def test_unapproved_plan_cannot_write(rig):
         h.execute(rig.db, run)
     with pytest.raises(ValueError):
         h.approve(rig.db, run, "f" * 64, "test", "wrong plan")
+    assert rig.calls == []
+
+
+def test_repair_domain_change_invalidates_existing_approval(rig, monkeypatch):
+    run = planned(rig)
+    rig.asset.repair_domain = "openwrt_lab"
+    rig.db.commit()
+    monkeypatch.setenv("LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR", "1")
+    monkeypatch.setenv("LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE", str(rig.asset.id))
+    h.execute(rig.db, run)
+    assert run.status == "failed" and "授权域" in run.error
     assert rig.calls == []
 
 

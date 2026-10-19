@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 
 test.beforeEach(async ({ page }) => {
   // Fail closed for unmatched API requests; never contact an actual backend.

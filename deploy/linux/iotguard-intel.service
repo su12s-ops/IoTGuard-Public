@@ -1,0 +1,15 @@
+[Unit]
+Description=IoTGuard official advisory refresh
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=iotguard
+Group=iotguard
+WorkingDirectory=/opt/iotguard
+EnvironmentFile=/etc/iotguard/backend.env
+ExecStart=/opt/iotguard/.venv/bin/python backend/scripts/sync_iot_official.py
+TimeoutStartSec=15min
+NoNewPrivileges=true
+UMask=0077

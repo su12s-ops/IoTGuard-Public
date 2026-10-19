@@ -34,6 +34,8 @@ services:
       LINUXGUARD_DEPLOYMENT_MODE: standard
       LINUXGUARD_ENABLE_DEVICE_REPAIR: "0"
       LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR: "0"
+      LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR: "0"
+      LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE: ""
     volumes:
       - linuxguard-data:/app/data
     ports:

@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily official IoT advisory refresh
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=15min
+Unit=iotguard-intel.service
+
+[Install]
+WantedBy=timers.target

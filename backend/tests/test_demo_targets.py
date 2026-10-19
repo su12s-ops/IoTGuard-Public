@@ -15,7 +15,7 @@ def test_demo_targets_can_be_saved_and_listed(client, monkeypatch, control_heade
                     "host": "47.0.0.10",
                     "ssh_port": 22,
                     "username": "ubuntu",
-                    "password": "secret",
+                    "credential_env": "LINUXGUARD_DEMO_TEST",
                     "asset_hostname": "aliyun-node-01",
                     "container_name": "",
                     "install_falco_if_missing": False,

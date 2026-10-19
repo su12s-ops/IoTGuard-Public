@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures.js";
 import { fileURLToPath } from "node:url";
 
 // API fixtures are deliberately synthetic; browser tests never access devices.

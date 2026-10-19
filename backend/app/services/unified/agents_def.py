@@ -73,16 +73,8 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
                 "note": _record_note(item),
             } for item in advisories],
         }
-    official = []
-    for item in db.query(models.IotOfficialAdvisory).all():
-        payload = json.loads(item.payload_json)
-        if payload.get("cve_id") != cve_id:
-            continue
-        official.append({
-            "ecosystem": item.ecosystem, "advisory_id": item.advisory_id,
-            "source_url": item.source_url, "snapshot_sha256": item.content_sha256,
-            "vulnerabilities": payload.get("vulnerabilities", []),
-        })
+    from app.services.iot_official import registered_snapshot_records
+    official = registered_snapshot_records(db, cve_id)
     bundle["iot_official_snapshot"] = {
         "status": "snapshot_available" if official else "not_in_snapshot",
         "records": official,

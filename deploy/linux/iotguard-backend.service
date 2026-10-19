@@ -1,0 +1,23 @@
+[Unit]
+Description=IoTGuard API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iotguard
+Group=iotguard
+WorkingDirectory=/opt/iotguard/backend
+EnvironmentFile=/etc/iotguard/backend.env
+Environment=LINUXGUARD_ENABLE_DEVICE_REPAIR=0
+Environment=LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR=0
+Environment=LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR=0
+Environment=LINUXGUARD_ARCHIVE_ON_STARTUP=0
+ExecStart=/opt/iotguard/.venv/bin/python /opt/iotguard/scripts/run_local_backend.py
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

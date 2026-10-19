@@ -201,19 +201,24 @@ def test_mutation_gates_fail_before_any_work(client, control_headers, path, meth
     assert getattr(client, method)(path, headers={"X-Control-Token": "wrong"}).status_code == 401
 
 
-def test_legacy_password_is_not_returned_and_blank_edit_preserves_it(client, session_factory, control_headers):
-    synthetic_secret = "SYNTHETIC_" + "SECRET"  # 合成夹具值：拼接送检，避免可扫描的凭据字面量
-    created = client.put("/api/demo/targets", json={"targets": [{"label": "synthetic", "target_type": "ssh",
-        "host": "192.0.2.1", "username": "fixture", "password": synthetic_secret}]}, headers=control_headers)
-    assert created.status_code == 200 and synthetic_secret not in created.text
-    row = created.json()["targets"][0]
-    assert "password" not in row and row["password_configured"]
-    row.pop("password_configured")
-    row["notes"] = "edited metadata"
+def test_legacy_password_requires_explicit_reference_migration(client, session_factory, control_headers, monkeypatch):
+    synthetic_secret = "SYNTHETIC_" + "SECRET"
+    with session_factory() as db:
+        target = models.DemoTarget(label="synthetic", target_type="ssh", host="192.0.2.1",
+                                  username="fixture", password=synthetic_secret)
+        db.add(target); db.commit()
+    response = client.get("/api/demo/targets", headers=control_headers)
+    assert synthetic_secret not in response.text
+    row = response.json()["targets"][0]
+    assert row["credential_migration_required"]
+    assert client.post("/api/demo/start", headers=control_headers).status_code == 409
+    row["credential_env"] = "LINUXGUARD_DEMO_FIXTURE"
+    monkeypatch.setenv("LINUXGUARD_DEMO_FIXTURE", synthetic_secret)
     assert client.put("/api/demo/targets", json={"targets": [row]}, headers=control_headers).status_code == 200
     with session_factory() as db:
         target = db.get(models.DemoTarget, row["id"])
-        assert target.password == synthetic_secret
+        assert target.password == ""
+        assert target.credential_env == "LINUXGUARD_DEMO_FIXTURE"
         assert "password" not in serialize_rows([target])[0]
 
 

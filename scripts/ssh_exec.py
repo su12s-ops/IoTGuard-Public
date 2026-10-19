@@ -15,7 +15,10 @@ if not pwd:
     sys.exit(3)
 
 client = paramiko.SSHClient()
-client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+client.load_system_host_keys()
+if os.environ.get("SSH_KNOWN_HOSTS"):
+    client.load_host_keys(os.environ["SSH_KNOWN_HOSTS"])
+client.set_missing_host_key_policy(paramiko.RejectPolicy())
 try:
     client.connect(host, username=user, password=pwd, timeout=15, allow_agent=False, look_for_keys=False)
 except Exception as exc:
@@ -32,3 +35,5 @@ if err:
     sys.stdout.write("\n[STDERR] " + err)
 sys.stdout.write(f"\n[EXIT {code}]\n")
 client.close()
+
+sys.exit(code)

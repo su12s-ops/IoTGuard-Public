@@ -8,7 +8,11 @@ on:
 
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
     defaults:
       run:
         working-directory: backend
@@ -21,15 +25,11 @@ jobs:
           cache-dependency-path: backend/requirements*.txt
       - name: Install dependencies
         run: python -m pip install -r requirements.txt -r requirements-test.txt
+      - name: Check dependency compatibility
+        run: python -m pip check
       - name: Run regression suite
-        # 常规回归口径：4 个真实套接字测试文件需独立 profile（本仓 conftest 审计钩子
-        # 禁止真实网络），与交付回归一致地显式排除，详见 docs/VALIDATION.md
-        run: >
-          python -m pytest -q --tb=short
-          --ignore=tests/test_iot_device_upgrade.py
-          --ignore=tests/test_scan_runs.py
-          --ignore=tests/test_scan_targets.py
-          --ignore=tests/test_mqtt_remediation_workflow.py
+        # conftest permits loopback test doubles and temporary databases only.
+        run: python -m pytest -q --tb=short
 
   frontend:
     runs-on: ubuntu-latest
@@ -47,3 +47,14 @@ jobs:
         run: npm ci
       - name: Production build
         run: npm run build
+      - name: Install browser
+        run: npx playwright install --with-deps chromium
+      - name: Isolated browser regression
+        run: npm run test:e2e
+      - name: Upload browser failure evidence
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: browser-test-results
+          path: frontend/test-results
+          retention-days: 7

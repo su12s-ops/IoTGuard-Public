@@ -92,7 +92,6 @@ def _env_ssh_targets() -> list[models.DemoTarget]:
     labels = _split_env_csv(os.getenv("VM_LABELS", ""))
     asset_hostnames = _split_env_csv(os.getenv("VM_ASSET_HOSTNAMES", ""))
     username = os.getenv("VM_USER", "")
-    password = os.getenv("VM_PASS", "")
     targets = []
     for index, (host, port) in enumerate(_expand_ssh_bootstrap_targets(hosts, ports), 1):
         default_label = f"SSH Target {index} ({host}:{port})"
@@ -104,7 +103,8 @@ def _env_ssh_targets() -> list[models.DemoTarget]:
                 host=host,
                 ssh_port=port,
                 username=username,
-                password=password,
+                password="",
+                credential_env="VM_PASS",
                 asset_hostname=asset_hostnames[index - 1] if index <= len(asset_hostnames) else "",
                 collect_asset=True,
                 collect_runtime=True,
@@ -148,7 +148,9 @@ def _serialize_target(target: models.DemoTarget) -> dict[str, Any]:
         "host": target.host,
         "ssh_port": target.ssh_port,
         "username": target.username,
-        "password_configured": bool(target.password),
+        "password_configured": bool(os.getenv(target.credential_env or "", "")),
+        "credential_env": target.credential_env or "",
+        "credential_migration_required": bool(target.password),
         "asset_hostname": target.asset_hostname,
         "container_name": target.container_name,
         "install_falco_if_missing": target.install_falco_if_missing,
@@ -390,9 +392,17 @@ def _build_probe_event(
 
 
 def _collect_ssh_asset(target: SimpleNamespace, db: Session) -> str:
-    _ssh_put(COLLECT_SCRIPT_LOCAL, "/tmp/lg_collect.sh", target)
-    _ssh_exec("BUSINESS_LEVEL=core bash /tmp/lg_collect.sh /tmp/lg_asset.txt", target, timeout=180)
-    asset_text = _ssh_get_bytes("/tmp/lg_asset.txt", target).decode("utf-8", "ignore")
+    directory, _, _ = _ssh_exec("umask 077; mktemp -d /tmp/iotguard-XXXXXXXXXX", target)
+    directory = directory.strip()
+    if not re.fullmatch(r"/tmp/iotguard-[A-Za-z0-9]{10}", directory):
+        raise RuntimeError("Remote private collection directory was not created")
+    try:
+        _ssh_put(COLLECT_SCRIPT_LOCAL, directory + "/collect.sh", target)
+        _ssh_exec("BUSINESS_LEVEL=core bash " + shlex.quote(directory + "/collect.sh") + " " +
+                  shlex.quote(directory + "/asset.txt"), target, timeout=180)
+        asset_text = _ssh_get_bytes(directory + "/asset.txt", target).decode("utf-8", "ignore")
+    finally:
+        _ssh_exec("rm -rf -- " + shlex.quote(directory), target, check=False)
     parsed = parse_asset_text(asset_text)
     if target.asset_hostname:
         parsed.hostname = target.asset_hostname
@@ -462,14 +472,12 @@ def _capture_falco_via_ssh(target: SimpleNamespace, asset_hostname: str, db: Ses
     if "FALCO_OK" not in out:
         return 0, "falco missing"
 
-    sudo = _sudo_prefix(target)
-    _ssh_put(CAPTURE_SCRIPT_LOCAL, "/tmp/lg_capture.sh", target)
-    _ssh_exec(
-        f"{sudo} bash /tmp/lg_capture.sh local {DEMO_EBPF_SECONDS} output-only",
-        target,
-        timeout=max(240, DEMO_EBPF_SECONDS + 180),
-    )
-    content = _ssh_get_bytes("/tmp/lg_falco.jsonl", target).decode("utf-8", "ignore")
+    # Read the existing sensor's window. Never stop it or inject synthetic
+    # secret-file reads/processes just to manufacture positive evidence.
+    seconds = max(1, min(DEMO_EBPF_SECONDS, 3600))
+    content, _, _ = _ssh_exec(
+        f"{_sudo_prefix(target)} journalctl -u falco-modern-bpf --since '-{seconds} seconds' --no-pager -o cat",
+        target, timeout=45)
     payloads = parse_event_lines(content)
     if target.asset_hostname:
         for payload in payloads:
@@ -569,12 +577,14 @@ def demo_targets(db: Session = Depends(get_db)):
 
 @router.put("/targets", dependencies=[Depends(require_control)])
 def update_demo_targets(payload: schemas.DemoTargetConfigUpdate, db: Session = Depends(get_db)):
-    # Blank browser fields preserve existing credentials without ever returning their values.
+    # Only dedicated environment references are persisted. Never accept secrets.
     previous = {row.id: row for row in db.query(models.DemoTarget).all()}
     values = []
     seen_ids = set()
     for item in payload.targets:
         value = item.model_dump()
+        if item.password:
+            raise HTTPException(400, "不再接收或保存明文密码；请配置后端专用凭据变量并填写 credential_env")
         if value.get("id") is not None:
             if value["id"] not in previous or value["id"] in seen_ids:
                 raise HTTPException(400, "历史目标 ID 不存在或重复")
@@ -583,11 +593,6 @@ def update_demo_targets(payload: schemas.DemoTargetConfigUpdate, db: Session = D
             raise HTTPException(400, "启用的 SSH 目标须提供地址")
         if item.target_type == "container" and item.enabled and not item.container_name:
             raise HTTPException(400, "启用的容器目标须提供名称")
-        prior = previous.get(value.get("id"))
-        if prior and not value.get("password"):
-            if (prior.target_type, prior.host, prior.ssh_port, prior.username) == (
-                    value["target_type"], value["host"], value["ssh_port"], value["username"]):
-                value["password"] = prior.password
         values.append(value)
     db.query(models.DemoTarget).delete()
     db.flush()
@@ -611,8 +616,17 @@ def demo_start(db: Session = Depends(get_db)):
     if _progress["running"]:
         raise HTTPException(status_code=409, detail="Demo workflow is already running")
     _bootstrap_targets(db)
-    payloads = [{**_serialize_target(row), "password": row.password}
-                for row in db.query(models.DemoTarget).filter_by(enabled=True).all()]
+    payloads = []
+    for row in db.query(models.DemoTarget).filter_by(enabled=True).all():
+        if row.password:
+            raise HTTPException(409, "历史明文凭据须迁移到专用环境变量并重新保存目标后才能运行")
+        name = row.credential_env or ""
+        if name and not re.fullmatch(r"VM_PASS|LINUXGUARD_DEMO_[A-Z0-9_]{1,80}", name):
+            raise HTTPException(409, "演示凭据引用无效")
+        secret = os.getenv(name, "") if name else ""
+        if row.target_type == "ssh" and not secret:
+            raise HTTPException(409, "后端未配置演示目标专用凭据")
+        payloads.append({**_serialize_target(row), "password": secret})
     if not payloads:
         raise HTTPException(status_code=400, detail="No enabled demo targets configured")
     targets = [SimpleNamespace(**item) for item in payloads]

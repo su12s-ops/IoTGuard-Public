@@ -71,7 +71,29 @@ def test_agent_can_read_official_evidence_without_generic_cve_row(session_factor
         assert evidence["status"] == "snapshot_available"
         assert evidence["records"][0]["source_url"] == ROW["html_url"]
         assert len(evidence["records"][0]["snapshot_sha256"]) == 64
+        evidence_id = evidence["records"][0]["evidence_id"]
+        assert db.query(models.OfficialCveRecord).filter_by(evidence_id=evidence_id).one().cve_id == ROW["cve_id"]
         assert db.query(models.DeviceVulnerabilityMatch).count() == 0
+
+
+def test_snapshot_refresh_preserves_old_evidence_and_prefetch_exposes_registered_ids(session_factory):
+    from app.services.unified.evidence_prep import _source_texts
+    from app.services.unified.graph import RunContext, _vulnerability_evidence_validator
+    from app.services.iot_official import registered_snapshot_records
+    with session_factory() as db:
+        import_snapshot(db, "zephyr", [ROW])
+        first = registered_snapshot_records(db, ROW["cve_id"])[0]["evidence_id"]
+        changed = {**ROW, "description": "Updated official clarification"}
+        import_snapshot(db, "zephyr", [changed])
+        second = registered_snapshot_records(db, ROW["cve_id"])[0]["evidence_id"]
+        assert first != second
+        assert db.query(models.OfficialCveRecord).count() == 2
+        _, bundle = _source_texts(db, ROW["cve_id"], "", "zephyr")
+        assert bundle["iot_official_snapshot"]["value"]["records"][0]["evidence_id"] == second
+        validator = _vulnerability_evidence_validator(RunContext(
+            db_factory=session_factory, trace_id="", packet_evidence_ids={second}))
+        assert validator({"findings": [{"supporting_evidence_ids": [ROW["ghsa_id"]]}]})
+        assert not validator({"findings": [{"supporting_evidence_ids": [second]}]})
 
 
 def test_other_component_range_cannot_exclude_zephyr_kernel(session_factory):

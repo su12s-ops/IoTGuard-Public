@@ -2,6 +2,8 @@
 
 更新：2026-10-19。唯一实验对象为 OpenWrt-Lab（asset 4），原始 OpenWrt-01（asset 2）保持不变。本轮未新增智能体、匹配器或 Ubuntu 实验。
 
+后续同日晚间的设备复采、HTTP/DNS/匿名访问、Zephyr 重启、Falco 回传恢复及新复评结果见 [设备验收](docs/DEVICE_ACCEPTANCE.md)。本报告记录本次已执行的 cgi-io 修复与快照实验，不代表其他候选已排除或整机安全验收通过。
+
 ## 实际结论
 
 首次真实软件包修复、获批只读验证恢复、正式四角色复评及独立授权 C 的 S2→S1→S2 真实快照验收均已执行。最终设备在 S2-FIXED，cgi-io 为 `2026.07.21~31cb3c89-r1`，新采集经通用匹配器得出 `fixed / openwrt_exact_fixed_version`。机器验证通过不代表人工业务接受；四角色复评最终门禁为 `human_review / evidence_partial`，人工接受仍未完成。

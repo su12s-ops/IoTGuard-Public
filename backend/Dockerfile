@@ -24,6 +24,7 @@ ENV PYTHONUTF8=1
 ENV PYTHONIOENCODING=utf-8
 
 COPY backend/requirements.txt .
+COPY backend/requirements-constraints.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY backend/app ./app

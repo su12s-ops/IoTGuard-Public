@@ -18,12 +18,15 @@ if not pwd:
     sys.exit(3)
 
 cli = paramiko.SSHClient()
-cli.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+cli.load_system_host_keys()
+if os.environ.get("SSH_KNOWN_HOSTS"):
+    cli.load_host_keys(os.environ["SSH_KNOWN_HOSTS"])
+cli.set_missing_host_key_policy(paramiko.RejectPolicy())
 cli.connect(host, username=user, password=pwd, timeout=15, allow_agent=False, look_for_keys=False)
 
 sftp = cli.open_sftp()
 sftp.put(local, remote)
-sftp.chmod(remote, 0o755)
+sftp.chmod(remote, 0o700)
 sftp.close()
 print(f"[PUT] {local} -> {remote}")
 
@@ -37,3 +40,5 @@ if err:
     sys.stdout.write("\n[STDERR] " + err)
 sys.stdout.write(f"\n[EXIT {code}]\n")
 cli.close()
+
+sys.exit(code)
