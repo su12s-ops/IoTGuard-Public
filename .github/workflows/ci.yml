@@ -23,7 +23,7 @@ jobs:
         run: python -m pip install -r requirements.txt -r requirements-test.txt
       - name: Run regression suite
         # 常规回归口径：4 个真实套接字测试文件需独立 profile（本仓 conftest 审计钩子
-        # 禁止真实网络），与交付回归一致地显式排除，详见 ai_collaboration/TEST_RESULTS.md
+        # 禁止真实网络），与交付回归一致地显式排除，详见 docs/VALIDATION.md
         run: >
           python -m pytest -q --tb=short
           --ignore=tests/test_iot_device_upgrade.py

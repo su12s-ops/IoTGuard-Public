@@ -11,7 +11,7 @@ project(zephyr_sensor_01 LANGUAGES C)
 
 # 诊断模式：-DUSE_DIAG=1 时编译 main_diag.c（无网络，最小集）
 # 注意：qemu_x86_64 构建需在 Zephyr 源码树内执行（树外构建 locore 不兼容），
-# 参见 start-qemu.sh 注释与 IOT_STAGE7_ZEPHYR_REPORT.md
+# 参见 start-qemu.sh 注释与 deploy/README.md
 if(USE_DIAG)
   target_sources(app PRIVATE main_diag.c)
 else()

@@ -16,15 +16,13 @@ board needs for QEMU user networking with cadence_gem.
 Applied on the stage-7 Ubuntu workspace (~/zephyr-stage7/zephyr) for the
 IoTGuard Zephyr-Sensor-01 firmware; kept as a file for reproducibility.
 ---
- soc/xlnx/zynq7000/common/soc.c | 8 ++++++++
- 1 file changed, 8 insertions(+)
+ soc/xlnx/zynq7000/common/soc.c | 12 ++++++++++++
+ 1 file changed, 12 insertions(+)
 
 diff --git a/soc/xlnx/zynq7000/common/soc.c b/soc/xlnx/zynq7000/common/soc.c
 --- a/soc/xlnx/zynq7000/common/soc.c
 +++ b/soc/xlnx/zynq7000/common/soc.c
-@@ -38,6 +38,14 @@ static const struct arm_mmu_region mmu_regions[] = {
- 	/* ARM Arch timer, GIC are covered by the MPCore mapping */
-
+@@ -40,3 +40,15 @@ static const struct arm_mmu_region mmu_regions[] = {
 +/* SLCR: eth_xlnx_gem programs GEM TX clock divisors in SLCR (gem reg idx 1)
 + * during init; without this mapping a bare boot (no PS7/u-boot init, e.g.
 + * QEMU -kernel) takes a translation fault on that access.

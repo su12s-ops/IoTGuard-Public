@@ -1,0 +1,4 @@
+# Linux deployment scripts must remain directly runnable after a Windows clone.
+*.sh text eol=lf
+*.patch text eol=lf
+*.service text eol=lf

@@ -1,58 +1,23 @@
-# LinuxGuard Backend
+# IoTGuard Backend
 
-FastAPI + SQLAlchemy + SQLite backend for the LinuxGuard demo platform.
-
-## Start
+FastAPI + SQLAlchemy + SQLite；统一四智能体与 Harness。需 Python 3.12+。
 
 ```powershell
-cd <PROJECT_ROOT>\代码\backend
-python -m pip install -r requirements.txt
-python scripts\sync_real_intel.py --keyword linux --days 30 --limit 100
-python -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+# 项目根目录
+Copy-Item backend/.env.example backend/.env
+python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+python -m pytest -q
 ```
 
-## Unified four-agent production
+本地填写模型接口、控制令牌与授权范围。`.env.example` 为变量规范；真实凭据不提交。正式流水线为 on，两个修复开关默认 0。
 
-Set the key in the backend process environment. Do not put it in frontend files.
+- API 文档：<http://127.0.0.1:8000/docs>
+- 健康分层：`GET /api/health`
+- IoT 工作台：`GET /api/devices/business/overview`
+- 官方覆盖：`GET /api/devices/official-coverage/{ecosystem}?version=...`
+- 正式研判：`/api/analysis`
+- 设备与节点：`/api/iot`、`/api/devices`
+- 运行时、执行与追踪：`/api/runtime`、`/api/harness`、`/api/traces`
 
-```powershell
-$env:DEEPSEEK_API_KEY = "your-key"
-$env:DEEPSEEK_MODEL = "deepseek-v4-flash"
-$env:LINUXGUARD_UNIFIED_PIPELINE = "on"
-$env:LINUXGUARD_ENABLE_DEVICE_REPAIR = "0"
-$env:LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR = "0"
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
-
-The sole LangGraph pipeline uses asset_investigator → vulnerability_analyst ∥ runtime_analyst → decision_planner. POST /api/analysis/runs requires the control token, processes one object by default (maximum four), and never falls back to a retired LLM pipeline. off/shadow disable formal analysis.
-
-Investigation requests require separate authorization for the existing fixed read-only collector. Fresh INV evidence can resume the same formal pipeline. Historical inactive objects use /api/analysis/risks/{id}/historical-analysis for drafts and /historical-adjudication for an authorized operator decision; drafts never reactivate a risk. See IOTGUARD_M5_MIGRATION_CONTRACT_V2.md at the repository root. Device writes remain independently gated by exact-plan approval and both write switches.
-
-## Key Endpoints
-
-- `GET /api/health`
-- `GET /api/dashboard/summary`
-- `GET /api/vulnerabilities`
-- `POST /api/vulnerabilities/sync-real`
-- `GET /api/assets`
-- `POST /api/assets/upload`
-- `POST /api/matching/run`
-- `GET /api/matching/results`
-- `POST /api/risk/calculate`
-- `GET /api/risk/ranking`
-- `POST /api/remediation/generate`
-- `GET /api/remediation/tasks`
-- `GET /api/reports/summary.md`
-- `GET /api/reports/summary.json`
-- `GET /api/reports/summary.csv`
-
-## IoT upgrade (0.2)
-
-See the project-level IOT_UPGRADE_GUIDE.md for device registration, environment variables, collector heartbeat and repair-manifest configuration. Startup preserves data by default.
-
-- /api/iot: connections, SSH collection, bounded discovery, observations and source-linked OpenWrt applicability.
-- /api/runtime/assets/{id}: coverage, process timeline and before/after comparison.
-- /api/runtime/sensors/heartbeat: control-token protected health ingestion.
-- /api/harness: persistent investigation and approved repair tasks, verification, rollback and recovery.
-
-Run python -m pytest -q using isolated fixtures. No test connects to real hardware. Run python scripts/validate_repair_manifest.py to check a locally configured manifest without device access.
+详见 [部署](../DEPLOYMENT.md)、[权限治理](../docs/SECURITY_MODEL.md)及[验证范围](../docs/VALIDATION.md)。

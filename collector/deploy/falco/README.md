@@ -1,8 +1,6 @@
 # LinuxGuard Falco 常驻采集部署手册（eBPF 2.0 P1-2 部署准备）
 
-> 状态：**准备完成，未执行**。本目录全部内容为部署物；任何 `--apply`/`--install-service`/`--rollback`
-> 或 `systemctl start` 均需在 **VM sudo 授权窗口**内由运维确认后执行。
-> 本轮（P1 准备）未在 VM 或任何主机执行特权操作。
+> 本目录是现有 Falco 常驻采集部署工具。原环境已部署；新机器需安装 Falco、配置路径及本地环境文件后再执行。重建与配置入口见 [环境指南](../../../deploy/README.md)。
 
 ## 1. 版本与兼容性要求
 
@@ -122,6 +120,5 @@ sudo ./deploy_falco.sh --rollback
 ## 与 bpftrace 路线的关系
 
 两路线并行、语义一致（进程/网络/文件），后端 `normalize_event` 统一归一化；
-bpftrace 路线本轮已完成 P1-1 增强（argv/start_time/会话键，见
-`IOT_EBPF2_P1_PREP_REPORT.md`）。Falco 路线的 argv（`proc.cmdline`）为引擎
+bpftrace 路线支持 argv/start_time/会话键。Falco 路线的 argv（`proc.cmdline`）为引擎
 原生能力，无需探针改动。

@@ -1,38 +1,46 @@
-# IoTGuard Deployment
+# 部署说明
 
-Scope: [current product and device acceptance baseline](IOTGUARD_PRODUCT_POSITIONING.md). The latest source adds `/api/devices/business/overview` and makes the IoT workbench the default frontend route (`/soc` retains the SOC). Deploy backend and frontend together; old running containers do not automatically load these changes. A successful build does not establish device connectivity or repair acceptance.
+## Docker
 
-The supported product entry point is Docker Compose. Copy `backend/.env.example` to a local environment file, set the control token, and keep both repair flags at `0`. The compose file binds the API to `127.0.0.1:18000` and the nginx SPA to `127.0.0.1:18080`; override these ports only on a trusted local reverse proxy.
-
-`docker compose build --build-arg VCS_REF=$(git rev-parse HEAD) --build-arg BUILD_DATE=$(date -u +%FT%TZ)` builds the API and nginx images. `docker compose up -d` starts a non-root API and an unprivileged nginx worker with a separate named database volume. The API image contains only application code, migrations, collector scripts, and the non-secret configuration template. Device keys, node tokens, databases, and local archives stay outside the image.
-
-Collection nodes and Falco remain external to Docker. They authenticate through the existing registered-node protocol. OpenWrt logread scheduling is disabled when `LINUXGUARD_OPENWRT_LOG_CONNECTION_IDS` is empty; enabling it requires already-authorized connection IDs and remains read-only, bounded to two attempts per interval with persisted deduplication.
-
-Verify `http://127.0.0.1:18080/`, a deep SPA route, `/api/health`, and the four health layers independently: backend, collection node, sensors, and fresh runtime evidence.
-
-PowerShell equivalent (run from the repository root after configuring the local `backend/.env.docker`):
+在根目录复制 `backend/.env.example` 为 `backend/.env.docker`，本地填写控制令牌、模型接口及其他必需参数。两个修复开关保持 0；Compose 也将它们固定为 0。
 
 ```powershell
 $env:IOTGUARD_BUILD_REVISION = git rev-parse HEAD
 $env:IOTGUARD_BUILD_DATE = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
-docker compose build
-docker compose up -d
+docker compose up -d --build
 docker compose ps
 Invoke-RestMethod http://127.0.0.1:18000/api/health
 ```
 
-Read the OCI `org.opencontainers.image.revision` and `created` labels with `docker image inspect`; `/api/health` returns the backend build metadata. A documentation-only final commit still needs a label rebuild to describe the final HEAD accurately.
+nginx 工作台位于 <http://127.0.0.1:18080>，后端位于 <http://127.0.0.1:18000>；仅回环绑定。前端采用 Node.js 24 / npm ci / Vite 多阶段构建，运行时由 nginx 提供 SPA 和 `/api` 反代。后端以非 root 运行、cap_drop ALL、无 privileged，数据库位于命名卷。
 
-The delivered verification database is an independent SQLite backup in the Docker named volume. It is a point-in-time copy of the host's evidence, not a second live production database. No production node token, model key or device key is injected into the verification deployment, and periodic collection is disabled there. Historical node heartbeats will become stale; the Docker UI must not be presented as the live device collection service. Live devices continue to send to the existing host backend on port8000. Never mount its database file into a second worker.
+全新卷启动为空库，设备、节点、情报、模型接口和授权需另行配置。运行中的采集节点不会自动获得新库身份和令牌。后端容器不加载 eBPF、不存设备私钥；采集节点和 Falco 在外部 Linux 主机运行。
 
-On the authorized host, `python backend/scripts/restore_collection_node.py start --supervise` reuses the existing SSH/key/receipt scope and restarts the existing pull runner after a disconnect, with bounded backoff. It does not install a host boot service. After host reboot the backend and supervisor must be started again. Stop the supervisor before its SSH child when intentionally stopping it. Falco remains an existing Linux systemd service with Restart=always. OpenWrt logread runs every60 seconds in this acceptance configuration, using connection1 only. It reads a ring buffer, preserves raw LOG receipts and deduplicates across runs/restarts; overwritten ring entries and kernel drops cannot be proven zero. Generic fresh runtime status can be satisfied by Falco alone: always inspect each sensor and asset separately.
+## 本地开发
 
-If a stale remote SSH listener occupies the default tunnel port without forwarding requests, inspect it before restarting the runner. Set `IOTGUARD_COLLECTION_TUNNEL_PORT` to an available unprivileged port (1024–65535) before starting the supervisor; the remote loopback backend URL and reverse forwarding use the same value. The current recovered session uses 18446. Preserve this setting when restarting that supervisor. Do not start a second supervisor alongside the existing one.
+Python 3.12+、Node.js 24，在根目录执行：
 
-## Deployment verification, 2026-10-19
+```powershell
+Copy-Item backend/.env.example backend/.env
+Copy-Item frontend/.env.example frontend/.env
+python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
+python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
+# 新终端
+cd frontend
+npm ci
+npm run dev
+```
 
-Application revision `831488d` is running on the live host API (8000), Docker API (18000), and Docker frontend (18080). Both Docker containers passed health checks; the SPA root, `/soc`, `/devices`, referenced entry assets, and the new business overview API returned HTTP 200. Live and Docker databases were backed up before restart and remain independent.
+前端 <http://localhost:5173>，API <http://localhost:8000/api>。uvicorn 命令通过应用生命周期建表及迁移；不要把遗留阶段启动器当作新环境初始化入口。
 
-The configured registry mirror rejected base-image metadata requests with HTTP 403. Deployment therefore reused the existing local application images as runtime bases, copied the current backend application/migrations/collectors and locally built frontend dist into new labeled images, and recreated services with `--no-build`. This is an incremental application deployment, not a fresh dependency rebuild. Local build recipes and detailed receipts are preserved under ignored `reports/deploy-20261019/`. The API starts directly through uvicorn and the application lifespan, avoiding the legacy launcher’s sample-data cleanup.
+## 软件与设备配置
 
-The live collection node recovered after a stale reverse tunnel was bypassed. OpenWrt completed a fresh authenticated inventory collection: release 25.12.6, kernel 6.12.112, 182 packages, complete inventory. Its logread sensor resumed reporting. Zephyr QEMU returned HTTP 200 from `/api/system`; the live platform refresh verified RTOS 4.4.2, application 0.3.0-iotguard and the device identity endpoint. These are connectivity and collection results, not vulnerability repair acceptance. The Docker frontend remains a snapshot verification UI and does not display live device refreshes.
+参见 [环境重建指南](deploy/README.md)：VMware 参数、Ubuntu / OpenWrt 重建、Zephyr 构建、Pull Runner、Falco 和 systemd 模板。环境变量示例不包含真实凭据。扫描范围、节点注册和主机指纹由操作员在新环境重新配置。
+
+## 数据与检查
+
+本地开发与 Docker 默认使用独立数据库，不能把同一 SQLite 文件同时交给两个工作实例。原 Docker 验证库是宿主库的时间点备份，不是实时采集库。迁移或恢复先停写、排空任务、使用 SQLite 一致性备份，再核验文件属主及权限；不要改为 root 运行解决权限问题。
+
+检查 SPA 根页和深层路由、资源文件、业务 API 及 `/api/health` 的四层状态：backend、collection node、sensor、runtime evidence。全局证据新鲜可能仅由一个资产满足，须再核对每个设备。构建成功与 HTTP 200 不能代替设备与漏洞验收。
+
+镜像源失败应修复网络或 registry mirror 后重试；已有基础镜像的增量发布不能作为从零依赖重建证明。当前环境限制见 [产品状态](docs/STATUS.md)。

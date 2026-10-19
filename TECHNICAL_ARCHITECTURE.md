@@ -1,19 +1,25 @@
-# IoTGuard Technical Architecture
+# 技术架构
 
-Current product scope and acceptance criteria: [IoT business positioning](IOTGUARD_PRODUCT_POSITIONING.md). IoT discovery, evidence-based vulnerability assessment and device-specific repair are the business flow. Four agents, runtime sensors and Harness support that flow. The default SPA route is the IoT workbench; SOC is `/soc`. Zephyr firmware automation remains incomplete; Ubuntu validation is infrastructure evidence only.
+IoTGuard 以设备发现、证据化漏洞判断和设备适用修复为业务主线；四智能体、运行时传感器与 Harness 为支撑。默认工作台 `/`，SOC `/soc`。实现边界见 [产品状态](docs/STATUS.md)。
 
-The formal review path is the four-role pipeline `asset_investigator -> vulnerability_analyst` and `runtime_analyst` -> `decision_planner`. The API stores each run, trace, role execution, evidence reference, and policy gate. Models produce recommendations; operator acceptance remains a separate governance event.
+## 控制面
 
-Post-repair reassessment is an authenticated, read-only admission for a resolved historical risk. It requires an intact current inventory evidence record, records the original risk snapshot, and writes a separate reassessment event. It does not reactivate or rewrite the historical risk and cannot sign business acceptance. Source asset 1/risk 126 and repaired clone asset 3/risk 127 remain independent.
+Vue 3 前端通过 FastAPI 路由访问业务服务；SQLAlchemy / SQLite 保存设备、组件、漏洞、风险、任务与证据。后端启动时完成建表及增量迁移，运行数据保存在独立数据目录。
 
-Collection uses the existing Harness queue, pinned connection signature, pinned collector hash, asset lock, registered Linux pull runner, and official ingestion path. OpenWrt runtime logs use the existing `openwrt_logread_capture.sh` collector and normalize into the existing runtime event table. Evidence is raw, boot-id bound, timestamp-qualified, and deduplicated by the existing event fingerprint.
+## 分析面
 
-The production Docker boundary is an unprivileged API plus unprivileged nginx. Kernel sensors and device SSH credentials stay on their respective external hosts. Repair switches are fail-closed and disabled in the delivered configuration.
+LangGraph 四角色为资产调查、漏洞分析、运行时分析和决策规划。正式入口 `/api/analysis`，正式写入器 `unified.adapter.formal_sink`。模型输出经过证据与治理门禁，操作员裁定独立留痕。只读补证经授权后进入原始清单与同一正式再研判路径。
 
-The model's post-repair advice is separate from a delegated operator disposition. The current user explicitly delegated judgment; audit actors are identified as agents and payloads describe the exact acceptance scope. No field is used to fabricate a personal human signature. Source126 remains open; risk12 retains its original match and official correction and has a separate archive adjudication. The clone's original risk snapshot is preserved and acceptance is append-only.
+## 执行面
 
-Periodic OpenWrt acquisition uses persistent time-bucket request IDs, at most two attempts per60–3600 second interval, pinned host/collector hashes, the shared Harness asset lock and a900 second timeout for its own stalled log jobs. It never releases unrelated repair locks or replays a device write. Each receipt preserves the complete raw log output; events use the established fingerprint with boot identity and actual device timestamps. Events/raw evidence may commit before the final Harness receipt; crash replay is idempotent, not a cross-table atomic transaction. Ring-buffer history loss remains unavailable. SSH supervisor recovery is bounded by the current host session, not an installed autostart service.
+Harness 使用计划哈希、连接签名、Collector 摘要、资产锁、预算与产物注册表约束任务。外部 Linux Pull Runner 领取已排队任务，经 SSH 指纹钉扎执行固定采集脚本并回传原文。OpenWrt logread 周期拉取、保留 boot_id 与原始时间、幂等去重；不是 eBPF，也不能证明零丢失。
 
-Security checks cover authenticated ingestion and governance APIs, node credentials, fixed-script execution, Harness approvals, independent lab scope, browser calls and Docker isolation. Pip/npm vulnerability audits and Bandit are independent checks; they do not upgrade the historical Mimosa partial coverage to full coverage. See the final acceptance report for actual counts and residual boundaries.
+## 证据与追踪
 
-Behavior-chain runtime calculations are reused only within one request for the same asset, package and scenario. There is no cross-request cache. Runtime event counts use a database aggregate; source classification is applied before pagination so sparse observation modes remain discoverable. Post-repair review, scoped delegated acceptance and audit corrections are displayed separately from the preserved historical risk judgment.
+资产清单、官方公告原文哈希、运行时 SecurityEvidence、TraceRun / TraceEvent、智能体与工具审计关联同一设备和任务。证据或原文可能早于最终任务回执提交，崩溃重试依赖幂等，不宣称跨表原子事务。
+
+## 部署边界
+
+Compose 启动非 root API 与 nginx；数据使用命名卷。采集节点、Falco 与设备凭据在外部 Linux 主机。Zephyr QEMU HTTP 身份由后端读取，不具备 SSH、包管理或 eBPF。QEMU 宿主固件切换不等于签名 OTA。
+
+身份、写开关、人审与独立实验权限见 [权限规范](docs/SECURITY_MODEL.md)，环境模板见 [重建指南](deploy/README.md)。

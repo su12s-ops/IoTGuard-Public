@@ -1,0 +1,18 @@
+[Unit]
+Description=IoTGuard Zephyr QEMU sensor (trusted test firmware only)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iotguard
+Group=iotguard
+WorkingDirectory=/opt/iotguard
+ExecStart=/bin/bash /opt/iotguard/firmware/zephyr-sensor-01/start-qemu.sh /opt/iotguard-zephyr/build-arm 8080
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

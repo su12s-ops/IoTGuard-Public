@@ -27,6 +27,8 @@ id_ed25519*
 *.vmem
 *.iso
 *.img
+# New local VM configurations are generated outside the source tree by default.
+/deploy/generated/
 
 # ── 工具与测试缓存 ────────────────────────────────────────────────
 __pycache__/

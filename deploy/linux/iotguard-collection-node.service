@@ -1,0 +1,19 @@
+[Unit]
+Description=IoTGuard registered Linux collection node
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=iotguard
+Group=iotguard
+WorkingDirectory=/opt/iotguard
+EnvironmentFile=/etc/iotguard/collection-node.env
+ExecStart=/usr/bin/python3 /opt/iotguard/backend/scripts/collection_node_runner.py --serve --interval 3
+Restart=on-failure
+RestartSec=10
+NoNewPrivileges=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

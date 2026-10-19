@@ -5,7 +5,7 @@
  * 身份与固件信息全部来自编译配置与运行时状态（内核版本/board/MAC/构建时间），
  * 遥测标记 simulated，不冒充实物采样；只读接口，无任何控制端点。
  * 板级目标：qemu_cortex_a9（系统 qemu-system-arm xilinx-zynq-a9 + SLIRP hostfwd
- * 提供入站可达性；x86_64 路径因 e1000 驱动崩溃已弃用，见 IOT_STAGE7_ZEPHYR_REPORT.md）。
+ * 提供入站可达性；x86_64 路径因 e1000 驱动崩溃已弃用，见 deploy/README.md）。
  */
 #include <zephyr/kernel.h>
 #include <zephyr/kernel_version.h>

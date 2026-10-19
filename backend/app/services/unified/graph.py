@@ -1,6 +1,6 @@
 """唯一正式编排器：LangGraph StateGraph（Stage 9B）。
 
-图结构（IOT_UNIFIED_FOUR_AGENT_ARCHITECTURE.md §4.1）：
+图结构（TECHNICAL_ARCHITECTURE.md）：
 
     START → prepare → prepare_evidence → investigate_asset
           → {analyze_vulnerability ∥ analyze_runtime}
