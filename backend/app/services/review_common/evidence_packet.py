@@ -158,14 +158,33 @@ def build_evidence_packet(db: Session, risk: models.RiskAssessment) -> EvidenceP
     add("COVERAGE", "sensor_coverage", "collector_heartbeat", "contextual", sensor_coverage,
         "心跳和采集范围不等同于漏洞不存在；运行时关联不等同于已利用。")
     if asset.distribution == "openwrt":
-        advisory = db.query(models.OpenWrtAdvisory).filter_by(
-            cve_id=vulnerability.cve_id, package_name=match.package_name, release=asset.os_version
-        ).one_or_none()
-        add("OPENWRT", "vendor_applicability", "operator_supplied_openwrt_advisory", "contextual",
-            {"source_url": advisory.source_url if advisory else "", "release": asset.os_version,
-             "affected_versions": json.loads(advisory.affected_versions_json) if advisory else [],
-             "fixed_versions": json.loads(advisory.fixed_versions_json) if advisory else [],
-             "content_verified_automatically": False}, "记录由操作人员依据官方公告整理，需结合原文核对。")
+        from app.services import openwrt_intel
+
+        records = openwrt_intel.records_for_match(
+            db, vulnerability.cve_id, match.package_name, asset.os_version)
+        if records:
+            advisory = records[0]
+            note = openwrt_intel.notes_of(advisory)
+            normalized = note.get("provenance") == "openwrt_ghsa_normalized"
+            add("OPENWRT", "vendor_applicability",
+                "openwrt_ghsa_normalized" if normalized else "operator_supplied_openwrt_advisory",
+                "direct" if normalized else "contextual",
+                {"source_url": advisory.source_url, "release": advisory.release,
+                 "scope": note.get("scope", ""),
+                 "affected_versions": json.loads(advisory.affected_versions_json or "[]"),
+                 "fixed_versions": json.loads(advisory.fixed_versions_json or "[]"),
+                 "official_range": note.get("official_range", ""),
+                 "ghsa_id": note.get("ghsa_id", ""),
+                 "content_sha256": note.get("content_sha256", ""),
+                 "fix_statement": note.get("fix_statement"),
+                 "content_verified_automatically": normalized},
+                "官方 GHSA 快照规范化记录（含内容哈希，可对照原文核验）。"
+                if normalized else "记录由操作人员依据官方公告整理，需结合原文核对。")
+        else:
+            add("OPENWRT", "vendor_applicability", "operator_supplied_openwrt_advisory", "contextual",
+                {"source_url": "", "release": asset.os_version, "affected_versions": [],
+                 "fixed_versions": [], "content_verified_automatically": False},
+                "未找到对应 OpenWrt 官方/操作员公告记录；适用性依据需人工补充。")
     # SecurityEvidence 统一证据（eBPF 进程/网络/文件三类监控）进入智能体证据包。
     from app.services.security_evidence import build_process_tree, query_evidence
     device_evidence = query_evidence(db, device_id=asset.hostname, limit=200)

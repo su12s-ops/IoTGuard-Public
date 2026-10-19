@@ -332,8 +332,30 @@ def _run_check(item, root, kind, target):
     return result
 
 
+def openwrt_lab_write_state(asset_id):
+    """Isolated OpenWrt lab-clone write contract (fail-closed).
+
+    The production master switch LINUXGUARD_ENABLE_DEVICE_REPAIR is deliberately
+    NOT consulted here and this scope never substitutes for it: a lab approval
+    cannot be granted by turning on the production device switch, and vice
+    versa. Empty or unset scope rejects every write.
+    """
+    if os.getenv("LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR", "0") != "1":
+        return False, "openwrt_lab_repair_disabled"
+    scope = {part.strip() for part in (os.getenv("LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE", "") or "").split(",") if part.strip()}
+    if str(asset_id) not in scope:
+        return False, "openwrt_lab_asset_scope_not_declared"
+    return True, ""
+
+
+def _device_write_enabled(asset_id):
+    if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") == "1":
+        return True
+    return openwrt_lab_write_state(asset_id)[0]
+
+
 def install_registered_package(connection, item, path, rollback=False):
-    if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") != "1":
+    if not _device_write_enabled(connection.asset_id):
         raise ValueError("设备写操作未启用；请先完成产物、回退和检查配置")
     client = device_access.open_connection(connection)
     remote = "/tmp/linuxguard-" + uuid.uuid4().hex + path.suffix
@@ -497,7 +519,7 @@ def execute(db, run, verify_only=False):
                 old, _, _ = load_artifact(plan["rollback_artifact_id"])
                 if digest(old) != plan["rollback_artifact_hash"]:
                     raise ValueError("回退产物变化，审批已失效")
-                if os.getenv("LINUXGUARD_ENABLE_DEVICE_REPAIR", "0") != "1":
+                if not _device_write_enabled(run.asset_id):
                     raise ValueError("设备写操作未启用")
                 write_started = True
                 tool(db, run, "install_registered_package", lambda: install_registered_package(connection, item, path),

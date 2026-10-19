@@ -37,6 +37,10 @@ npm run dev
 
 参见 [环境重建指南](deploy/README.md)：VMware 参数、Ubuntu / OpenWrt 重建、Zephyr 构建、Pull Runner、Falco 和 systemd 模板。环境变量示例不包含真实凭据。扫描范围、节点注册和主机指纹由操作员在新环境重新配置。
 
+设备写入开关三轨且互不可替代：生产总开关 `LINUXGUARD_ENABLE_DEVICE_REPAIR`、Ubuntu 实验作用域（`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` + `LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE`）、OpenWrt 实验作用域（`LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR` + `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`）。实验作用域要求精确声明资产 ID，空值或未列资产一律 fail-closed；打开生产开关不会授予实验写入，反之亦然。默认全部保持 0。
+
+OpenWrt-Lab 隔离克隆（VMware）与管理网段、专用采集密钥（`LINUXGUARD_DEVICE_OPENWRT_LAB_KEY`）的接线见 `IOTGUARD_OPENWRT_REAL_SECURITY_CLOSURE_REPORT.md` 与 `deploy/README.md`；修复产物注册表经 `LINUXGUARD_REPAIR_MANIFEST` 挂载，产物与检查脚本须 SHA256 登记且位于清单目录内。
+
 ## 数据与检查
 
 本地开发与 Docker 默认使用独立数据库，不能把同一 SQLite 文件同时交给两个工作实例。原 Docker 验证库是宿主库的时间点备份，不是实时采集库。迁移或恢复先停写、排空任务、使用 SQLite 一致性备份，再核验文件属主及权限；不要改为 root 运行解决权限问题。

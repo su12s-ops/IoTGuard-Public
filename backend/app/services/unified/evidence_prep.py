@@ -386,12 +386,23 @@ def _source_texts(db: Session, cve_id: str, release: str,
     advisories = db.query(models.OpenWrtAdvisory).filter_by(
         cve_id=cve_id.split(":", 1)[0]).all()
     if advisories:
+        from app.services import openwrt_intel
+
+        def _advisory_note(item):
+            note = openwrt_intel.notes_of(item)
+            statement = note.get("fix_statement") or {}
+            return " ".join(part for part in (
+                f"官方范围「{note.get('official_range', '')}」（{note.get('scope', '')} 域）"
+                if note.get("provenance") == "openwrt_ghsa_normalized" else "操作员登记记录",
+                str(statement.get("text") or "")) if part)
+
         bundle["openwrt_advisory"] = {
-            "source": "openwrt_advisory", "status": "operator_supplied",
+            "source": "openwrt_advisory", "status": "operator_supplied_or_normalized",
             "records": [{
                 "package_name": item.package_name, "release": item.release,
                 "affected_versions": json.loads(item.affected_versions_json or "[]"),
                 "fixed_versions": json.loads(item.fixed_versions_json or "[]"),
+                "note": _advisory_note(item),
             } for item in advisories[:MAX_SOURCE_RECORDS]],
         }
     texts: list[dict[str, str]] = []

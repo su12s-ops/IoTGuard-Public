@@ -189,12 +189,23 @@ def discover(db, cidr, ports, timeout=0.3):
             "scope": str(network), "note": "仅发现指定端口有响应的设备；无响应不能证明设备不存在，开放端口不能确认设备型号。"}
 
 
-def match_openwrt(db, asset, target_cves):
-    """Exact vendor-scoped versions. Never compare opkg/apk with dpkg semantics."""
+def match_openwrt(db, asset, target_cves, stats=None):
+    """Exact vendor-scoped versions. Never compare opkg/apk with dpkg semantics.
+
+    候选发现与判定分层：候选 = 官方/操作员公告记录按组件名（含源码→二进制
+    拆分别名）命中已安装包，或通用情报库同名命中；判定 = 依据公告记录的
+    版本域（精确/release 系列/分支）给出 affected、fixed、not_affected、
+    insufficient_data 四态及理由。组件未安装仅计入 absent 统计，
+    不产生设备匹配行，也不解读为安全。
+    """
+    from app.services import openwrt_intel
+
     packages = {p.package_name: p for p in asset.packages}
-    advisories = db.query(models.OpenWrtAdvisory).filter_by(release=asset.os_version).all()
+    advisories = db.query(models.OpenWrtAdvisory).all()
+    if target_cves:
+        advisories = [a for a in advisories if a.cve_id in target_cves]
     for advisory in advisories:
-        if target_cves and advisory.cve_id not in target_cves:
+        if openwrt_intel.is_normalized_record(advisory):
             continue
         if not db.query(models.VulnerabilityInfo).filter_by(cve_id=advisory.cve_id).first():
             db.add(models.VulnerabilityInfo(cve_id=advisory.cve_id,
@@ -202,36 +213,48 @@ def match_openwrt(db, asset, target_cves):
                 affected_package=advisory.package_name, source="openwrt_operator_advisory",
                 references=advisory.source_url, description="依据保留的人工厂商适用性记录重建；未自动验证公告正文。"))
             db.flush()
-    candidates = {(a.cve_id, a.package_name): a for a in advisories if not target_cves or a.cve_id in target_cves}
+    advisory_groups: dict[tuple[str, str], list] = {}
+    for advisory in advisories:
+        advisory_groups.setdefault((advisory.cve_id, advisory.package_name), []).append(advisory)
+    candidates: dict[tuple[str, str], list] = {}
+    absent: dict[str, set[str]] = {}
+    for (cve_id, component), rows in advisory_groups.items():
+        installed_names = [name for name in openwrt_intel.installed_names_for(component)
+                           if name in packages]
+        if installed_names:
+            # 每个组件只取一个代表性安装包（首选命中），避免同一 CVE 重复告警。
+            candidates.setdefault((cve_id, installed_names[0]), []).extend(rows)
+        else:
+            absent.setdefault(component, set()).add(cve_id)
     # An upstream name match is only a candidate without distribution applicability.
     for vuln in db.query(models.VulnerabilityInfo).all():
         if ":" in vuln.cve_id or (target_cves and vuln.cve_id not in target_cves):
             continue
+        if vuln.source in {"openwrt_operator_advisory", "openwrt_official_ghsa"}:
+            continue  # 已由公告记录路径覆盖（含别名解析）
         if vuln.affected_package in packages:
-            candidates.setdefault((vuln.cve_id, vuln.affected_package), None)
+            candidates.setdefault((vuln.cve_id, vuln.affected_package), [])
     result = []
-    for (cve_id, name), advisory in candidates.items():
+    evaluation_stats: dict[str, int] = {}
+    for (cve_id, name), rows in sorted(candidates.items()):
         package = packages.get(name)
         if not package:
             continue
         installed = package.package_version or ""
-        fixed = json.loads(advisory.fixed_versions_json) if advisory else []
-        affected = json.loads(advisory.affected_versions_json) if advisory else []
-        status, code, confidence, is_affected = "insufficient_data", "openwrt_applicability_missing", 0.35, True
-        reason = "缺少与当前 OpenWrt 固件版本对应的厂商适用性证据，需复核；不采用其他发行版修复版本。"
         if not asset.inventory_complete:
-            code, confidence, reason = "inventory_incomplete", 0.0, "本次软件清单不完整，不能确认修复。"
-        elif advisory and installed in fixed:
-            status, code, confidence, is_affected = "fixed", "openwrt_exact_fixed_version", 0.95, False
-            reason = f"版本精确命中人工整理的 OpenWrt 已修复版本记录：{advisory.source_url}"
-        elif advisory and installed in affected:
-            status, code, confidence = "affected", "openwrt_exact_affected_version", 0.95
-            reason = f"版本精确命中人工整理的 OpenWrt 受影响版本记录：{advisory.source_url}"
-        values = dict(installed_version=installed, fixed_version=fixed[0] if fixed else "",
-                      affected=is_affected, match_status=status, reason_code=code, match_reason=reason, confidence=confidence)
+            outcome = {"status": "insufficient_data", "code": "inventory_incomplete",
+                       "confidence": 0.0, "affected": True, "fixed_version": "",
+                       "reason": "本次软件清单不完整，不能确认修复。"}
+        else:
+            outcome = openwrt_intel.evaluate_candidate(asset.os_version, installed, rows)
+        values = dict(installed_version=installed, fixed_version=outcome["fixed_version"],
+                      affected=outcome["affected"], match_status=outcome["status"],
+                      reason_code=outcome["code"], match_reason=outcome["reason"],
+                      confidence=outcome["confidence"])
         values["evidence_fingerprint"] = hashlib.sha256(json.dumps(
             {**values, "release": asset.os_version, "package": name,
-             "source": advisory.source_url if advisory else ""}, sort_keys=True).encode()).hexdigest()
+             "sources": [openwrt_intel.record_digest(r) for r in rows]},
+            sort_keys=True).encode()).hexdigest()
         row = db.query(models.VulnerabilityMatch).filter_by(asset_id=asset.id, cve_id=cve_id, package_name=name).one_or_none()
         if row is None:
             row = models.VulnerabilityMatch(asset_id=asset.id, cve_id=cve_id, package_name=name)
@@ -241,5 +264,12 @@ def match_openwrt(db, asset, target_cves):
         row.active = True
         row.updated_at = models.utcnow()
         result.append((asset.id, cve_id, name))
+        evaluation_stats[outcome["status"]] = evaluation_stats.get(outcome["status"], 0) + 1
     db.flush()
+    if stats is not None:
+        stats.update({"asset_id": asset.id, "os_version": asset.os_version,
+                      "packages_total": len(packages), "advisory_rows": len(advisories),
+                      "candidates": len(candidates), "matched": len(result),
+                      "evaluated": evaluation_stats,
+                      "absent_components": {k: sorted(v) for k, v in sorted(absent.items())}})
     return result

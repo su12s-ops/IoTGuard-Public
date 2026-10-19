@@ -32,3 +32,10 @@ VMX 工具仅创建虚拟机配置，不创建磁盘、安装系统或启动虚�
 - 两个新 Bash 脚本通过语法检查；所有当前 Markdown 本地链接有效。
 - SLCR 补丁原先存在无效 hunk 计数和上下文格式，本次仅修正补丁格式；已对官方 v4.4.2 `soc.c` 通过 `git apply --check`。
 - 尚未执行新主机 apt 安装、完整 west / SDK 构建或 VMware 导入启动。
+
+## 2026-10-19 OpenWrt 闭环轮
+
+- 后端全量回归 **761 passed / 0 failed**（含 OpenWrt 实验作用域写契约 5 项新测试：未配置拒绝、资产未声明拒绝、声明资产放行、生产开关不越权授实验、范围外资产 fail-closed）。
+- 前端 `npm run build` 通过（PURE 注释警告不阻塞）；`docker compose config` 校验通过。
+- 变更文件敏感扫描（令牌/私钥/控制令牌模式）0 命中；密钥、镜像、apk 与修复清单仅存于 gitignored `local-archive/`。
+- 真实设备验证（只读）：OpenWrt-01 基线封存与 S0-Lab 匹配一致性实测，见 `IOTGUARD_OPENWRT_REAL_SECURITY_CLOSURE_REPORT.md`。

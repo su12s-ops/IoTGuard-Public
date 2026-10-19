@@ -51,15 +51,26 @@ def tool_query_intelligence_sources(db: Session, cve_id: str = "", release: str 
     bundle = get_source_bundle(db, cve_id, release=release, package_name=package_name)
     advisories = db.query(models.OpenWrtAdvisory).filter_by(cve_id=cve_id).all()
     if advisories:
+        from app.services import openwrt_intel
+
+        def _record_note(item):
+            note = openwrt_intel.notes_of(item)
+            if note.get("provenance") == "openwrt_ghsa_normalized":
+                return (f"官方 GHSA 规范化记录（{note.get('ghsa_id', '')}，内容哈希 "
+                        f"{note.get('content_sha256', '')[:16]}…；范围域 {note.get('scope')}；"
+                        f"官方原文范围「{note.get('official_range', '')}」）。")
+            return "操作员依据官方公告人工登记，需结合原文核对；仅适用于对应 release。"
+
         bundle["openwrt_advisory"] = {
-            "status": "operator_supplied",
+            "status": "operator_supplied_or_normalized",
             "records": [{
                 "package_name": item.package_name,
                 "release": item.release,
+                "scope": openwrt_intel.notes_of(item).get("scope", ""),
                 "affected_versions": json.loads(item.affected_versions_json or "[]"),
                 "fixed_versions": json.loads(item.fixed_versions_json or "[]"),
                 "source_url": item.source_url,
-                "note": "操作员依据官方公告人工登记，需结合原文核对；仅适用于对应 release。",
+                "note": _record_note(item),
             } for item in advisories],
         }
     official = []

