@@ -37,7 +37,7 @@ npm run dev
 
 参见 [环境重建指南](deploy/README.md)：VMware 参数、Ubuntu / OpenWrt 重建、Zephyr 构建、Pull Runner、Falco 和 systemd 模板。环境变量示例不包含真实凭据。扫描范围、节点注册和主机指纹由操作员在新环境重新配置。
 
-设备写入相关配置包括生产总开关 `LINUXGUARD_ENABLE_DEVICE_REPAIR`、Ubuntu 实验作用域（`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` + `LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE`）、OpenWrt 实验作用域（`LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR` + `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`）。OpenWrt 实验子门禁要求精确资产 ID，但最终门禁当前仍允许生产总开关单独放行，不能据此声称生产/实验资产域已完全隔离。已知局限见 [权限规范](docs/SECURITY_MODEL.md)；标准部署全部保持 0。
+设备写入相关配置包括生产开关 `LINUXGUARD_ENABLE_DEVICE_REPAIR`、Ubuntu 实验作用域（`LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR` + `LINUXGUARD_UBUNTU_LAB_ASSET_SCOPE`）、OpenWrt 实验作用域（`LINUXGUARD_ENABLE_OPENWRT_LAB_REPAIR` + `LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE`）。OpenWrt 最终安装与回退先核验持久 `repair_domain`：`production` 仅使用生产开关；`openwrt_lab` 必须同时满足实验开关和精确资产范围，生产开关不能越权；`unassigned` 拒绝写入。登记及计划绑定见 [权限规范](docs/SECURITY_MODEL.md)；标准部署全部保持 0。
 
 OpenWrt-Lab 隔离克隆（VMware）与管理网段、专用采集密钥（`LINUXGUARD_DEVICE_OPENWRT_LAB_KEY`）的接线见 `IOTGUARD_OPENWRT_REAL_SECURITY_CLOSURE_REPORT.md` 与 `deploy/README.md`；修复产物注册表经 `LINUXGUARD_REPAIR_MANIFEST` 挂载，产物与检查脚本须 SHA256 登记且位于清单目录内。
 
