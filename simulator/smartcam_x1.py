@@ -344,6 +344,20 @@ class _MqttBroker:
         self._peers[conn_id] = peer
 
 
+def _stop_listener(listener):
+    # close() alone does not interrupt another thread's accept() on Linux.
+    # Wake it before joining so a restart can reliably bind the same port.
+    try:
+        listener.server.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
+    listener.server.close()
+    if listener.ident is not None and threading.current_thread() is not listener:
+        listener.join(timeout=3)
+        if listener.is_alive():
+            raise RuntimeError("simulator listener failed to stop")
+
+
 class _MqttListener(threading.Thread):
     daemon = True
 
@@ -370,10 +384,7 @@ class _MqttListener(threading.Thread):
             threading.Thread(target=self.broker.handle, args=(conn, conn_id), daemon=True).start()
 
     def stop(self):
-        try:
-            self.server.close()
-        except OSError:
-            pass
+        _stop_listener(self)
 
 
 # ── RTSP 控制面 ───────────────────────────────────────────────────────────────
@@ -463,10 +474,7 @@ class _RtspListener(threading.Thread):
             threading.Thread(target=_rtsp_handle, args=(conn,), daemon=True).start()
 
     def stop(self):
-        try:
-            self.server.close()
-        except OSError:
-            pass
+        _stop_listener(self)
 
 
 # ── SSH 服务 ─────────────────────────────────────────────────────────────────
@@ -558,10 +566,7 @@ class _SshListener(threading.Thread):
                 pass
 
     def stop(self):
-        try:
-            self.server.close()
-        except OSError:
-            pass
+        _stop_listener(self)
 
 
 # ── 组装与程序化接口 ─────────────────────────────────────────────────────────

@@ -131,8 +131,8 @@ def test_sigkill_recovery_replays_and_dedupes(tmp_path):
         proc2 = __import__("subprocess").Popen(base_cmd, stdin=__import__("subprocess").PIPE,
                                                stdout=__import__("subprocess").PIPE,
                                                stderr=__import__("subprocess").PIPE, text=True)
-        proc2.stdin.close()
-        out, err = proc2.communicate(timeout=120)
+        # communicate owns EOF/flush; pre-closing stdin fails on POSIX.
+        out, err = proc2.communicate(input="", timeout=120)
         assert proc2.returncode == 0, f"恢复运行应成功退出：{out} / {err}"
         with seen_lock:
             assert sorted(set(seen)) == [1000 + n for n in range(20)], \
