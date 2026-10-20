@@ -70,3 +70,8 @@ python scripts/observe_runtime.py --seconds 86400 --interval 30 --output reports
 ```
 
 输出独立记录 API、节点、传感器与证据新鲜度；任何失败以非零退出，丢失计数保持未知。短窗口通过不等于 24 小时或宿主重启验收。
+
+
+## 最终验收后的部署边界
+
+公开交付对应提交 `1c234b7bbd62aa0d1d799b7a577a9d157af21aaf`。标准 Compose 构建已复核；三个设备写开关保持关闭，资产未登记域时拒绝写入。虚拟设备运行最长观察约 600 秒，不能宣称 24 小时稳定。见 [最终验收报告](IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)。

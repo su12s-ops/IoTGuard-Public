@@ -29,3 +29,8 @@ Harness 使用计划哈希、连接签名、Collector 摘要、资产锁、预�
 Compose 启动非 root API 与 nginx；数据使用命名卷。采集节点、Falco 与设备凭据在外部 Linux 主机。Zephyr QEMU HTTP 身份由后端读取，不具备 SSH、包管理或 eBPF。QEMU 宿主固件切换不等于签名 OTA。
 
 身份、写开关、人审与独立实验权限见 [权限规范](docs/SECURITY_MODEL.md)，环境模板见 [重建指南](deploy/README.md)。
+
+
+## 最终虚拟设备验收边界（2026-10-20）
+
+架构验收使用 VMware OpenWrt、QEMU Zephyr 和 Ubuntu/Falco 采集线。Zephyr 设备级公告判断绑定实际 ELF 与 `.config` SHA256；缺少 west manifest/源码 commit 时保持证据不足。签名 QEMU 更新验证不代表实体 OTA。详见 [最终验收报告](IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)。

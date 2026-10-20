@@ -8,7 +8,7 @@
 - 唯一正式四智能体；对象级人审、只读补证、历史裁定与修复后复评。
 - OpenWrt 25.12.6 / 内核 6.12.112 的完整 182 包采集、日志回传、升级和当前版本快照恢复验证。
 - Zephyr RTOS 4.4.2 / 应用 0.3.0 的 QEMU 构建、HTTP 身份、应用固件回退、崩溃恢复及复采。
-- Zephyr 281 条、OpenWrt 9 条官方公告快照存储、来源约束、哈希与保守版本查询。
+- Zephyr 281 条、OpenWrt 9 条官方公告快照存储、来源约束、哈希与保守版本查询；本轮 Zephyr 125 条开放项分类为 54 potentially_affected、71 insufficient_data。
 - Ubuntu 独立克隆三个 curl 同源包修复与复采；不代表源 Ubuntu 或 IoT 设备已修复。
 - 非 root API 与 nginx Docker 部署；设备凭据及内核传感器在容器之外。
 - OpenWrt 官方 GHSA 情报规范化接入与设备级四态匹配（零 CVE 专用代码，2026-10-19 报告）。
@@ -38,3 +38,6 @@
 ## 2026-10-20 修复交付
 
 本轮代码修复、依赖升级、QEMU 签名更新实测、Windows 服务恢复与剩余验收项统一见 [交付报告](DELIVERY_20261020.md)。历史训练约束见 [训练与维护规范](TRAINING_AND_MAINTENANCE.md)。旧报告中的当时故障不覆盖本轮新结果，反之本轮结果也不回写历史失败。
+
+
+最终虚拟设备验收报告：[`IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md`](../IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)。

@@ -18,7 +18,7 @@ OpenWrt 原机与 Lab 的 logread 现已回传近期证据；它们不是 eBPF�
 ## 安全验收仍开放的项
 
 1. 本轮 OpenWrt 匹配仍包含 CVE-2026-62948 的 LuCI/odhcpd 分支候选。进一步通过钉扎 SSH 只读确认两台设备均启用 DHCPv6 server、RA server，odhcpd 运行并监听 UDP/547，记录了二进制与 LuCI 文件哈希。[官方公告](https://github.com/openwrt/openwrt/security/advisories/GHSA-hhmc-92hw-535f)描述的链路涉及 DHCPv6 主机名写入和管理员租约页面；因此相关前置条件不能以“不存在”排除。本轮未发送注入载荷、未改租约或网络配置，源码/补丁适用性仍未闭合，不能因 cgi-io 已修复而接受所有漏洞。
-2. Zephyr 官方匹配：0 条精确确认受影响、54 条 potentially_affected、70 条 insufficient_data、154 条 not_in_reported_range。候选和证据不足均不是已确认漏洞，也不能当作已排除；尚需逐条 Kconfig/组件/链接及可达性核验。
+2. Zephyr 官方匹配：0 条精确确认受影响、54 条 potentially_affected、71 条 insufficient_data、156 条 not_in_reported_range。候选和证据不足均不是已确认漏洞，也不能当作已排除；尚需逐条 Kconfig/组件/链接及可达性核验。
 3. Ubuntu Falco 初始停止，管理员已启动。现有服务回传至宿主 VMnet 地址，本轮用仅允许该注册节点的本机转发恢复连接，未修改远程凭据；真实只读验收请求已有进程与网络事件回执。其丢失计数仍 unavailable，不能写成 0；Ubuntu 探针也不替代 OpenWrt 或 RTOS 的运行时覆盖。
 4. 本轮新清单的正式修复后复评已结束，约50分18秒；报告为 human_review，门禁 pending_human_review。资产、运行时、决策角色完成，漏洞角色引用未注册的外部编号/URL/哈希作为系统证据ID，被拒绝并降级；补查未取得合格报告。门禁保留 agent_degraded、confidence_below_0.70、evidence_partial，不能记为完整四角色通过；原始失败与补查回执均保留。
 5. 人工业务签收由操作员明确记录；机器检查、模型建议与用户要求“进行验收”不自动构成签署接受剩余风险。本轮没有代签。
@@ -41,3 +41,8 @@ OpenWrt 原机与 Lab 的 logread 现已回传近期证据；它们不是 eBPF�
 原始证据、备份、业务检查脚本、HTTP 回归结果和复评回执保存在 gitignored `reports/device-acceptance-20261019/`。其中可能含实验环境身份，公开交付只包含本页等脱敏说明，不提交数据库、运行日志或凭据。
 
 历史软件包修复与真实 S2→S1→S2 快照恢复见 [OpenWrt 专项报告](../IOTGUARD_OPENWRT_REAL_SECURITY_CLOSURE_REPORT.md)。
+
+
+## 2026-10-20 最终虚拟设备验收
+
+最终汇总见 [IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md](../IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)。125 条开放 Zephyr 复核项分类为 54 条 potentially_affected、71 条 insufficient_data；确认 affected 为 0。最长连续健康窗口约 600 秒，未达到 24 小时。Windows CI Run 39299728933 在提交 1c234b7 上成功。

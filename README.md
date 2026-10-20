@@ -43,6 +43,8 @@ flowchart LR
 
 官方公告快照已支持 Zephyr 281 条、OpenWrt 9 条导入与查询；不表示全部依赖 CVE 覆盖或设备漏洞已确认。详见 [产品状态](docs/STATUS.md)。
 
+最终虚拟设备验收结论见 [IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md](IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)，其中明确 CI、Zephyr 125 条开放复核项、运行时长及人工签署边界。
+
 ## 快速启动
 
 需要 Git、Docker Engine / Docker Desktop 与 Docker Compose v2。在项目根目录执行：
