@@ -320,6 +320,11 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
         (models.LinuxAsset.hostname == device_id) | (models.LinuxAsset.ip_address == device_id)
     ).first()
     gaps: list[str] = []
+    pending_evidence = db.query(models.RuntimeEvidenceJob).join(
+        models.RuntimeEvent, models.RuntimeEvidenceJob.event_id == models.RuntimeEvent.id
+    ).filter(models.RuntimeEvent.hostname.in_(keys)).count()
+    if pending_evidence:
+        gaps.append(f"{pending_evidence} 条运行时事件已持久化但证据仍待处理；当前分析不覆盖这部分事件")
     sensor_rows = []
     if asset is None:
         gaps.append("该标识未登记为 Linux 资产，无法查询采集器心跳覆盖")
@@ -343,6 +348,11 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
             gaps.append(f"传感器 {sensor['sensor_id']} 报告丢失 {sensor['dropped_events']} 条事件")
         if sensor["status"] == "stale":
             gaps.append(f"传感器 {sensor['sensor_id']} 心跳已过期（{sensor['age_seconds']}s 未更新）")
+        if sensor["source"] == "c_ebpf":
+            for metric in ("map_errors", "read_errors", "unmatched_exits", "stdout_errors", "abi_errors"):
+                value = sensor["capabilities"].get(metric)
+                if value:
+                    gaps.append(f"传感器 {sensor['sensor_id']} {metric}={value}，该层观测存在缺口")
         if sensor["source"] == "logread":
             gaps.append(f"传感器 {sensor['sensor_id']} 为 logread 拉取式降级采集（设备原生日志，"
                         "非 eBPF 内核级观测；ring 覆盖窗口外的历史不可知）")
@@ -377,7 +387,7 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
             models.SecurityEvidence.process_exec_id == "",
         ).count()
         if sessionless:
-            gaps.append(f"{sessionless} 条证据缺进程会话身份（P1-3 升级前的存量数据，无法参与行为链聚合）")
+            gaps.append(f"{sessionless} 条证据缺进程会话身份（历史数据或挂载前进程，不能推定执行身份）")
 
     return {
         "device_id": device_id, "found": True,
@@ -386,6 +396,7 @@ def tool_query_runtime_data_quality(db: Session, device_id: str) -> dict[str, An
         "dropped_events": {row["sensor_id"]: ("unavailable" if row["dropped_events"] is None
                                               else row["dropped_events"]) for row in sensor_rows},
         "freshness": freshness,
+        "evidence_pending": pending_evidence,
         "data_gaps": gaps,
         "note": "缺口如实列出；覆盖缺失或证据过期时，未观察到行为不得解释为未发生。",
     }

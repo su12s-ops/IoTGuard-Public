@@ -1,0 +1,113 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Vulnerability &amp; risk · triage</span>
+      <h1>漏洞与风险</h1>
+      <p class="sub">公告候选、版本适用性与运行时证据分开表达，风险分只是排序，不是结论。</p>
+      <div class="meta"><span>49 条高风险</span><i class="sep"></i><span>272 条资产级风险</span><i class="sep"></i><span>3 条待人工审查</span><i class="sep"></i><span>本周 +6</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>重新计算</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-play"/></svg>进入风险审查</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:230px minmax(0,1fr)">
+    <div class="grid g-2-1">
+      <section class="card feature">
+        <div class="card-head">
+          <div><div class="card-title">风险矩阵</div><div class="card-desc">影响 × 可能性 · 数字为当前对象数</div></div>
+          <span class="chip crit"><i class="dot"></i>1 严重 · 48 高危</span>
+        </div>
+        <div class="card-body" style="display:flex;gap:18px;padding:6px 17px 10px">
+          <div style="flex:1;min-width:0;height:150px">
+            <div class="heatmap">
+              <div class="hm-axis y">高</div>
+              <div class="hm-cell l3"></div><div class="hm-cell l4"><span class="hm-dot">2</span></div><div class="hm-cell l4"><span class="hm-dot">5</span></div><div class="hm-cell l5"></div><div class="hm-cell l5"></div>
+              <div class="hm-axis y"></div>
+              <div class="hm-cell l2"></div><div class="hm-cell l3"></div><div class="hm-cell l4"><span class="hm-dot">8</span></div><div class="hm-cell l5"><span class="hm-dot">12</span></div><div class="hm-cell l5"><span class="hm-dot">6</span></div>
+              <div class="hm-axis y">中</div>
+              <div class="hm-cell l1"></div><div class="hm-cell l2"></div><div class="hm-cell l4"><span class="hm-dot">3</span></div><div class="hm-cell l5"><span class="hm-dot">2</span></div><div class="hm-cell l6"><span class="hm-dot">1</span></div>
+              <div class="hm-axis y"></div>
+              <div class="hm-cell l1"></div><div class="hm-cell l1"></div><div class="hm-cell l2"></div><div class="hm-cell l3"></div><div class="hm-cell l4"></div>
+              <div class="hm-axis y">低</div>
+              <div class="hm-cell l1"></div><div class="hm-cell l1"></div><div class="hm-cell l1"></div><div class="hm-cell l2"></div><div class="hm-cell l3"></div>
+              <div></div><div class="hm-axis">低</div><div class="hm-axis"></div><div class="hm-axis">中</div><div class="hm-axis"></div><div class="hm-axis">高</div>
+            </div>
+          </div>
+          <div style="width:168px;flex:0 0 auto;padding-top:2px">
+            <div style="font-size:9.5px;color:var(--muted);line-height:1.55">右上角是优先处理区：高影响、高可能性，且运行时证据足够。</div>
+            <div style="display:grid;gap:6px;margin-top:10px">
+              <span style="display:flex;align-items:center;gap:6px;font-size:9.5px"><i class="dot" style="background:var(--low)"></i>低风险</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:9.5px"><i class="dot" style="background:var(--high)"></i>中风险</span>
+              <span style="display:flex;align-items:center;gap:6px;font-size:9.5px"><i class="dot" style="background:var(--crit)"></i>高风险</span>
+            </div>
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft);font-size:9px;color:var(--muted);line-height:1.5">矩阵只用于分诊；确认受影响仍需版本与证据链。</div>
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">今日处置队列</div><div class="card-desc">3 条待审查 · 2 条待补证</div></div>
+          <span class="chip high"><i class="dot"></i>P1 优先</span>
+        </div>
+        <div class="card-body" style="padding:6px 17px 0">
+          <div style="display:grid;gap:0">
+            <div style="display:flex;align-items:center;gap:9px;height:42px;border-bottom:1px solid var(--line-soft)">
+              <span class="chip crit" style="height:18px;font-size:8px">确认</span>
+              <div style="min-width:0;flex:1"><div class="mono" style="font-size:10.5px">CVE-2026-63073</div><div style="color:var(--muted);font-size:8.5px">wyh-VMware · openssl</div></div>
+              <span class="num" style="font-size:9px;color:var(--muted)">P1</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;height:42px;border-bottom:1px solid var(--line-soft)">
+              <span class="chip high" style="height:18px;font-size:8px">复核</span>
+              <div style="min-width:0;flex:1"><div class="mono" style="font-size:10.5px">CVE-2026-15981</div><div style="color:var(--muted);font-size:8.5px">Ubuntu-Collector · systemd</div></div>
+              <span class="num" style="font-size:9px;color:var(--muted)">P3</span>
+            </div>
+            <div style="display:flex;align-items:center;gap:9px;height:42px">
+              <span class="chip muted" style="height:18px;font-size:8px">补证</span>
+              <div style="min-width:0;flex:1"><div class="mono" style="font-size:10.5px">CVE-2026-92939</div><div style="color:var(--muted);font-size:8.5px">Zephyr-Sensor-01 · mbedtls</div></div>
+              <span class="num" style="font-size:9px;color:var(--muted)">P2</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:8px">
+            <button class="btn sm primary" style="flex:1">批量分派</button>
+            <button class="btn sm" style="flex:1">查看全部</button>
+          </div>
+        </div>
+        <div class="card-foot"><span>分派只改变责任人，不改变风险结论。</span><span class="num">3 / 12 已处理</span></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div><div class="card-title">风险队列</div><div class="card-desc">严重度、证据与研判状态分开显示</div></div>
+        <a class="link" href="#">列设置 <svg class="icon"><use href="#i-filter"/></svg></a>
+      </div>
+      <div style="display:flex;align-items:center;gap:6px;padding:9px 15px 0">
+        <div style="display:flex;align-items:center;gap:6px;height:28px;padding:0 9px;border:1px solid var(--line);border-radius:var(--radius-sm);background:var(--surface-2);color:var(--muted);font-size:9.5px;width:190px"><svg class="icon" style="width:12px;height:12px"><use href="#i-search"/></svg>搜索 CVE、资产或软件包</div>
+        <span class="chip accent">全部 272</span>
+        <span class="chip">待审查 3</span>
+        <span class="chip">严重 1</span>
+        <span class="chip">KEV 0</span>
+        <span style="margin-left:auto;color:var(--muted);font-size:9px">按风险分降序</span>
+      </div>
+      <div class="table-wrap" style="margin-top:6px">
+        <table style="table-layout:fixed">
+          <colgroup><col style="width:66px"><col style="width:150px"><col style="width:138px"><col style="width:76px"><col style="width:96px"><col style="width:80px"><col style="width:66px"><col style="width:20px"></colgroup>
+          <thead><tr><th>等级</th><th>CVE</th><th>资产</th><th>风险分</th><th>证据</th><th>研判状态</th><th>责任人</th><th></th></tr></thead>
+          <tbody>
+            <tr><td><span class="chip crit"><i class="dot"></i>严重</span></td><td class="mono">CVE-2026-63073<small>openssl · 9.8</small></td><td class="name">wyh-VMware<small>Ubuntu 24.04</small></td><td><span class="score crit"><b>80.5</b><i><em style="width:80.5%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip high"><i class="dot"></i>待审查</span></td><td>王工</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip high"><i class="dot"></i>高危</span></td><td class="mono">CVE-2026-92939<small>mbedtls · 8.1</small></td><td class="name">Zephyr-Sensor-01<small>RTOS 4.4.2</small></td><td><span class="score high"><b>77.6</b><i><em style="width:77.6%"></em></i></span></td><td><span class="chip low"><i class="dot"></i>已验证</span></td><td><span class="chip mid"><i class="dot"></i>待审批</span></td><td>李工</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip high"><i class="dot"></i>高危</span></td><td class="mono">CVE-2026-15981<small>systemd · 7.8</small></td><td class="name">Ubuntu-Collector<small>24.04 LTS</small></td><td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td><td><span class="chip muted"><i class="dot"></i>未观测</span></td><td><span class="chip info"><i class="dot"></i>候选</span></td><td>—</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip high"><i class="dot"></i>高危</span></td><td class="mono">CVE-2026-81707<small>curl · 7.4</small></td><td class="name">OpenWrt-000c<small>25.12.6</small></td><td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip high"><i class="dot"></i>待审查</span></td><td>王工</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip mid"><i class="dot"></i>中危</span></td><td class="mono">CVE-2026-43118<small>mosquitto · 6.2</small></td><td class="name">Zephyr-Sensor-01<small>RTOS 4.4.2</small></td><td><span class="score mid"><b>71.2</b><i><em style="width:71.2%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip accent"><i class="dot"></i>已排期</span></td><td>李工</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip mid"><i class="dot"></i>中危</span></td><td class="mono">CVE-2026-30217<small>busybox · 5.9</small></td><td class="name">OpenWrt-Lab-0050<small>25.12.4</small></td><td><span class="score mid"><b>68.4</b><i><em style="width:68.4%"></em></i></span></td><td><span class="chip muted"><i class="dot"></i>未观测</span></td><td><span class="chip info"><i class="dot"></i>候选</span></td><td>—</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td><span class="chip low"><i class="dot"></i>低危</span></td><td class="mono">CVE-2026-11842<small>zlib · 3.1</small></td><td class="name">Ubuntu-Collector<small>24.04 LTS</small></td><td><span class="score low"><b>42.6</b><i><em style="width:42.6%"></em></i></span></td><td><span class="chip low"><i class="dot"></i>已验证</span></td><td><span class="chip accent"><i class="dot"></i>已排期</span></td><td>李工</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-foot"><span>风险分排序不代表确认受影响；候选记录必须保留“未评估”状态。</span><span class="num">7 / 272 显示</span></div>
+    </section>
+  </div>
+</div>

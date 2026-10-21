@@ -1,0 +1,186 @@
+﻿<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Asset discovery &amp; inventory · lab</span>
+      <h1>资产与发现</h1>
+      <p class="sub">设备身份、组件清单与原始观测分开记录，每个发现都能回到来源。</p>
+      <div class="meta"><span>4 台设备</span><i class="sep"></i><span>182 个组件</span><i class="sep"></i><span>3/4 身份可信</span><i class="sep"></i><span>1 份清单待补</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-download"/></svg>导入清单</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-search"/></svg>发起授权发现</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:84px minmax(0,1fr) 152px">
+    <div class="stats">
+      <div class="stat">
+        <div class="stat-icon"><svg class="icon"><use href="#i-server"/></svg></div>
+        <div class="stat-copy"><div class="stat-label">登记设备</div><div class="stat-value">4<small>台</small></div></div>
+        <div class="stat-delta">+1 本周</div>
+      </div>
+      <div class="stat">
+        <div class="stat-icon" style="background:var(--info-soft);color:var(--info)"><svg class="icon"><use href="#i-layers"/></svg></div>
+        <div class="stat-copy"><div class="stat-label">组件记录</div><div class="stat-value">182<small>条</small></div></div>
+        <div class="stat-delta" style="color:var(--info)">2 个生态</div>
+      </div>
+      <div class="stat">
+        <div class="stat-icon" style="background:var(--low-soft);color:var(--low)"><svg class="icon"><use href="#i-shield"/></svg></div>
+        <div class="stat-copy"><div class="stat-label">身份可信</div><div class="stat-value">3<small>/ 4</small></div></div>
+        <div class="stat-delta">75%</div>
+      </div>
+      <div class="stat">
+        <div class="stat-icon" style="background:var(--high-soft);color:var(--high)"><svg class="icon"><use href="#i-alert"/></svg></div>
+        <div class="stat-copy"><div class="stat-label">清单待补</div><div class="stat-value">1<small>台</small></div></div>
+        <div class="stat-delta down">OpenWrt-000c</div>
+      </div>
+    </div>
+
+    <div class="grid g-2-1">
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">资产台账</div><div class="card-desc">设备身份与组件清单分开计数，不按 IP 自动合并</div></div>
+          <a class="link" href="#">完整台账 <svg class="icon"><use href="#i-chev-right"/></svg></a>
+        </div>
+        <div style="display:flex;align-items:center;gap:6px;padding:9px 15px 0">
+          <span class="chip accent">全部 4</span>
+          <span class="chip">OpenWrt 2</span>
+          <span class="chip">Zephyr 1</span>
+          <span class="chip">Ubuntu 1</span>
+          <span style="margin-left:auto;color:var(--muted);font-size:9px">按最近同步排序</span>
+        </div>
+        <div class="table-wrap">
+          <table class="tall" style="table-layout:fixed">
+            <colgroup><col style="width:190px"><col style="width:82px"><col style="width:132px"><col style="width:62px"><col style="width:80px"><col style="width:96px"><col style="width:70px"><col style="width:20px"></colgroup>
+            <thead><tr><th>设备 / 身份</th><th>生态</th><th>系统 / 固件</th><th>组件</th><th>暴露</th><th>运行时证据</th><th>风险分</th><th></th></tr></thead>
+            <tbody>
+              <tr>
+                <td class="name">OpenWrt-Lab-0050<small>pinned_ssh_inventory · 95%</small></td>
+                <td><span class="chip accent"><i class="dot"></i>OpenWrt</span></td>
+                <td><span class="mono">25.12.4</span><small>kernel 6.12.112</small></td>
+                <td class="num">182</td>
+                <td><span class="chip high"><i class="dot"></i>公网</span></td>
+                <td><span class="chip info"><i class="dot"></i>上下文关联</span></td>
+                <td><span class="score crit"><b>80.5</b><i><em style="width:80.5%"></em></i></span></td>
+                <td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td>
+              </tr>
+              <tr>
+                <td class="name">OpenWrt-000c<small>banner_heuristic · 0%</small></td>
+                <td><span class="chip accent"><i class="dot"></i>OpenWrt</span></td>
+                <td><span class="mono">25.12.6</span><small>kernel 6.12.112</small></td>
+                <td class="num">182</td>
+                <td><span class="chip muted"><i class="dot"></i>内网</span></td>
+                <td><span class="chip muted"><i class="dot"></i>未观测</span></td>
+                <td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td>
+                <td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td>
+              </tr>
+              <tr>
+                <td class="name">Zephyr-Sensor-01<small>device_identity_endpoint · 90%</small></td>
+                <td><span class="chip info"><i class="dot"></i>Zephyr</span></td>
+                <td><span class="mono">RTOS 4.4.2</span><small>app 0.3.0</small></td>
+                <td class="num">3</td>
+                <td><span class="chip muted"><i class="dot"></i>内网</span></td>
+                <td><span class="chip muted"><i class="dot"></i>RTOS 不支持 eBPF</span></td>
+                <td><span class="score high"><b>77.6</b><i><em style="width:77.6%"></em></i></span></td>
+                <td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td>
+              </tr>
+              <tr>
+                <td class="name">Ubuntu-Collector<small>pinned_ssh_inventory · 95%</small></td>
+                <td><span class="chip low"><i class="dot"></i>Ubuntu</span></td>
+                <td><span class="mono">24.04 LTS</span><small>kernel 6.8</small></td>
+                <td class="num">412</td>
+                <td><span class="chip high"><i class="dot"></i>公网</span></td>
+                <td><span class="chip low"><i class="dot"></i>已验证</span></td>
+                <td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td>
+                <td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td>
+              </tr>
+              <tr>
+                <td class="name">unknown-device-192.168.206.2<small>banner_heuristic · 0%</small></td>
+                <td><span class="chip muted"><i class="dot"></i>未知</span></td>
+                <td><span class="mono">—</span><small>端口 22 / 80 / 443</small></td>
+                <td class="num">2</td>
+                <td><span class="chip muted"><i class="dot"></i>内网</span></td>
+                <td><span class="chip muted"><i class="dot"></i>未观测</span></td>
+                <td><span class="score low"><b>28.0</b><i><em style="width:28%"></em></i></span></td>
+                <td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-foot"><span>身份可信度来自 SSH 清单、HTTP 身份端点与 banner 指纹；三者不等价。</span><span class="num">4 台 · 5 条记录</span></div>
+      </section>
+
+      <div class="grid" style="grid-template-rows:1fr 1fr">
+        <section class="card">
+          <div class="card-head">
+            <div><div class="card-title">生态分布</div><div class="card-desc">按设备台账计数</div></div>
+            <span class="chip muted">2 类生态</span>
+          </div>
+          <div class="card-body" style="display:flex;align-items:center;gap:14px;padding-top:4px">
+            <div class="gauge" style="width:104px;height:104px">
+              <svg width="104" height="104" viewBox="0 0 104 104">
+                <circle cx="52" cy="52" r="40" fill="none" stroke="var(--line-soft)" stroke-width="9"/>
+                <circle cx="52" cy="52" r="40" fill="none" stroke="var(--chart-1)" stroke-width="9" stroke-dasharray="125.6 125.6" stroke-linecap="butt"/>
+                <circle cx="52" cy="52" r="40" fill="none" stroke="var(--chart-2)" stroke-width="9" stroke-dasharray="62.8 188.4" stroke-dashoffset="-125.6" stroke-linecap="butt"/>
+                <circle cx="52" cy="52" r="40" fill="none" stroke="var(--chart-4)" stroke-width="9" stroke-dasharray="62.8 188.4" stroke-dashoffset="-188.4" stroke-linecap="butt"/>
+              </svg>
+              <div class="gauge-center"><b>4</b><span>台设备</span></div>
+            </div>
+            <div style="display:grid;gap:8px;font-size:10px">
+              <span style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--chart-1)"></i>OpenWrt<b class="num" style="margin-left:auto">2</b></span>
+              <span style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--chart-2)"></i>Zephyr<b class="num" style="margin-left:auto">1</b></span>
+              <span style="display:flex;align-items:center;gap:6px"><i class="dot" style="background:var(--chart-4)"></i>Ubuntu<b class="num" style="margin-left:auto">1</b></span>
+            </div>
+          </div>
+          <div class="card-foot"><span>OpenWrt 与 Zephyr 按 IoT 设备管理；Ubuntu 单列基础设施。</span></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div><div class="card-title">发现来源</div><div class="card-desc">每条记录保留原始观测方式</div></div>
+          </div>
+          <div class="card-body" style="padding-top:8px">
+            <div class="cover-row" style="grid-template-columns:86px 1fr 30px"><span>SSH 清单</span><span class="cover-bar"><i style="width:50%"></i></span><span class="cover-val">2</span></div>
+            <div class="cover-row" style="grid-template-columns:86px 1fr 30px"><span>HTTP 身份</span><span class="cover-bar"><i style="width:25%;background:var(--chart-2)"></i></span><span class="cover-val">1</span></div>
+            <div class="cover-row" style="grid-template-columns:86px 1fr 30px"><span>MQTT / banner</span><span class="cover-bar"><i style="width:25%;background:var(--chart-4)"></i></span><span class="cover-val">1</span></div>
+          </div>
+          <div class="card-foot"><span>没有响应不等于设备不存在；只代表当前探测未命中。</span><a class="link" href="#">重新发现 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+        </section>
+      </div>
+    </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div><div class="card-title">采集覆盖</div><div class="card-desc">身份、组件与运行时证据是三条独立链路</div></div>
+        <span class="chip muted">最近同步 10:25</span>
+      </div>
+      <div class="cover-grid">
+        <div class="cover">
+          <div class="cover-name"><i class="dot" style="background:var(--chart-1)"></i>OpenWrt-Lab-0050</div>
+          <div class="cover-row"><span>身份</span><span class="cover-bar"><i class="low" style="width:95%"></i></span><span class="cover-val">95%</span></div>
+          <div class="cover-row"><span>组件</span><span class="cover-bar"><i style="width:100%"></i></span><span class="cover-val">182</span></div>
+          <div class="cover-row"><span>运行时</span><span class="cover-bar"><i class="warn" style="width:66%"></i></span><span class="cover-val">66%</span></div>
+        </div>
+        <div class="cover">
+          <div class="cover-name"><i class="dot" style="background:var(--chart-2)"></i>Zephyr-Sensor-01</div>
+          <div class="cover-row"><span>身份</span><span class="cover-bar"><i class="low" style="width:90%"></i></span><span class="cover-val">90%</span></div>
+          <div class="cover-row"><span>组件</span><span class="cover-bar"><i style="width:100%"></i></span><span class="cover-val">3</span></div>
+          <div class="cover-row"><span>运行时</span><span class="cover-bar"><i style="width:0"></i></span><span class="cover-val">N/A</span></div>
+        </div>
+        <div class="cover">
+          <div class="cover-name"><i class="dot" style="background:var(--chart-4)"></i>Ubuntu-Collector</div>
+          <div class="cover-row"><span>身份</span><span class="cover-bar"><i class="low" style="width:95%"></i></span><span class="cover-val">95%</span></div>
+          <div class="cover-row"><span>组件</span><span class="cover-bar"><i style="width:100%"></i></span><span class="cover-val">412</span></div>
+          <div class="cover-row"><span>运行时</span><span class="cover-bar"><i class="low" style="width:94%"></i></span><span class="cover-val">94%</span></div>
+        </div>
+        <div class="cover">
+          <div class="cover-name"><i class="dot" style="background:var(--high)"></i>OpenWrt-000c</div>
+          <div class="cover-row"><span>身份</span><span class="cover-bar"><i class="warn" style="width:0"></i></span><span class="cover-val">0%</span></div>
+          <div class="cover-row"><span>组件</span><span class="cover-bar"><i class="warn" style="width:40%"></i></span><span class="cover-val">40%</span></div>
+          <div class="cover-row"><span>运行时</span><span class="cover-bar"><i style="width:0"></i></span><span class="cover-val">0%</span></div>
+        </div>
+      </div>
+    </section>
+  </div>
+</div>
+

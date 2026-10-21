@@ -612,6 +612,16 @@ class SecurityEvidence(Base):
     created_at = Column(DateTime, default=utcnow)
 
 
+class RuntimeEvidenceJob(Base):
+    __tablename__ = "runtime_evidence_job"
+    event_id = Column(Integer, ForeignKey("runtime_event.id", ondelete="CASCADE"), primary_key=True)
+    payload = Column(Text, nullable=False)
+    attempts = Column(Integer, default=0, nullable=False)
+    last_error = Column(String(128), default="")
+    created_at = Column(DateTime, default=utcnow)
+    next_attempt_at = Column(DateTime, default=utcnow, index=True)
+
+
 class LsmPolicy(Base):
     """eBPF LSM 实验策略：默认只观察（observe），显式授权才允许 enforce。"""
 

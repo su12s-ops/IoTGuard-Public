@@ -1,0 +1,22 @@
+[Unit]
+Description=IoTGuard native CO-RE observation and reliable forwarding
+After=network-online.target
+Wants=network-online.target
+Conflicts=linuxguard-falco.service falco-modern-bpf.service falco.service falco-custom.service
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/iotguard
+EnvironmentFile=/etc/iotguard/ebpf.env
+ExecStart=/usr/bin/python3 /opt/iotguard/collector/native/supervise.py
+Restart=always
+RestartSec=5
+StateDirectory=iotguard/sensor
+UMask=0077
+# Supervisor stops probe first, then drains pipe/WAL. Final timeout kills cgroup.
+KillMode=mixed
+TimeoutStopSec=110
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target

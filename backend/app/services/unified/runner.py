@@ -75,7 +75,10 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      run_deadline_s: float = 3600.0,
                      ablation_mask: frozenset[str] = frozenset(),
                      force_full_review: bool = False,
-                     investigation_goal: str = "") -> models.UnifiedAnalysisRun:
+                     investigation_goal: str = "",
+                     replay_from_run_id: str = "",
+                     budgets: dict | None = None,
+                     strategy: str = "four_agents") -> models.UnifiedAnalysisRun:
     """同步执行一次统一编排（worker 线程/测试/实验共用）。
 
     ablation_mask（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策
@@ -92,7 +95,18 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         run_row.run_id, run_row.task_type, run_row.target_ref,
         run_row.target_type, run_row.mode)
     state.budgets.run_deadline_s = run_deadline_s
+    if budgets:
+        from app.services.unified.state import BudgetState
+        state.budgets = BudgetState.model_validate({**state.budgets.model_dump(), **budgets})
     state.investigation_goal = investigation_goal
+    parent = {}
+    if replay_from_run_id:
+        parent_row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=replay_from_run_id).one_or_none()
+        if (not parent_row or parent_row.status != "completed" or parent_row.target_ref != run_row.target_ref
+                or parent_row.target_type != run_row.target_type or parent_row.risk_id != run_row.risk_id
+                or parent_row.mode != run_row.mode):
+            raise ValueError("replay_source_scope_mismatch")
+        parent = json.loads(parent_row.state_json or "{}")
     risk = None
     if run_row.task_type == TASK_RISK_REVIEW and run_row.risk_id:
         risk = db.get(models.RiskAssessment, run_row.risk_id)
@@ -106,11 +120,16 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         run_row.updated_at = models.utcnow()
         db.commit()
 
-    meter = UsageMeter(max_llm_calls=state.budgets.max_llm_calls)
+    meter = UsageMeter(max_llm_calls=state.budgets.max_llm_calls,
+                       max_tokens=state.budgets.max_tokens,
+                       role_token_limits=state.budgets.role_token_limits)
     ctx = RunContext(
         db_factory=SessionLocal, trace_id=run_row.trace_id, meter=meter,
         client_factory=client_factory, risk=risk, run_deadline_s=run_deadline_s,
-        ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review)
+        ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review or (run_row.mode == "formal" and not parent),
+        replay_parent=parent, agent_budget_s=state.budgets.agent_deadline_s,
+        context_token_budgets=state.budgets.context_token_budgets,
+        strategy=strategy)
     if risk is not None:
         baseline_ids = json.loads(risk.evidence_packet_json or "{}") if risk.evidence_packet_json else {}
         ctx.packet_evidence_ids = {
@@ -124,8 +143,11 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         if risk is None and run_row.task_type == TASK_RISK_REVIEW:
             raise ValueError("risk_review 任务缺少有效风险事件")
         compiled = build_graph(ctx)
-        # 简单分层不进图：0 次 LLM 直通
-        probe = None if ctx.force_full_review else routing_probe(db, run_row, risk)
+        # 简单分层不进图：0 次 LLM 直通。
+        # 对照实验（strategy != four_agents）必须由调用方决定走哪条路径，
+        # 否则 single_agent 会被成本分层短路成 0 次调用、被误记成一次真实单智能体观测。
+        probe = None if (ctx.force_full_review or parent or strategy != "four_agents") \
+            else routing_probe(db, run_row, risk)
         if probe is not None:
             state = probe
             state = _simple_tier_state(state)
@@ -156,6 +178,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         _complete(db, run_row, final_state, "completed", "")
     except Exception as exc:
         traceback.print_exc()
+        state = locals().get("last_state", state)
         state.error = f"unified orchestrator: {type(exc).__name__}: {exc}"
         state.degraded_roles = list(dict.fromkeys(state.degraded_roles))
         persist_snapshot(state)

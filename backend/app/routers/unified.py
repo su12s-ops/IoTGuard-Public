@@ -53,6 +53,7 @@ class InvestigationAuthorization(BaseModel):
     connection_id: int = Field(gt=0)
     actor: str = Field(min_length=1, max_length=128)
     reason: str = Field(min_length=1, max_length=2000)
+    auto_resume: bool = False
 
 
 def _investigation(db, request_id):

@@ -1,0 +1,20 @@
+name: Native eBPF
+on: [push, pull_request]
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install toolchain
+        run: bash deploy/linux/install-ebpf-deps.sh
+      - name: Build CO-RE probe and loader
+        run: bash collector/native/build.sh
+      - name: Verify kernel and transport behavior
+        run: |
+          sudo python3 collector/native/verify.py --seconds 30 --report /tmp/native-kernel.json
+          sudo python3 collector/native/verify_transport.py --report /tmp/native-transport.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: native-ebpf-verification
+          path: /tmp/native-*.json

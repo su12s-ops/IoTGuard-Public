@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from app import models
 from app.ebpf_identity import stable_event_fingerprint
 from app.services.runtime_telemetry import IDENTITY_FIELDS, identity_fields
+from app.services.event_semantics import semantics
 
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
@@ -221,6 +222,7 @@ def normalize_event(payload: dict[str, Any]) -> dict[str, Any]:
         "raw": payload,
     }
     event.update(identity_fields(payload))
+    event.update(semantics(payload))
     # P1（eBPF 2.0）：argv 有界透传。bpftrace 增强探针顶层携带 argv 列表；
     # Tetragon 的 process.arguments 同样收编。仅作展示/关联补充，无 argv 的
     # 旧事件不受影响（向后兼容，不虚构字段）。
@@ -341,11 +343,14 @@ def _runtime_event_to_dict(row: models.RuntimeEvent) -> dict[str, Any]:
         **{name: getattr(row, name, "") for name in IDENTITY_FIELDS},
         "evidence_level": "runtime_observation",
         "event_fingerprint": row.event_fingerprint,
+        **semantics(raw),
     }
 
 
 def _observation_mode(source: str) -> str:
     value = (source or "").lower()
+    if value == "c_ebpf":
+        return "ebpf"
     if "demo" in value:
         return "simulation"
     if "tetragon" in value:
@@ -378,6 +383,16 @@ def _persist_events(db: Session, events: list[dict[str, Any]]) -> None:
 
 def _persist_events_locked(db: Session, events: list[dict[str, Any]]) -> None:
     from app.services.security_evidence import persist_evidence
+    from app.services.runtime_outbox import enqueue, check_capacity
+    # sqlite3 legacy transaction mode does not BEGIN on SELECT/SAVEPOINT.
+    # Without this, releasing a nested savepoint can commit the event before
+    # its outbox job exists, breaking rollback/ack atomicity.
+    connection = db.connection()
+    if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
+        connection.exec_driver_sql("BEGIN")
+    native_count = sum(event.get("source") == "c_ebpf" for event in events)
+    if native_count:
+        check_capacity(db, native_count)
 
     for event in events:
         # 指纹提示取绑定前的自报主机名（绑定可能改写 event["hostname"]），
@@ -394,8 +409,9 @@ def _persist_events_locked(db: Session, events: list[dict[str, Any]]) -> None:
                 event["id"], event["duplicate"] = prior.id, True
                 if prior.asset_id is None and asset is not None:
                     prior.asset_id = asset.id
-                    db.commit()
                     event["asset_rebound"] = True
+                if event.get("source") == "c_ebpf":
+                    enqueue(db, event)
                 continue
         row = models.RuntimeEvent(
             asset_id=asset.id if asset else None,
@@ -434,12 +450,15 @@ def _persist_events_locked(db: Session, events: list[dict[str, Any]]) -> None:
             event["id"], event["duplicate"] = prior.id, True
             if prior.asset_id is None and asset is not None:
                 prior.asset_id = asset.id
-                db.commit()
                 event["asset_rebound"] = True
+            if event.get("source") == "c_ebpf":
+                enqueue(db, event)
             continue
         event["id"] = row.id
+        if event.get("source") == "c_ebpf":
+            enqueue(db, event)
     db.commit()
-    persist_evidence(db, events)
+    persist_evidence(db, [event for event in events if event.get("source") != "c_ebpf"])
 
 
 def append_events(payloads: list[dict[str, Any]], db: Session | None = None) -> list[dict[str, Any]]:
@@ -794,6 +813,7 @@ def clear_events(db: Session | None = None) -> dict[str, Any]:
     evidence_preserved = 0
     if db is not None:
         runtime_cleared = db.query(models.RuntimeEvent).count()
+        db.query(models.RuntimeEvidenceJob).delete()
         db.query(models.RuntimeEvent).delete()
         evidence_preserved = db.query(models.SecurityEvidence).count()
         db.commit()

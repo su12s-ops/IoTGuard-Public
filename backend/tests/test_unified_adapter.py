@@ -135,7 +135,8 @@ class TestFormalSink:
         """门禁全过时 auto_confirmed 仍可达（低危 + 高置信 + 证据充分）。"""
         import app.services.unified.runner as runner_mod
         monkeypatch.setattr(runner_mod, "SessionLocal", session_factory)
-        risk_id = _setup_risk(session_factory, level="Medium", score=30.0)
+        # 分级阈值（risk_engine.risk_level）：≥40 才是 Medium；30 分属于 Low
+        risk_id = _setup_risk(session_factory, level="Medium", score=45.0)
         row_pk = _make_run_row(session_factory, risk_id, run_id="UA-f2")
 
         sufficient_asset = dict(GOOD_ASSET)
@@ -161,9 +162,11 @@ class TestFormalSink:
         # 注意：GOOD_VULN 为 confirmed_affected + 0.8 置信，方向 maintain → 30 分；
         # simple 分层直通：decision 取规则基线的 preliminary_decision
         assert risk.review_status == "auto_confirmed"
-        assert risk.final_score == 30.0
+        assert risk.final_score == 45.0
         assert risk.risk_level == "Medium"
-        assert risk.decision == "scheduled_fix"
+        # 全量四角色路径：处置动作来自决策角色（本例为 calm_decision 的 monitor），
+        # 不是规则基线的 scheduled_fix
+        assert risk.decision == "monitor"
         db.close()
 
 

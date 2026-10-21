@@ -1,0 +1,112 @@
+﻿<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Harness remediation · controlled</span>
+      <h1>修复与验证</h1>
+      <p class="sub">每个计划都有哈希、授权范围与独立复验；设备写默认关闭。</p>
+      <div class="meta"><span>2 条待审批</span><i class="sep"></i><span>1 条执行中</span><i class="sep"></i><span>12 条复验通过</span><i class="sep"></i><span>设备写：关闭</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-refresh"/></svg>检查超时任务</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-plus"/></svg>新建计划</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:80px minmax(0,1fr) 220px">
+    <div class="stats">
+      <div class="stat"><div class="stat-icon" style="background:var(--high-soft);color:var(--high)"><svg class="icon"><use href="#i-clock"/></svg></div><div class="stat-copy"><div class="stat-label">待审批</div><div class="stat-value">2<small>条</small></div></div><div class="stat-delta down">需签收</div></div>
+      <div class="stat"><div class="stat-icon" style="background:var(--accent-soft);color:var(--accent)"><svg class="icon"><use href="#i-play"/></svg></div><div class="stat-copy"><div class="stat-label">执行中</div><div class="stat-value">1<small>条</small></div></div><div class="stat-delta" style="color:var(--accent)">工具 3/5</div></div>
+      <div class="stat"><div class="stat-icon" style="background:var(--low-soft);color:var(--low)"><svg class="icon"><use href="#i-check"/></svg></div><div class="stat-copy"><div class="stat-label">机器复验通过</div><div class="stat-value">12<small>条</small></div></div><div class="stat-delta">本周 +3</div></div>
+      <div class="stat"><div class="stat-icon" style="background:var(--crit-soft);color:var(--crit)"><svg class="icon"><use href="#i-refresh"/></svg></div><div class="stat-copy"><div class="stat-label">已回滚</div><div class="stat-value">0<small>条</small></div></div><div class="stat-delta" style="color:var(--muted)">近 30 天</div></div>
+    </div>
+
+    <div class="grid g-2-1">
+      <section class="card feature">
+        <div class="card-head">
+          <div><div class="card-title">计划 7f314bd2</div><div class="card-desc">OpenWrt-Lab-0050 · 采集 → 修复 → 回归 → 业务检查</div></div>
+          <span class="chip accent"><i class="dot"></i>执行中</span>
+        </div>
+        <div class="card-body" style="padding-top:8px;display:grid;grid-template-columns:1fr 230px;gap:20px">
+          <div class="stepper">
+            <div class="step done">
+              <span class="step-dot"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+              <div><div class="step-title">采集资产清单</div><div class="step-note">182 个包 · 清单哈希 080f1b…</div></div>
+              <time>10:24</time>
+            </div>
+            <div class="step active">
+              <span class="step-dot">02</span>
+              <div><div class="step-title">安装已登记修复产物</div><div class="step-note">cgi-io 2024-08 · 等待远端执行</div></div>
+              <time>10:25</time>
+            </div>
+            <div class="step">
+              <span class="step-dot">03</span>
+              <div><div class="step-title">漏洞回归检查</div><div class="step-note">复跑公告适用性 · 未开始</div></div>
+              <time>—</time>
+            </div>
+            <div class="step">
+              <span class="step-dot">04</span>
+              <div><div class="step-title">业务检查</div><div class="step-note">HTTP 身份端点 · 未开始</div></div>
+              <time>—</time>
+            </div>
+          </div>
+          <div style="border-left:1px solid var(--line-soft);padding-left:16px">
+            <div style="color:var(--muted);font-size:8.5px;font-weight:600">计划摘要</div>
+            <div style="display:grid;gap:7px;margin-top:8px;font-size:9px">
+              <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--muted)">资产</span><span style="color:var(--ink-2);font-weight:600">OpenWrt-Lab-0050</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--muted)">修复产物</span><span class="mono" style="color:var(--ink-2)">cgi-io 2024-08</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--muted)">适配器</span><span class="mono" style="color:var(--ink-2)">openwrt-opkg-v1</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--muted)">工具预算</span><span class="mono" style="color:var(--ink-2)">3 / 5</span></div>
+              <div style="display:flex;justify-content:space-between;gap:8px"><span style="color:var(--muted)">风险事件</span><span class="mono" style="color:var(--ink-2)">CVE-2026-63073</span></div>
+            </div>
+            <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft)">
+              <div style="color:var(--muted);font-size:8.5px;font-weight:600">计划哈希</div>
+              <div class="mono" style="margin-top:4px;color:var(--ink-3);font-size:8.5px;word-break:break-all">67cec3f7933f6c8614b075e147c7f8b86f2bb648b5361bac0b17ca788c5bf56d</div>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot"><span>计划哈希在审批时锁定；执行前再次校验资产身份与哈希。</span><span class="num">policy iotguard-collection-v1</span></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">审批与执行</div><div class="card-desc">批准不等于执行；执行前重新校验</div></div>
+          <span class="chip high"><i class="dot"></i>待审批</span>
+        </div>
+        <div class="card-body" style="padding-top:10px">
+          <div style="display:flex;align-items:center;gap:10px;padding:9px 10px;border:1px solid var(--high-line);background:var(--high-soft);border-radius:var(--radius-sm)">
+            <span style="display:grid;place-items:center;width:28px;height:28px;border-radius:7px;background:var(--surface);color:var(--high)"><svg class="icon" style="width:15px;height:15px"><use href="#i-alert"/></svg></span>
+            <div><div style="color:var(--high);font-size:10px;font-weight:700">需要人工签收</div><div style="color:var(--ink-3);font-size:8.5px;margin-top:1px">批准人：王工 · 审批后进入执行队列</div></div>
+          </div>
+          <div style="display:grid;gap:0;margin-top:8px">
+            <div style="display:flex;align-items:center;gap:7px;height:34px;border-bottom:1px solid var(--line-soft)"><i class="dot ok"></i><span style="font-size:9.5px;flex:1">身份校验</span><span class="chip low" style="height:18px;font-size:8px">已通过</span></div>
+            <div style="display:flex;align-items:center;gap:7px;height:34px;border-bottom:1px solid var(--line-soft)"><i class="dot ok"></i><span style="font-size:9.5px;flex:1">资产锁</span><span class="chip low" style="height:18px;font-size:8px">已获取</span></div>
+            <div style="display:flex;align-items:center;gap:7px;height:34px"><i class="dot ok"></i><span style="font-size:9.5px;flex:1">工具预算</span><span class="mono" style="font-size:8.5px;color:var(--muted)">3 / 5</span></div>
+          </div>
+          <div style="display:flex;gap:6px;margin-top:10px">
+            <button class="btn primary" style="flex:1;height:32px;font-size:10.5px">批准并执行</button>
+            <button class="btn" style="height:32px;font-size:10.5px">退回</button>
+          </div>
+          <div style="margin-top:9px;color:var(--muted);font-size:8.5px;line-height:1.55">批准动作写入审计；执行失败会先复读状态，不会自动重写设备。</div>
+        </div>
+        <div class="card-foot"><span class="num">AUD-2026-1042</span><span>2 位审批人 · 1 位已签</span></div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head" style="padding-top:12px"><div><div class="card-title">最近任务</div><div class="card-desc">包含调查、采集与修复；机器复验与人工签收分开记录</div></div><a class="link" href="#">全部任务 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+      <div class="table-wrap" style="margin-top:4px">
+        <table class="compact" style="table-layout:fixed">
+          <colgroup><col style="width:132px"><col style="width:150px"><col style="width:92px"><col style="width:120px"><col style="width:110px"><col style="width:90px"><col style="width:20px"></colgroup>
+          <thead><tr><th>任务</th><th>资产</th><th>目标</th><th>状态</th><th>当前步骤</th><th>更新</th><th></th></tr></thead>
+          <tbody>
+            <tr><td class="mono">7f314bd2</td><td class="name">OpenWrt-Lab-0050</td><td>采集 + 修复</td><td><span class="chip accent"><i class="dot"></i>执行中</span></td><td class="mono">install_fix</td><td class="num" style="font-size:8.5px;color:var(--muted)">2 分钟前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td class="mono">8c21aa90</td><td class="name">Zephyr-Sensor-01</td><td>固件切换</td><td><span class="chip high"><i class="dot"></i>待审批</span></td><td class="mono">await_approval</td><td class="num" style="font-size:8.5px;color:var(--muted)">18 分钟前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+            <tr><td class="mono">5a90e4c1</td><td class="name">Ubuntu-Collector</td><td>只读采集</td><td><span class="chip low"><i class="dot"></i>复验通过</span></td><td class="mono">business_check</td><td class="num" style="font-size:8.5px;color:var(--muted)">1 小时前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card-foot"><span>执行中任务不会自动重试；失败后必须先复读设备状态。</span><span class="num">3 / 14 显示</span></div>
+    </section>
+  </div>
+</div>
+

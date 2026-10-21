@@ -1,38 +1,87 @@
 import { createRouter, createWebHistory } from "vue-router";
 
-const Dashboard = () => import("../views/Dashboard.vue");
-const AgentWorkflow = () => import("../views/AgentWorkflow.vue");
-const CveWorkflowDetail = () => import("../views/CveWorkflowDetail.vue");
-const RuntimeMonitor = () => import("../views/RuntimeMonitor.vue");
-const VulnerabilityCenter = () => import("../views/VulnerabilityCenter.vue");
-const AssetCenter = () => import("../views/AssetCenter.vue");
-const RiskRanking = () => import("../views/RiskRanking.vue");
-const Remediation = () => import("../views/Remediation.vue");
-const ReportExport = () => import("../views/ReportExport.vue");
-
-// 一级路由体现真实业务主线；旧入口保留重定向，避免历史链接失效。
 const routes = [
-  { path: "/", component: () => import("../views/IoTOverview.vue"), meta: { title: "物联网安全工作台" } },
-  { path: "/soc", component: Dashboard, meta: { title: "SOC 安全总览" } },
-  { path: "/assets", component: AssetCenter, meta: { title: "资产管理" } },
-  { path: "/iot", component: () => import("../views/IoTWorkspace.vue"), meta: { title: "物联网接入" } },
-  { path: "/devices", component: () => import("../views/DeviceCenter.vue"), meta: { title: "智能设备中心" } },
-  { path: "/scans", component: () => import("../views/ScanCenter.vue"), meta: { title: "互联网扫描" } },
-  { path: "/agent-ops", component: () => import("../views/AgentOps.vue"), meta: { title: "智能体分析与修复工作流" } },
-  { path: "/device-tasks", component: () => import("../views/DeviceTasks.vue"), meta: { title: "智能体设备任务" } },
-  { path: "/vulnerabilities", component: VulnerabilityCenter, meta: { title: "漏洞情报" } },
-  { path: "/matching", redirect: { path: "/risk", query: { tab: "hits" } } },
-  { path: "/risk", component: RiskRanking, meta: { title: "风险中心" } },
-  { path: "/workflow", component: AgentWorkflow, meta: { title: "风险研判" } },
-  { path: "/behavior-chain", redirect: "/risk" },
-  { path: "/behavior-chain/detail", component: CveWorkflowDetail, meta: { title: "风险详情" } },
-  { path: "/runtime", component: RuntimeMonitor, meta: { title: "运行时验证" } },
-  { path: "/remediation", component: Remediation, meta: { title: "修复处置" } },
-  { path: "/reports", component: ReportExport, meta: { title: "报告与归档" } },
+  {
+    path: "/",
+    name: "overview",
+    component: () => import("../views/Overview.vue"),
+    meta: { title: "安全态势", root: "安全工作台" }
+  },
+  {
+    path: "/assets",
+    name: "assets",
+    component: () => import("../views/Assets.vue"),
+    meta: { title: "资产与发现", root: "安全工作台" }
+  },
+  {
+    path: "/risks",
+    name: "risks",
+    component: () => import("../views/Risks.vue"),
+    meta: { title: "漏洞与风险", root: "安全工作台" }
+  },
+  {
+    path: "/risks/:id",
+    name: "risk-detail",
+    component: () => import("../views/RiskDetail.vue"),
+    meta: { title: "风险详情", root: "漏洞与风险" }
+  },
+  {
+    path: "/agents",
+    name: "agents",
+    component: () => import("../views/Agents.vue"),
+    meta: { title: "智能研判", root: "安全工作台" }
+  },
+  {
+    path: "/repairs",
+    name: "repairs",
+    component: () => import("../views/Repairs.vue"),
+    meta: { title: "修复与验证", root: "安全工作台" }
+  },
+  {
+    path: "/runtime",
+    name: "runtime",
+    component: () => import("../views/Runtime.vue"),
+    meta: { title: "运行与审计", root: "安全工作台" }
+  },
+  {
+    path: "/reports",
+    name: "reports",
+    component: () => import("../views/Reports.vue"),
+    meta: { title: "报告与归档", root: "运营" }
+  },
+  {
+    path: "/soc",
+    name: "soc",
+    component: () => import("../views/Soc.vue"),
+    meta: { title: "SOC 态势大屏", root: "运营", bare: true }
+  },
+
+  // Old entry points are intentionally redirected; the old workbench is gone.
+  { path: "/workbench/:pathMatch(.*)*", redirect: "/" },
+  { path: "/iot", redirect: "/assets" },
+  { path: "/devices", redirect: "/assets" },
+  { path: "/scans", redirect: "/assets" },
+  { path: "/assets/upload", redirect: "/assets" },
+  { path: "/risk", redirect: "/risks" },
+  { path: "/vulnerabilities", redirect: "/risks" },
+  { path: "/matching", redirect: "/risks" },
+  { path: "/behavior-chain", redirect: "/risks" },
+  { path: "/behavior-chain/detail", redirect: "/risks" },
+  { path: "/agent-ops", redirect: "/agents" },
+  { path: "/workflow", redirect: "/agents" },
+  { path: "/device-tasks", redirect: "/repairs" },
+  { path: "/remediation", redirect: "/repairs" },
   { path: "/:pathMatch(.*)*", redirect: "/" }
 ];
 
-export default createRouter({
+const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
+  scrollBehavior: () => ({ top: 0 })
 });
+
+router.afterEach((to) => {
+  document.title = `IoTGuard · ${to.meta.title || "物联网安全工作台"}`;
+});
+
+export default router;

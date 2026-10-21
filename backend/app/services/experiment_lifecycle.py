@@ -37,6 +37,7 @@ ARCHIVE_TABLE_MAPPINGS = (
     ("agent_audit_records", "agent_audit_record"),
     ("tasks", "remediation_task"),
     ("events", "runtime_event"),
+    ("runtime_evidence_jobs", "runtime_evidence_job"),
     ("harness_runs", "harness_run"),
     ("harness_tool_calls", "harness_tool_call"),
 )
@@ -56,6 +57,7 @@ _MODEL_BY_TABLE = {
         models.AgentAuditRecord,
         models.RemediationTask,
         models.RuntimeEvent,
+        models.RuntimeEvidenceJob,
         models.DeviceConnection,
         models.DeviceObservation,
         models.OpenWrtAdvisory,
@@ -75,6 +77,7 @@ DERIVED_DELETE_ORDER = (
     models.RemediationTask,
     models.RiskAssessment,
     models.VulnerabilityMatch,
+    models.RuntimeEvidenceJob,
     models.RuntimeEvent,
     models.ThreatIntelSource,
     models.VulnerabilityInfo,

@@ -187,6 +187,8 @@ class AnthropicProtocolChatClient:
         if timeout_s is not None:
             client = client.with_options(timeout=max(0.001, min(self._timeout, timeout_s)), max_retries=0)
         response = client.messages.create(**kwargs)
+        if getattr(response, "stop_reason", None) == "max_tokens":
+            raise ValueError("model_output_truncated: increase output budget or simplify report")
         text_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         for block in response.content or []:

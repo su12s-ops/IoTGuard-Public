@@ -125,6 +125,14 @@ def post_batch(api_base: str, events: list[dict], token: str = "") -> dict:
     result = post_json(api_base, BATCH_ENDPOINT, {"events": events}, token)
     if result.get("ack") is not True:
         raise ValueError("服务端未返回 ack=true（不视为已确认）")
+    # Keep the entire batch in WAL on partial rejection. Accepted entries replay
+    # idempotently; rejected entries remain available for operator correction.
+    if result.get("rejected"):
+        raise ValueError("Server rejected events; batch retained in WAL")
+    accepted, duplicates = result.get("accepted"), result.get("duplicates")
+    if (type(accepted) is not int or type(duplicates) is not int or
+            accepted < 0 or duplicates < 0 or accepted + duplicates != len(events)):
+        raise ValueError("Incomplete batch acknowledgement; retained in WAL")
     return result
 
 
@@ -514,7 +522,7 @@ def main() -> int:
     parser.add_argument("--hostname", default="", help="Registered hostname; never silently overwrite upstream identity")
     parser.add_argument("--sensor-id", default="", help="Stable identifier of this device's probe")
     parser.add_argument("--boot-id", default="", help="Explicit boot ID; historical files never inherit the current boot ID")
-    parser.add_argument("--source", choices=["falco", "tetragon", "bpftrace", "runtime_probe"], default="runtime_probe")
+    parser.add_argument("--source", choices=["falco", "tetragon", "bpftrace", "c_ebpf", "runtime_probe"], default="runtime_probe")
     parser.add_argument("--heartbeat", action="store_true", help="Publish coverage heartbeats for a live stdin stream")
     parser.add_argument("--heartbeat-seconds", type=int, default=30)
     parser.add_argument("--health-file", help="Fresh JSON status published by a probe supervisor (not by this uploader)")
@@ -655,7 +663,7 @@ def main() -> int:
                 staged.popleft()
 
             line = None
-            if not stop_reading and not input_done:
+            if not stop_reading and not input_done and len(staged) < 2048:
                 try:
                     line = pending_queue.get(timeout=0.25 if (wal.pending_count() or staged) else 1)
                 except queue.Empty:

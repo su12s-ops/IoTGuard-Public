@@ -500,7 +500,15 @@ def _verify(db, run, connection, item, root):
     results = {"version_verified": bool(version_ok), "inventory_scope_verified": bool(scope_ok), "regression": None, "business": None}
     if version_ok and scope_ok:
         for kind in ("regression", "business"):
-            results[kind] = tool(db, run, kind + "_check", lambda kind=kind: _run_check(item, root, kind, target), {"check_sha256": item["checks"][kind]["sha256"]})
+            try:
+                results[kind] = tool(db, run, kind + "_check", lambda kind=kind: _run_check(item, root, kind, target), {"check_sha256": item["checks"][kind]["sha256"]})
+                results[kind]["status"] = "passed" if results[kind]["passed"] else "failed"
+            except Exception as exc:
+                # A broken probe is not evidence of a healthy device. Preserve
+                # partial results and independently attempt the other check;
+                # tool() still enforces the budget before either probe runs.
+                results[kind] = {"passed": False, "status": "inconclusive",
+                                 "error": str(exc)[:1200]}
     # Historical adapters retain their original contract; addenda require receipt-based timing.
     if os.getenv("LINUXGUARD_VERIFICATION_ARTIFACT_ID") == item["id"]:
         results["evidence_freshness"] = timing
@@ -510,6 +518,9 @@ def _verify(db, run, connection, item, root):
             version_ok = version_ok and results["logread"]["passed"]
     passed = version_ok and scope_ok and all(results[kind] and results[kind]["passed"] for kind in ("regression", "business"))
     results["verified"] = bool(passed)
+    results["validation_status"] = ("passed" if passed else
+        "inconclusive" if any((results[k] or {}).get("status") == "inconclusive"
+                              for k in ("regression", "business")) else "failed")
     installation = db.query(models.HarnessToolCall).filter_by(run_id=run.id, tool="install_registered_package").first()
     checkpoint = installation.created_at if installation else run.created_at
     results["runtime_comparison"] = compare_windows(db, run.asset_id, checkpoint.isoformat())

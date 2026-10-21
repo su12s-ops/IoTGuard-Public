@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
+from app.services.unified.collaboration import merge_immutable
 
 
 def merge_dict(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -77,6 +78,28 @@ class BudgetState(BaseModel):
     run_deadline_s: float = 3600.0
     follow_up_rounds: int = 1
     rereview_rounds: int = 1
+    max_tokens: int = 200000
+    message_rounds: int = 1
+    plan_feedback_rounds: int = 1
+    reuse_ttl_seconds: int = 3600
+    # 角色级 token 上限（2026-10-20）：单角色不得先到先得吃光 run 预算。
+    # 实测 run UA-20261020232421-f0bbef：资产角色 266,072 tokens 吃穿 200,000 上限，
+    # 后三个角色 0 次调用直接降级。配额之和略高于 run 上限，先到者仍受 run 上限约束。
+    role_token_limits: dict[str, int] = Field(default_factory=lambda: {
+        "asset_investigator": 60000,
+        "vulnerability_analyst": 55000,
+        "runtime_analyst": 40000,
+        "decision_planner": 60000,
+    })
+    # 单次提示词估算 token 额度（上下文预算，见 context_budget.py）：
+    # 超额度时角色显式降级（reason=context_budget_exceeded），不再把百万字符
+    # 提示词发给模型换回 400 [1261][prompt is too long] 并浪费两次重试。
+    context_token_budgets: dict[str, int] = Field(default_factory=lambda: {
+        "asset_investigator": 48000,
+        "vulnerability_analyst": 48000,
+        "runtime_analyst": 40000,
+        "decision_planner": 56000,
+    })
 
 
 class UnifiedAnalysisState(BaseModel):
@@ -102,6 +125,22 @@ class UnifiedAnalysisState(BaseModel):
     candidate_context: list[dict[str, Any]] = Field(default_factory=list)
     # M4.1：确定性证据预取包（非 Agent 产物；无 LLM；运行内只读复用）
     evidence_prep: dict[str, Any] | None = None
+    evidence_snapshot_id: str = ""
+    evidence_snapshot: dict[str, Any] = Field(default_factory=dict)
+    evidence_versions: Annotated[list[dict[str, Any]], merge_immutable] = Field(default_factory=list)
+    shared_findings: Annotated[list[dict[str, Any]], merge_immutable] = Field(default_factory=list)
+    collaboration_messages: Annotated[list[dict[str, Any]], merge_immutable] = Field(default_factory=list)
+    message_receipts: Annotated[dict[str, Any], merge_dict] = Field(default_factory=dict)
+    role_provenance: Annotated[dict[str, Any], merge_dict] = Field(default_factory=dict)
+    replay_from_run_id: str = ""
+    replay_roles: list[str] = Field(default_factory=list)
+    reuse_roles: list[str] = Field(default_factory=list)
+    collaboration_rounds: int = 0
+    collaboration_stop_reason: str = ""
+    harness_capabilities: dict[str, Any] = Field(default_factory=dict)
+    harness_feedback: dict[str, Any] = Field(default_factory=dict)
+    candidate_intents: list[dict[str, Any]] = Field(default_factory=list)
+    plan_feedback_used: int = 0
 
     investigation: dict[str, Any] | None = None                   # Agent 1 输出
     vulnerability: dict[str, Any] | None = None                   # Agent 2 输出
@@ -127,6 +166,8 @@ class UnifiedAnalysisState(BaseModel):
 
     def known_evidence_ids(self) -> set[str]:
         """状态中真实存在的证据引用全集（程序校验 Agent 引用的依据）。"""
+        if self.evidence_snapshot:
+            return set(self.evidence_snapshot.get("evidence_registry") or {})
         ids: set[str] = set(self.baseline.get("packet_evidence_ids") or [])
         investigation = self.investigation or {}
         inventory = investigation.get("evidence_inventory") or {}

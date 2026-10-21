@@ -340,7 +340,7 @@ class TestBpftraceSourceIdentity:
         assert match, "forwarder --source choices not found"
         choices = [c.strip().strip('"') for c in match.group(1).split(",")]
         assert "bpftrace" in choices
-        assert set(choices) <= {"falco", "tetragon", "bpftrace", "runtime_probe"}
+        assert set(choices) <= {"falco", "tetragon", "bpftrace", "c_ebpf", "runtime_probe"}
 
 
 # ── 幂等判重索引（P2-1 实测缺陷的回归锁定） ──────────────────────────────────

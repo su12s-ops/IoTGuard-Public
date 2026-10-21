@@ -83,6 +83,13 @@ def classify_evidence_type(event: dict[str, Any]) -> str:
 
 def _detect_file_operation(event: dict[str, Any]) -> str:
     """从事件类型/原始报文中推断文件操作：read / write / open。"""
+    from app.services.event_semantics import semantics
+    explicit = semantics(event)
+    if explicit:
+        return str(explicit["operation"])
+    # A syscall open event alone cannot prove that bytes were read/written.
+    if str(event.get("event_type", "")).lower() in {"open", "openat", "openat2", "file_open"}:
+        return "open"
     text = " ".join([
         str(event.get("event_type") or ""),
         str(event.get("rule") or "").lower(),
@@ -96,6 +103,12 @@ def _detect_file_operation(event: dict[str, Any]) -> str:
 
 
 def _severity_for(event: dict[str, Any], evidence_type: str, operation: str, watch: str | None) -> tuple[str, int]:
+    if evidence_type == "file" and watch and operation == "open":
+        # Opening a sensitive file is still a risk signal, even when it is only
+        # an attempt. Preserve source alert severity without inventing a write.
+        baseline = ("warning", 58) if watch == "/etc/shadow" else ("notice", 36)
+        supplied = (str(event.get("severity") or "info").lower(), int(event.get("severity_score") or 0))
+        return max((baseline, supplied), key=lambda pair: pair[1])
     if evidence_type == "file" and watch:
         key = (operation, watch)
         if key in _FILE_SEVERITY:
@@ -114,7 +127,8 @@ def event_to_evidence(event: dict[str, Any]) -> dict[str, Any]:
     evidence_type = classify_evidence_type(event)
     file_path = str(event.get("file_path") or "")
     watch = _watch_path_match(file_path)
-    operation = _detect_file_operation(event) if evidence_type == "file" else str(event.get("event_type") or "").lower()
+    from app.services.event_semantics import semantics
+    operation = _detect_file_operation(event) if evidence_type == "file" else str(semantics(event).get("operation") or event.get("event_type") or "").lower()
 
     raw = event.get("raw") or {}
     user = str(event.get("user") or raw.get("user") or "")
@@ -147,6 +161,13 @@ def event_to_evidence(event: dict[str, Any]) -> dict[str, Any]:
         description = f"进程 {process or 'unknown'} (pid={pid or '?'}) {operation} 受控路径 {watch} 下文件 {file_path}"
     else:
         description = f"进程 {process or 'unknown'} (pid={pid or '?'}) {operation} {file_path}"
+
+    from app.services.event_semantics import semantics
+    outcome = semantics(event)
+    if outcome:
+        description = (f"进程 {process or 'unknown'} (pid={pid}) {outcome['operation']} "
+                       f"result={outcome['result']} errno={outcome.get('errno', 'unknown')} "
+                       f"{file_path or destination or commandline[:160]}；仅表示该操作结果")
 
     basis = json.dumps({
         "device_id": event.get("hostname") or "",
@@ -187,7 +208,7 @@ def event_to_evidence(event: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def persist_evidence(db: Session, events: list[dict[str, Any]], *, commit: bool = True) -> list[dict[str, Any]]:
     """幂等写入：同一 evidence_hash 只保留一条，重复事件返回已有 evidence_id。"""
     stored: list[dict[str, Any]] = []
     for event in events:
@@ -201,7 +222,8 @@ def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str
             # 可解析到资产时补绑；先到先绑定，不改写既有非空归属。
             if existing.asset_id is None and record.get("asset_id"):
                 existing.asset_id = record["asset_id"]
-                db.commit()
+                if commit:
+                    db.commit()
                 record["asset_rebound"] = True
             # P1-3 回填：升级前入库的证据行缺会话身份而本次重放事件可提供
             # 时补写（只填空值，不改写既有非空值）。
@@ -211,7 +233,8 @@ def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str
                     setattr(existing, field, record[field])
                     backfilled = True
             if backfilled:
-                db.commit()
+                if commit:
+                    db.commit()
             stored.append(record)
             continue
         if event.get("duplicate"):
@@ -224,7 +247,8 @@ def persist_evidence(db: Session, events: list[dict[str, Any]]) -> list[dict[str
         db.flush()
         record["id"] = row.id
         stored.append(record)
-    db.commit()
+    if commit:
+        db.commit()
     return stored
 
 
@@ -253,6 +277,11 @@ def serialize_evidence(row: models.SecurityEvidence, include_raw: bool = False) 
         "description": row.description,
         "created_at": row.created_at,
     }
+    from app.services.event_semantics import semantics
+    try:
+        data.update(semantics(json.loads(row.raw_data or "{}")))
+    except ValueError:
+        pass
     if include_raw:
         try:
             data["raw_data"] = json.loads(row.raw_data or "{}")
@@ -315,9 +344,16 @@ def build_process_tree(db: Session, device_id: str | None = None, limit: int = 1
     rows = list(reversed(query.order_by(models.SecurityEvidence.id.desc()).limit(max(1, min(limit, 4000))).all()))
 
     # 按设备分组构建
-    devices: dict[str, dict[int, dict[str, Any]]] = defaultdict(dict)
+    devices: dict[str, dict[Any, dict[str, Any]]] = defaultdict(dict)
     for row in rows:
-        node = devices[row.device_id or "unknown"].get(row.pid)
+        from app.services.event_semantics import semantics
+        native = row.source == "c_ebpf"
+        if native and semantics(json.loads(row.raw_data or "{}")).get("result") != "success":
+            continue  # Failed exec cannot create a successfully executed process node.
+        key = row.process_exec_id if native else row.pid
+        if native and not key:
+            key = row.evidence_id
+        node = devices[row.device_id or "unknown"].get(key)
         if node is None:
             node = {
                 "pid": row.pid, "ppid": row.ppid, "process": row.process or "unknown",
@@ -325,8 +361,11 @@ def build_process_tree(db: Session, device_id: str | None = None, limit: int = 1
                 "parent_process": row.parent_process,
                 "first_seen": row.timestamp, "last_seen": row.timestamp,
                 "evidence_ids": [], "children": [],
+                "process_exec_id": row.process_exec_id,
+                "parent_key": (row.parent_exec_id or None) if native else row.ppid,
+                "identity_basis": "exec_id" if native else "legacy_pid",
             }
-            devices[row.device_id or "unknown"][row.pid] = node
+            devices[row.device_id or "unknown"][key] = node
         node["evidence_ids"].append(row.evidence_id)
         node["last_seen"] = row.timestamp
         # exec 会替换映像：同 pid 多次 exec 时以最终映像名为准（ps 语义）。
@@ -341,7 +380,7 @@ def build_process_tree(db: Session, device_id: str | None = None, limit: int = 1
     for device, nodes in devices.items():
         roots = []
         for pid, node in nodes.items():
-            parent = nodes.get(node["ppid"])
+            parent = nodes.get(node["parent_key"])
             if parent is not None and parent is not node:
                 parent["children"].append(node)
             else:

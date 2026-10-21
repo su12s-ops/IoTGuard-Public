@@ -153,12 +153,21 @@ def validate(db, run):
         raise ValueError("计划摘要无效")
     asset = db.get(models.LinuxAsset, run.asset_id)
     connection = db.get(models.DeviceConnection, run.connection_id) if run.connection_id else None
-    if not asset or asset.distribution != "ubuntu" or not connection or not connection.enabled or connection.asset_id != run.asset_id or h().connection_signature(connection) != plan["connection_hash"]:
+    # 阻断或未完成的计划缺少 node_id/identity 等字段：缺字段必须按"绑定已变化"
+    # 失败，而不是抛 KeyError 变成 HTTP 500。
+    identity = plan.get("identity") or {}
+    if (not asset or asset.distribution != "ubuntu" or not connection or not connection.enabled
+            or connection.asset_id != run.asset_id
+            or not plan.get("connection_hash") or h().connection_signature(connection) != plan["connection_hash"]):
         raise ValueError("资产或连接绑定已变化")
     device_access.allowed_host(connection.host)
-    if plan["node_id"] != collection_tasks.node_for_asset(asset) or not collection_tasks.is_node_local(asset) or asset.hostname != plan["identity"]["hostname"] or asset.os_version != plan["identity"]["release"]:
+    if (plan.get("node_id") != collection_tasks.node_for_asset(asset)
+            or not collection_tasks.is_node_local(asset) or asset.hostname != identity.get("hostname")
+            or asset.os_version != identity.get("release")):
         raise ValueError("执行节点或目标身份已变化")
-    if hashlib.sha256(MAINTENANCE.read_bytes()).hexdigest() != plan["maintenance_sha256"] or hashlib.sha256(COLLECTOR.read_bytes()).hexdigest() != plan["collector_sha256"]:
+    if (not plan.get("maintenance_sha256") or not plan.get("collector_sha256")
+            or hashlib.sha256(MAINTENANCE.read_bytes()).hexdigest() != plan["maintenance_sha256"]
+            or hashlib.sha256(COLLECTOR.read_bytes()).hexdigest() != plan["collector_sha256"]):
         raise ValueError("固定维护工具已变化")
     return plan, asset, connection
 
@@ -166,6 +175,10 @@ def validate(db, run):
 def queue(db, run, operation):
     if device_access.collection_only_mode():
         raise ValueError("采集模式不允许修复适配器")
+    # 阻断/待预演/已完成的计划没有可执行的审批状态：在读取计划字段之前就拒绝，
+    # 避免残缺计划进入 validate/queue 的深层分支。
+    if run.status == "blocked":
+        raise ValueError("修复计划已被安全策略阻断，须先重新制定计划")
     plan, asset, _ = validate(db, run)
     if run.attempts >= 3:
         raise ValueError("任务尝试次数已达上限")

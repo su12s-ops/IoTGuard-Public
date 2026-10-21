@@ -507,7 +507,7 @@ def mode_real_wsl(report_dir: Path, duration: float, target_eps: float) -> dict:
         #    命令体见 write_wsl_script 注释：脚本文件形式规避 wsl.exe argv 引号缺陷。
         capture_script = f"""set -u
 cd {WSL_COLLECTOR}
-rm -f {capture_jsonl} {counts_remote} {sampler_file} /tmp/linuxguard-probe-health.json
+rm -f {capture_jsonl} {counts_remote} {sampler_file} /tmp/lg-perf-capture.jsonl.health.json
 ( sleep 3; python3 ebpf_perf_loadgen.py --duration {int(duration)} --target-eps {target_eps} --counts-file {counts_remote} > /tmp/lg-perf-loadgen.out 2>&1 ) &
 ( for i in $(seq 1 {int(duration) * 4 + 16}); do PID=$(pgrep -x bpftrace | head -1); [ -n "$PID" ] && echo "$(date +%s%N) $(awk '{{print $14, $15}}' /proc/$PID/stat 2>/dev/null) $(awk '/VmRSS/ {{print $2}}' /proc/$PID/status 2>/dev/null)"; sleep 0.25; done > {sampler_file} ) &
 bash ebpf_trace_capture.sh {capture_jsonl} {int(duration) + 8} 2>&1 | tail -4
@@ -518,7 +518,7 @@ bash ebpf_trace_capture.sh {capture_jsonl} {int(duration) + 8} 2>&1 | tail -4
 
         # 2) 采集产物：原始行数（awk 稳定处理 0 匹配）+ 探针健康文件（丢失计数单一来源）
         raw_count = wsl(f"awk '/^LG\\|/ {{n++}} END {{print n+0}}' {capture_jsonl}.raw 2>/dev/null").stdout.strip()
-        health_json_text = wsl("cat /tmp/linuxguard-probe-health.json 2>/dev/null || echo '{}'").stdout
+        health_json_text = wsl("cat /tmp/lg-perf-capture.jsonl.health.json 2>/dev/null || echo '{}'").stdout
         try:
             health_file = json.loads(health_json_text)
         except json.JSONDecodeError:
@@ -534,7 +534,7 @@ bash ebpf_trace_capture.sh {capture_jsonl} {int(duration) + 8} 2>&1 | tail -4
         forwarder_script = f"""set -u
 cd {WSL_COLLECTOR}
 export LINUXGUARD_CONTROL_TOKEN={backend.token}
-cat {capture_jsonl} | python3 ebpf_event_collector.py --api {wsl_base} --batch-size 100 --flush-seconds 1 --spool-file /tmp/lg-perf-wal.jsonl --max-retries 5 --sensor-id {sensor} --heartbeat --heartbeat-seconds 10 --asset-id {asset_id} --health-file /tmp/linuxguard-probe-health.json --source bpftrace
+cat {capture_jsonl} | python3 ebpf_event_collector.py --api {wsl_base} --batch-size 100 --flush-seconds 1 --spool-file /tmp/lg-perf-wal.jsonl --max-retries 5 --sensor-id {sensor} --heartbeat --heartbeat-seconds 10 --asset-id {asset_id} --health-file /tmp/lg-perf-capture.jsonl.health.json --source bpftrace
 """
         write_wsl_script(report_dir / "wsl-forwarder-run.sh", forwarder_script)
         fwd = wsl(f"bash {wsl_report_dir}/wsl-forwarder-run.sh 2>&1 | tail -3", timeout=600)
@@ -546,7 +546,7 @@ cat {capture_jsonl} | python3 ebpf_event_collector.py --api {wsl_base} --batch-s
             f"cp {capture_jsonl}.err {wsl_report_dir}/wsl-capture.err; "
             f"cp {sampler_file} {wsl_report_dir}/wsl-proc-samples.txt; "
             f"cp /tmp/lg-perf-loadgen.out {wsl_report_dir}/wsl-loadgen.out; "
-            f"cp /tmp/linuxguard-probe-health.json {wsl_report_dir}/wsl-probe-health.json; "
+            f"cp /tmp/lg-perf-capture.jsonl.health.json {wsl_report_dir}/wsl-probe-health.json; "
             f"cp /tmp/lg-perf-wal.jsonl {wsl_report_dir}/wsl-wal-after.jsonl 2>/dev/null; true")
 
         capture_text = (report_dir / "wsl-capture.jsonl").read_text(encoding="utf-8", errors="ignore") \

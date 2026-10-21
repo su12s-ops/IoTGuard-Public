@@ -94,24 +94,23 @@ def test_corrupt_raw_evidence_blocks_reanalysis(case):
 
 
 def test_same_facts_preserves_raw_confidence_and_formal(case, monkeypatch):
+    """事实未变化时不得重跑模型（M4.9）：返回原运行、保留原结论与正式字段。"""
     from app.services.unified import runner
     db, row, conn = case
     item = proposal(db); complete(db, item, conn)
     before = db.query(models.RiskAssessment).one().review_status
-    def fake_run(db, child, **kwargs):
-        assert kwargs["force_full_review"] is True
-        state = json.loads(row.state_json)
-        state["decision"]["verdicts"][0]["confidence"] = .99
-        child.state_json, child.status = json.dumps(state), "completed"
-        child.decision_json = json.dumps(state["decision"])
-        db.commit()
+    def fake_run(db, child, **kwargs):   # 断言：事实未变化时绝不能被调用
+        raise AssertionError("unchanged facts must not re-run the model")
     monkeypatch.setattr(runner, "run_unified_sync", fake_run)
-    child = I.resume(db, item)
-    assert json.loads(child.decision_json)["verdicts"][0]["confidence"] == .99
-    assert json.loads(item.result_json)["model_variance_only"] is True
-    assert json.loads(item.result_json)["substantive_update"] is False
+    parent = I.resume(db, item)
+    assert parent.run_id == row.run_id, "未变化时返回原运行，不产生子运行"
+    assert item.status == "no_new_evidence"
+    result = json.loads(item.result_json)
+    assert result["substantive_update"] is False
+    assert result["gap_resolution"] == "unchanged_inventory_facts"
+    assert "model_variance_only" not in result
     assert db.query(models.RiskAssessment).one().review_status == before
-    assert I.resume(db, item).run_id == child.run_id
+    assert I.resume(db, item).run_id == parent.run_id
 
 
 def test_new_package_version_is_substantive(case):
@@ -119,6 +118,64 @@ def test_new_package_version_is_substantive(case):
     before = I.evidence_view(db, conn.asset_id)
     db.query(models.AssetPackage).one().package_version = "2.0"; db.commit()
     assert I.fingerprint(before) != I.fingerprint(I.evidence_view(db, conn.asset_id))
+
+
+def test_auto_continuation_skips_unchanged_facts(case):
+    from app.services.unified.continuation import tick
+    db, row, conn = case
+    item = proposal(db); complete(db, item, conn)
+    item.result_json = I.encode({'continuation': {'auto_resume': True, 'request_hash': item.request_hash, 'authorized_by': item.authorized_by}})
+    db.commit()
+    tick(db)
+    assert item.status == 'no_new_evidence'
+    assert not item.reanalysis_run_id
+    assert db.query(models.UnifiedAnalysisRun).count() == 1
+    tick(db)
+    assert db.query(models.UnifiedAnalysisRun).count() == 1
+
+
+def test_auto_continuation_requires_explicit_permission(case, monkeypatch):
+    from app.services.unified.continuation import tick
+    db, row, conn = case
+    item = proposal(db); complete(db, item, conn)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('must not resume')
+    monkeypatch.setattr(I, 'resume', forbidden)
+    tick(db)
+    assert item.status == 'authorized'
+
+
+def test_auto_continuation_failed_collection_stops(case):
+    from app.services.unified.continuation import tick
+    db, row, conn = case
+    item = proposal(db); run = complete(db, item, conn)
+    run.status = 'failed'
+    item.result_json = I.encode({'continuation': {'auto_resume': True, 'request_hash': item.request_hash, 'authorized_by': item.authorized_by}})
+    db.commit()
+    tick(db)
+    assert item.status == 'collection_failed'
+    assert not item.reanalysis_run_id
+
+
+def test_auto_continuation_changed_inventory_resumes_once(case, monkeypatch):
+    from app.services.unified.continuation import tick
+    from app.services.unified import runner
+    db, row, conn = case
+    item = proposal(db); complete(db, item, conn)
+    db.query(models.AssetPackage).one().package_version = '2.0'
+    item.result_json = I.encode({'continuation': {'auto_resume': True, 'request_hash': item.request_hash, 'authorized_by': item.authorized_by}})
+    db.commit()
+    calls = []
+    def run(db, child, **kwargs):
+        calls.append(child.run_id)
+        child.state_json = row.state_json
+        child.status = 'completed'
+        db.commit()
+    monkeypatch.setattr(runner, 'run_unified_sync', run)
+    tick(db); tick(db)
+    assert len(calls) == 1
+    assert item.status == 'completed'
+    assert json.loads(item.result_json)['continuation']['auto_resume']
 
 
 def test_formal_resume_keeps_formal_trace_and_publishes_current_report(case, monkeypatch):
@@ -138,6 +195,10 @@ def test_formal_resume_keeps_formal_trace_and_publishes_current_report(case, mon
     db.commit()
     item = proposal(db)
     complete(db, item, connection)
+    # 复采必须带来实质事实变化，才进入「重跑模型 + 正式落库」路径；
+    # 未变化时按 M4.9 直接 no_new_evidence，不产生子运行（见上一个用例）。
+    db.query(models.AssetPackage).first().package_version = "9.9.9"
+    db.commit()
     def run(db, child, **kwargs):
         assert child.mode == "formal" and kwargs["sink"] is formal_sink
         current = UnifiedAnalysisState.model_validate(state)

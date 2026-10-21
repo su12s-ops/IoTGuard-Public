@@ -1,0 +1,130 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Runtime evidence &amp; audit · live</span>
+      <h1>运行与审计</h1>
+      <p class="sub">节点、传感器与证据新鲜度分开判定；没有事件不等于没有风险。</p>
+      <div class="meta"><span>3 个传感器</span><i class="sep"></i><span>70,000+ 事件</span><i class="sep"></i><span>证据新鲜度 62%</span><i class="sep"></i><span>最近事件 2 分钟前</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-download"/></svg>上传证据</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-activity"/></svg>打开实时监控</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:154px minmax(0,1fr) 118px">
+    <div class="grid" style="grid-template-columns:repeat(4,minmax(0,1fr))">
+      <section class="card" style="padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:7px"><i class="dot ok"></i><span style="font-size:10px;font-weight:650">Falco · Ubuntu</span><span class="chip low" style="margin-left:auto;height:18px;font-size:8px">新鲜</span></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <div class="gauge" style="width:58px;height:58px">
+            <svg width="58" height="58" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--line-soft)" stroke-width="6"/><circle cx="32" cy="32" r="26" fill="none" stroke="var(--low)" stroke-width="6" stroke-linecap="round" stroke-dasharray="153 163"/></svg>
+            <div class="gauge-center"><b style="font-size:14px">94%</b></div>
+          </div>
+          <div><div class="num" style="font-size:17px;font-weight:700">1,204</div><div style="color:var(--muted);font-size:8.5px">事件 · 2 分钟前</div><div style="color:var(--low);font-size:8px;margin-top:2px">eBPF 内核事件</div></div>
+        </div>
+      </section>
+      <section class="card" style="padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:7px"><i class="dot bad"></i><span style="font-size:10px;font-weight:650">logread · OpenWrt</span><span class="chip high" style="margin-left:auto;height:18px;font-size:8px">过期</span></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <div class="gauge" style="width:58px;height:58px">
+            <svg width="58" height="58" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--line-soft)" stroke-width="6"/><circle cx="32" cy="32" r="26" fill="none" stroke="var(--high)" stroke-width="6" stroke-linecap="round" stroke-dasharray="6 163"/></svg>
+            <div class="gauge-center"><b style="font-size:14px">0%</b></div>
+          </div>
+          <div><div class="num" style="font-size:17px;font-weight:700">812</div><div style="color:var(--muted);font-size:8.5px">事件 · 20 小时前</div><div style="color:var(--high);font-size:8px;margin-top:2px">超出 15 分钟窗口</div></div>
+        </div>
+      </section>
+      <section class="card" style="padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:7px"><i class="dot unknown"></i><span style="font-size:10px;font-weight:650">Zephyr · Sensor-01</span><span class="chip muted" style="margin-left:auto;height:18px;font-size:8px">未接入</span></div>
+        <div style="display:flex;align-items:center;gap:12px;margin-top:8px">
+          <div class="gauge" style="width:58px;height:58px">
+            <svg width="58" height="58" viewBox="0 0 64 64"><circle cx="32" cy="32" r="26" fill="none" stroke="var(--line-soft)" stroke-width="6" stroke-dasharray="3 5"/></svg>
+            <div class="gauge-center"><b style="font-size:14px">—</b></div>
+          </div>
+          <div><div class="num" style="font-size:17px;font-weight:700">0</div><div style="color:var(--muted);font-size:8.5px">事件 · 不支持 eBPF</div><div style="color:var(--muted);font-size:8px;margin-top:2px">需设备侧证据</div></div>
+        </div>
+      </section>
+      <section class="card" style="padding:12px 14px">
+        <div style="display:flex;align-items:center;gap:7px"><span style="font-size:10px;font-weight:650">24 小时事件</span><span class="num" style="margin-left:auto;color:var(--muted);font-size:8px">1,204</span></div>
+        <div style="display:flex;align-items:flex-end;gap:3px;height:56px;margin-top:10px">
+          <i style="flex:1;height:22%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:34%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:28%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:45%;background:var(--accent);border-radius:2px 2px 0 0"></i>
+          <i style="flex:1;height:38%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:52%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:48%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:64%;background:var(--high);border-radius:2px 2px 0 0"></i>
+          <i style="flex:1;height:56%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:72%;background:var(--high);border-radius:2px 2px 0 0"></i><i style="flex:1;height:66%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:80%;background:var(--crit);border-radius:2px 2px 0 0"></i>
+          <i style="flex:1;height:60%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:74%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:84%;background:var(--crit);border-radius:2px 2px 0 0"></i><i style="flex:1;height:70%;background:var(--accent);border-radius:2px 2px 0 0"></i>
+          <i style="flex:1;height:58%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:66%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:52%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:46%;background:var(--accent);border-radius:2px 2px 0 0"></i>
+          <i style="flex:1;height:40%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:34%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:28%;background:var(--accent);border-radius:2px 2px 0 0"></i><i style="flex:1;height:18%;background:var(--accent);border-radius:2px 2px 0 0"></i>
+        </div>
+        <div style="display:flex;justify-content:space-between;margin-top:4px;color:var(--muted);font:8px var(--font-num)"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+      </section>
+    </div>
+
+    <div class="grid g-2-1">
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">事件流</div><div class="card-desc">按时间倒序 · 最近 200 条 · 未观测不等于安全</div></div>
+          <span class="chip muted">实时</span>
+        </div>
+        <div class="table-wrap" style="margin-top:4px">
+          <table style="table-layout:fixed">
+            <colgroup><col style="width:76px"><col style="width:132px"><col style="width:88px"><col style="width:220px"><col style="width:132px"><col style="width:44px"></colgroup>
+            <thead><tr><th>时间</th><th>资产</th><th>类型</th><th>规则 / 目标</th><th>进程 / 端口</th><th>强度</th></tr></thead>
+            <tbody>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:28:12</td><td class="name">OpenWrt-Lab-0050</td><td><span class="chip crit"><i class="dot"></i>文件</span></td><td>Read sensitive file untrusted</td><td class="mono">openssl · 443</td><td><span class="num" style="color:var(--crit);font-weight:700">92</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:27:41</td><td class="name">OpenWrt-Lab-0050</td><td><span class="chip high"><i class="dot"></i>进程</span></td><td>Unexpected execve from web service</td><td class="mono">openssl · 1842</td><td><span class="num" style="color:var(--high);font-weight:700">78</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:27:35</td><td class="name">Ubuntu-Collector</td><td><span class="chip info"><i class="dot"></i>网络</span></td><td>Outbound connection to rare port</td><td class="mono">sshd · 51822</td><td><span class="num" style="color:var(--info);font-weight:700">64</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:26:58</td><td class="name">Ubuntu-Collector</td><td><span class="chip info"><i class="dot"></i>权限</span></td><td>sudo invocation by deploy user</td><td class="mono">sudo · pid 921</td><td><span class="num" style="color:var(--info);font-weight:700">51</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:25:02</td><td class="name">OpenWrt-Lab-0050</td><td><span class="chip high"><i class="dot"></i>服务</span></td><td>cgi-io process restart loop</td><td class="mono">cgi-io · 8080</td><td><span class="num" style="color:var(--high);font-weight:700">73</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:24:48</td><td class="name">Zephyr-Sensor-01</td><td><span class="chip muted"><i class="dot"></i>无事件</span></td><td>RTOS 不支持 eBPF · 需设备侧证据</td><td class="mono">—</td><td><span class="num" style="color:var(--muted);font-weight:700">—</span></td></tr>
+              <tr><td class="num" style="font-size:8.5px;color:var(--muted)">10:24:26</td><td class="name">OpenWrt-Lab-0050</td><td><span class="chip info"><i class="dot"></i>网络</span></td><td>Inbound scan on 443</td><td class="mono">nmap · 443</td><td><span class="num" style="color:var(--info);font-weight:700">58</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="card-foot"><span>事件保留 90 天；日志丢失不可知时不能记为零。</span><a class="link" href="#">导出事件 <svg class="icon"><use href="#i-download"/></svg></a></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">证据覆盖</div><div class="card-desc">按资产与传感器拆分</div></div>
+          <span class="chip high"><i class="dot"></i>1 个过期</span>
+        </div>
+        <div class="card-body" style="padding-top:8px">
+          <div style="display:flex;align-items:center;gap:14px">
+            <div class="gauge" style="width:78px;height:78px">
+              <svg width="78" height="78" viewBox="0 0 84 84"><circle cx="42" cy="42" r="34" fill="none" stroke="var(--line-soft)" stroke-width="7"/><circle cx="42" cy="42" r="34" fill="none" stroke="var(--accent)" stroke-width="7" stroke-linecap="round" stroke-dasharray="132 214"/></svg>
+              <div class="gauge-center"><b style="font-size:17px">62%</b><span>资产覆盖</span></div>
+            </div>
+            <div style="font-size:9px;color:var(--muted);line-height:1.55">2 个资产有运行时关联；<br>1 个传感器已过期 20 小时。</div>
+          </div>
+          <div style="margin-top:10px;display:grid;gap:8px">
+            <div class="cover-row" style="grid-template-columns:72px 1fr 30px"><span>OpenWrt-Lab</span><span class="cover-bar"><i class="warn" style="width:66%"></i></span><span class="cover-val">66%</span></div>
+            <div class="cover-row" style="grid-template-columns:72px 1fr 30px"><span>Ubuntu</span><span class="cover-bar"><i class="low" style="width:94%"></i></span><span class="cover-val">94%</span></div>
+            <div class="cover-row" style="grid-template-columns:72px 1fr 30px"><span>Zephyr</span><span class="cover-bar"><i style="width:0"></i></span><span class="cover-val">N/A</span></div>
+          </div>
+          <div style="margin-top:10px;padding-top:8px;border-top:1px solid var(--line-soft)">
+            <div style="color:var(--ink);font-size:9px;font-weight:650;margin-bottom:5px">已知缺口</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--high);margin-bottom:4px"><i class="dot warn"></i>logread 最后一次事件 20 小时前</div>
+            <div style="display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--muted)"><i class="dot unknown"></i>Zephyr 无 eBPF，需设备侧证据</div>
+          </div>
+        </div>
+        <div class="card-foot"><span>传感器在线不等于证据新鲜。</span><a class="link" href="#">采集节点 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+      </section>
+    </div>
+
+    <div class="grid g-3">
+      <div class="card" style="padding:12px 14px">
+        <div style="color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">LAST TRACE</div>
+        <div class="mono" style="margin-top:5px;font-size:11px;color:var(--ink)">TR-20261021-0526</div>
+        <div style="margin-top:3px;color:var(--muted);font-size:8.5px">OpenWrt 采集 · 2 分钟前 · 12 步</div>
+      </div>
+      <div class="card" style="padding:12px 14px">
+        <div style="color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">RETENTION</div>
+        <div style="margin-top:5px;font-size:11px;color:var(--ink);font-weight:650">事件 90 天 · 审计 365 天</div>
+        <div style="margin-top:3px;color:var(--muted);font-size:8.5px">清理任务每日 02:00 执行</div>
+      </div>
+      <div class="card" style="padding:12px 14px;display:flex;align-items:center;gap:12px">
+        <div style="flex:1"><div style="color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">EXPORT</div><div style="margin-top:5px;font-size:10.5px;color:var(--ink);font-weight:650">导出当前视图</div></div>
+        <button class="btn sm"><svg class="icon"><use href="#i-download"/></svg>CSV</button>
+      </div>
+    </div>
+  </div>
+</div>

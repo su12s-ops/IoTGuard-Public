@@ -191,6 +191,16 @@ def apply_unified_audit_policy(state_like: dict[str, Any]) -> AuditPolicyDecisio
             and verdict.get("impact_status") == "not_affected"):
         reasons.append("major_baseline_contradiction")
 
+    # 已人工复核结论不得被自动改判：与已签收裁定相反一律转人工。
+    # 实测 risk 272（review_verdict=confirmed_affected）：单智能体输出 not_affected +
+    # 0.72 置信，因 match_status=fixed 命中"确定性排除"而 auto_confirmed——但那正是
+    # 人工复核明确拒绝的推理（"不能仅凭版本变化关闭风险"）。
+    reviewed = str(baseline.get("review_verdict") or "")
+    if (str(baseline.get("review_status") or "") == "resolved" and reviewed
+            and reviewed in {"confirmed_affected", "potentially_affected"}
+            and verdict.get("impact_status") in {"not_affected", "insufficient_evidence"}):
+        reasons.append(f"contradicts_resolved_review:{reviewed}->{verdict.get('impact_status')}")
+
     # 有界方向映射 + 分数计算（LLM 永不直写分数）
     if verdict.get("risk_direction", "maintain") != "maintain" and not verdict.get("risk_change_basis"):
         reasons.append("risk_change_basis_missing")

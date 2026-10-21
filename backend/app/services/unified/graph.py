@@ -22,7 +22,7 @@ import json
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from typing import Any, Callable
 
@@ -38,7 +38,11 @@ from app.services.unified import (
     conflicts as conflicts_mod,
     evidence_prep,
     routing as routing_mod,
+    collaboration as collaboration_mod,
+    collaboration_flow as collaboration_flow,
+    harness_bridge,
 )
+from app.services.unified import context_budget
 from app.services.unified.agent_base import (
     BudgetExceeded,
     UnifiedToolLoopAgent,
@@ -110,6 +114,13 @@ class RunContext:
     tool_cache: dict[str, Any] = field(default_factory=dict)
     # Stage-10 效率：各角色首次运行的完整上下文（定向复议继承，避免从零重建）
     first_contexts: dict[str, str] = field(default_factory=dict)
+    # 上下文预算（估算 token/角色）：超额度显式降级，不发百万字符提示词换 400
+    context_token_budgets: dict[str, int] = field(default_factory=dict)
+    # 对照实验用策略（生产恒为 four_agents）。single_agent：只有决策角色调用模型，
+    # 事实仍来自同一确定性预取，用于「四智能体 vs 单智能体」的同事实对照。
+    strategy: str = "four_agents"
+    replay_parent: dict[str, Any] = field(default_factory=dict)
+    snapshot_id: str = ""
 
     def session(self) -> Session:
         return self.db_factory()
@@ -119,7 +130,11 @@ class RunContext:
 
     def log_agent(self, name: str, entry: dict[str, Any]) -> None:
         with self._lock:
-            self.agent_logs[name] = entry
+            history = list(self.agent_logs.get(name, {}).get("executions", []))
+            history.append({**entry, "execution": len(history) + 1})
+            self.agent_logs[name] = {**entry, "executions": history,
+                "total_latency_ms": sum(x.get("latency_ms", 0) for x in history),
+                "total_llm_calls": sum(x.get("llm_calls", 0) for x in history)}
 
     def emit(self, db: Session, event_type: str, actor: str, status: str,
              payload: dict[str, Any] | None = None, **kwargs: Any) -> None:
@@ -132,13 +147,14 @@ class RunContext:
 # ── 通用专家执行（证据校验 + 一次反馈重试 + 降级语义） ────────────────────────
 
 
-def _agent_deadline(ctx: RunContext) -> float:
-    return max(0.0, min(ctx.agent_budget_s, ctx.remaining_s()))
+def _agent_deadline(ctx: RunContext, role: str = "") -> float:
+    reserve = min(300.0, ctx.run_deadline_s * 0.25) if role and role != AGENT_DECISION else 0
+    return max(0.0, min(ctx.agent_budget_s, ctx.remaining_s() - reserve))
 
 
 def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                     validate_fn: Callable[[dict[str, Any]], list[str]] | None = None,
-                    extra_instruction: str = "") -> tuple[dict[str, Any] | None, str]:
+                    extra_instruction: str = "", state=None) -> tuple[dict[str, Any] | None, str]:
     """执行一个专家：结构化输出 → 证据事实校验（一次带反馈重试）→ 失败降级。
 
     返回 (output_dict | None, degraded_reason)。None 表示该角色降级，
@@ -146,13 +162,42 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
     """
     db = ctx.session()
     try:
+        if state is not None and state.evidence_snapshot:
+            context_text += "\n共享协作状态：" + json.dumps(collaboration_mod.compact_context(
+                spec.name, state.evidence_snapshot, state.shared_findings, state.collaboration_messages), ensure_ascii=False)
+            original_validator = validate_fn
+            def checked(output):
+                errors = list(original_validator(output)) if original_validator else []
+                errors.extend(collaboration_mod.validate_evidence_ids(
+                    collaboration_mod.collect_evidence_ids(output), state.evidence_snapshot))
+                _, message_errors = collaboration_mod.validate_messages(output.get("messages", []),
+                    spec.name, state.evidence_snapshot, state.shared_findings)
+                return errors + message_errors
+            validate_fn = checked
+        try:
+            prompt_budget = context_budget.enforce_context_budget(
+                context_text, spec.name, ctx.context_token_budgets)
+        except context_budget.ContextBudgetExceeded as exc:
+            # 请求前闸门：显式降级并把实测值写进原因，绝不把超限提示词发给模型
+            # 换回 400（实测 7.2M 字符提示词的唯一结果就是浪费两次重试后降级）。
+            ctx.emit(db, "context_budget_exceeded", actor=spec.name, status="failed",
+                     payload={"reason": exc.as_reason()})
+            ctx.log_agent(spec.name, {
+                "status": "degraded", "attempts": 0, "latency_ms": 0,
+                "error": exc.as_reason(), "llm_calls": 0, "llm_usage": {},
+                "requests": [], "output": None, "tool_calls": [],
+                "feedback_history": [], "triaged_fields": [],
+            })
+            return None, exc.as_reason()
         started_at = models.utcnow()
         ctx.emit(db, "agent_started", actor=spec.name, status="running", is_llm_step=True,
-                 payload={"agent": spec.name}, started_at=started_at)
+                 payload={"agent": spec.name, "prompt_estimated_tokens": prompt_budget["estimated_tokens"],
+                          "prompt_chars": prompt_budget["chars"]}, started_at=started_at)
         agent_started = time.monotonic()
-        role_deadline = agent_started + _agent_deadline(ctx)
+        role_deadline = agent_started + _agent_deadline(ctx, spec.name)
         agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter,
-                                     tool_cache=ctx.tool_cache)
+                                     tool_cache=ctx.tool_cache, snapshot_id=ctx.snapshot_id,
+                                     role=spec.name)
         with ctx._lock:
             ctx.first_contexts.setdefault(spec.name, context_text)
         result = agent.run(db, context=context_text, deadline_s=max(0.0, role_deadline - time.monotonic()))
@@ -170,11 +215,23 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                     f"\n待纠正的原始报告：{json.dumps(result.output, ensure_ascii=False)}")
                 ctx.emit(db, "evidence_validation_failed", actor=spec.name, status="failed",
                          payload={"errors": errors, "output_summary": _summary(result.output)})
-                retry = agent.run(db, context=retry_context,
-                                  deadline_s=max(0.0, min(role_deadline - time.monotonic(), ctx.remaining_s())))
-                if retry.status != "succeeded":
+                # Correct the supplied report without reopening the investigation.
+                try:
+                    context_budget.enforce_context_budget(
+                        retry_context, spec.name, ctx.context_token_budgets)
+                except context_budget.ContextBudgetExceeded as exc:
+                    # 反馈重试会把原报告再塞回提示词：同样先过预算闸门。
+                    degraded_reason = exc.as_reason()
+                    ctx.emit(db, "context_budget_exceeded", actor=spec.name, status="failed",
+                             payload={"reason": exc.as_reason(), "stage": "evidence_retry"})
+                    retry = None
+                else:
+                    agent.spec = replace(spec, tools=[], llm_retries=0)
+                    retry = agent.run(db, context=retry_context,
+                                      deadline_s=max(0.0, min(role_deadline - time.monotonic(), ctx.remaining_s())))
+                if retry is not None and retry.status != "succeeded":
                     degraded_reason = retry.error or retry.status
-                if retry.status == "succeeded":
+                if retry is not None and retry.status == "succeeded":
                     retry_errors = validate_fn(retry.output or {})
                     if not retry_errors:
                         result, errors = retry, []
@@ -184,11 +241,41 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                 if errors:
                     # Removing an ID is not proof of the claim it supported.
                     # Keep the failed report in the audit trail and fail closed.
-                    degraded_reason = "; ".join(errors)
+                    # 若重试本身没跑起来（上下文超预算），两个原因都要留在记录里。
+                    detail = "; ".join(errors)
+                    degraded_reason = (f"{degraded_reason}; {detail}" if degraded_reason
+                                       else detail)
         elapsed_ms = int((time.monotonic() - agent_started) * 1000)
         # 事实校验未通过（degraded_reason 非空）时绝不放行原始输出——
         # 即使模型调用自身的 result.status 仍为 succeeded
         output = result.output if (result.status == "succeeded" and not degraded_reason) else None
+        if output is not None and state is not None:
+            from app.services.unified.selective_replay import ROLE_KEYS
+            previous = getattr(state, ROLE_KEYS[spec.name], None)
+            provenance = state.role_provenance.get(spec.name, {})
+            if previous and provenance.get("snapshot_id") == state.evidence_snapshot_id:
+                # Retain raw model output in agent_logs; effective confidence
+                # cannot rise on a second interpretation of identical evidence.
+                from copy import deepcopy
+                output = deepcopy(output)
+                def cap(current, prior):
+                    if not isinstance(current, dict) or not isinstance(prior, dict):
+                        return
+                    if isinstance(current.get("confidence"), (int, float)) and isinstance(prior.get("confidence"), (int, float)):
+                        current["confidence"] = min(current["confidence"], prior["confidence"])
+                    for key, value in current.items():
+                        if isinstance(value, dict):
+                            cap(value, prior.get(key, {}))
+                        elif isinstance(value, list) and key in {"findings", "verdicts"}:
+                            old = prior.get(key, [])
+                            for item in value:
+                                if not isinstance(item, dict):
+                                    continue
+                                subject = item.get("cve_id") or item.get("object_id") or item.get("evidence_id")
+                                match = next((x for x in old if isinstance(x, dict) and
+                                    (x.get("cve_id") or x.get("object_id") or x.get("evidence_id")) == subject), {})
+                                cap(item, match)
+                cap(output, previous)
         ctx.log_agent(spec.name, {
             "status": result.status if not degraded_reason else "degraded",
             "attempts": result.attempts,
@@ -196,7 +283,13 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
             "error": (degraded_reason or result.error or "")[:800],
             "llm_calls": result.llm_calls,
             "llm_usage": result.llm_usage,
-            "tool_calls": [{"name": call["name"], "ok": call.get("ok", False)}
+            "prompt_estimated_tokens": prompt_budget["estimated_tokens"],
+            "prompt_chars": prompt_budget["chars"],
+            "requests": list(agent.request_log),
+            "output": result.output,
+            "tool_calls": [{"name": call["name"], "ok": call.get("ok", False),
+                            "cached": call.get("cached", False),
+                            "arguments_hash": collaboration_mod.fingerprint(call.get("arguments", {}))}
                            for call in result.tool_calls],
             "feedback_history": result.feedback_history[:4],
             "triaged_fields": result.triaged_fields[:6],
@@ -243,6 +336,21 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
         db.close()
 
 
+def _bounded_registry_ids(state, ctx=None, preferred=()) -> dict[str, Any]:
+    """可引用证据 ID 的有界渲染（全集留在服务端校验，不进提示词）。
+
+    实测 run UA-20261020153207-617da0 的注册表有 284,748 条证据：把全集
+    `json.dumps(sorted(...))` 进提示词会渲染成 7.2M 字符，模型侧必然 400。
+    """
+    registry = (state.evidence_snapshot or {}).get("evidence_registry") or {}
+    values = set(registry)
+    if ctx is not None:
+        values |= set(getattr(ctx, "packet_evidence_ids", ()) or ())
+    candidates = list(preferred) or list(state.baseline.get("packet_evidence_ids") or [])
+    return context_budget.bounded_ids(
+        values, preferred=candidates, limit=context_budget.DEFAULT_ID_RENDER_LIMIT)
+
+
 def _summary(output: dict[str, Any] | None, limit: int = 12) -> dict[str, Any]:
     if not isinstance(output, dict):
         return {}
@@ -271,10 +379,24 @@ def node_prepare(ctx: RunContext):
                 db, state.task_type, state.target_ref, state.target_type,
                 risk=risk, capability_marks=marks, candidates=candidates)
             if ctx.force_full_review:
+                recommendation = routing.model_dump()
                 routing.tier = "standard"
                 routing.include_asset = routing.include_vulnerability = routing.include_runtime = routing.include_decision = True
                 routing.skipped_agents = []
                 routing.reason = "显式完整四角色研判；程序聚合与人审门禁独立执行"
+                ctx.emit(db, "routing_recommendation", actor="orchestrator", status="succeeded",
+                         payload={"recommended": recommendation, "applied": "full_review",
+                                  "reason": "simplified_formal_path_requires_comparative_validation"})
+            if ctx.strategy == "single_agent":
+                routing.tier = "focused"
+                routing.include_asset = routing.include_vulnerability = routing.include_runtime = False
+                routing.include_decision = True
+                routing.skipped_agents = [AGENT_ASSET, AGENT_VULNERABILITY, AGENT_RUNTIME]
+                routing.reason = ("single_agent_baseline：仅决策角色调用模型，"
+                                  "事实来自同一确定性预取（对照实验，不用于正式入口）")
+                ctx.emit(db, "routing_recommendation", actor="orchestrator", status="succeeded",
+                         payload={"applied": "single_agent_baseline",
+                                  "reason": routing.reason})
             baseline = _baseline_snapshot(db, state, risk, candidates)
             ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
                      payload={"stage": "prepare", "routing": routing.model_dump(),
@@ -304,22 +426,14 @@ def node_prepare_evidence(ctx: RunContext):
         try:
             packet = evidence_prep.build_evidence_prep_packet(
                 db, state.target_ref, state.target_type, state.candidate_context)
-            inventory_id = (packet.asset_facts.get("inventory_provenance") or {}).get("inventory_evidence_id")
-            if inventory_id:
-                ctx.packet_evidence_ids.add(inventory_id)
-            for candidate in packet.candidates:
-                for source in candidate.source_bundle.values():
-                    value = source.get("value") or {}
-                    records = value.get("records", [value]) if isinstance(value, dict) else []
-                    for record in records:
-                        if record.get("evidence_id"):
-                            ctx.packet_evidence_ids.add(record["evidence_id"])
+            collaboration_update = collaboration_flow.prepare(ctx, state, db, packet.model_dump())
             ctx.emit(db, "stage_finished", actor="orchestrator", status="succeeded",
                      payload={"stage": "prepare_evidence",
                               "as_of": packet.as_of,
                               "candidates": len(packet.candidates),
                               "runtime_freshness": (packet.runtime_facts or {}).get("freshness")})
             return {
+                **collaboration_update,
                 "evidence_prep": packet.model_dump(),
                 "stage_status": state.record_stage("prepare_evidence", "succeeded"),
             }
@@ -492,9 +606,15 @@ def _baseline_snapshot(db: Session, state: UnifiedAnalysisState,
             "package_name": risk.package_name,
             "cve_id": risk.cve_id,
             "business_level": asset.business_level if asset else "",
+            # 已人工复核的结论必须进入门禁输入：改判它需要人工确认，
+            # 否则「与已签收结论相反」的裁定会被 auto_confirmed（实测 risk 272）。
+            "review_status": risk.review_status or "",
+            "review_verdict": risk.review_verdict or "",
             "packet_evidence_ids": sorted(packet_ids),
         }
-    return {
+    # 没有绑定风险时不得把调用方已持有的基线清空：程序取不到的字段留空，
+    # 已有基线保留——否则冲突检测与审计门禁会静默退化成「无基线」。
+    snapshot = {
         "object_id": state.target_ref,
         "preliminary_score": None,
         "preliminary_level": "",
@@ -503,18 +623,30 @@ def _baseline_snapshot(db: Session, state: UnifiedAnalysisState,
         "fixed_version": "",
         "packet_evidence_ids": [],
     }
+    previous = state.baseline or {}
+    for key, value in previous.items():
+        if key == "packet_evidence_ids":
+            continue
+        if snapshot.get(key) in (None, "", [], {}) and value not in (None, "", [], {}):
+            snapshot[key] = value
+    snapshot["packet_evidence_ids"] = sorted(
+        set(previous.get("packet_evidence_ids") or []) | set(snapshot["packet_evidence_ids"]))
+    return snapshot
 
 
 def node_investigate_asset(ctx: RunContext):
     def investigate_asset(state: UnifiedAnalysisState) -> dict[str, Any]:
+        reuse = collaboration_flow.reused(ctx, state, AGENT_ASSET, "investigate_asset")
+        if reuse is not None:
+            return reuse
         if not state.routing.include_asset:
             return {"stage_status": state.record_stage("investigate_asset", "skipped")}
         context_text = (
             f"调查目标资产: {state.target_ref}（类型 {state.target_type}）。\n"
             f"业务调查问题: {state.investigation_goal}\n"
             f"本次候选包（完整清单截断时仍须逐一调查）: {json.dumps(state.candidate_context, ensure_ascii=False)}\n"
-            "请先调用工具获取真实画像、暴露面与运行时数据质量，再输出结构化结论。\n"
-            "evidence_inventory 必须来自 query_runtime_data_quality 的真实返回；"
+            "优先使用程序预取的真实画像、暴露面与运行时数据质量；仅对缺失或冲突信息调用工具。\n"
+            "evidence_inventory 必须来自预取质量包或 query_runtime_data_quality 的真实返回；"
             "evidence_quality 按覆盖/新鲜度/缺口如实评级。\n"
             "证据分级纪律（M4.2）：结论必须区分三个等级并分别落到对应字段——\n"
             "- verified_facts：当前运行内由工具真实返回且来源明确的事实（标注 source）；\n"
@@ -525,11 +657,12 @@ def node_investigate_asset(ctx: RunContext):
             "必须在 missing_evidence 声明，不得把「没看到」当成「不存在」。"
             + _asset_prep_context(state)
         )
-        output, degraded = _run_specialist(ctx, ASSET_INVESTIGATOR_SPEC, context_text)
+        output, degraded = _run_specialist(ctx, ASSET_INVESTIGATOR_SPEC, context_text, state=state)
         update: dict[str, Any] = {"stage_status": state.record_stage(
             "investigate_asset", "failed" if degraded else "succeeded")}
         if output is not None:
             update["investigation"] = output
+            update.update(collaboration_flow.publish(ctx, state, AGENT_ASSET, output))
         else:
             update["degraded_roles"] = state.degraded_roles + [AGENT_ASSET]
             update["error"] = degraded
@@ -537,12 +670,15 @@ def node_investigate_asset(ctx: RunContext):
     return investigate_asset
 
 
-def _runtime_evidence_validator(ctx: RunContext):
+def _runtime_evidence_validator(ctx: RunContext, state=None):
     def validate(output: dict[str, Any]) -> list[str]:
         db = ctx.session()
         try:
             errors: list[str] = []
             ids = set(output.get("evidence_ids") or [])
+            ids.update(f.get("evidence_id") for f in output.get("findings", []) if f.get("evidence_id"))
+            if state is not None and state.evidence_snapshot:
+                errors.extend(collaboration_mod.validate_evidence_ids(ids, state.evidence_snapshot, kinds={"runtime"}))
             level = output.get("behavior_level")
             if level in {"SUSPICIOUS", "ACTIVE", "BLOCKED"} and not ids:
                 errors.append(f"{level} 结论没有任何 evidence_id")
@@ -581,7 +717,7 @@ def _vulnerability_evidence_validator(ctx: RunContext, state=None):
         # A source can refresh while the run is active. Accept an actual stored
         # official snapshot only for this run's candidate CVE; fabricated and
         # unrelated official IDs remain rejected.
-        if unknown and ctx.risk is not None:
+        if unknown and ctx.risk is not None and not (state and state.evidence_snapshot):
             db = ctx.session()
             try:
                 actual = {row.evidence_id for row in db.query(models.OfficialCveRecord).filter(
@@ -600,6 +736,9 @@ def _vulnerability_evidence_validator(ctx: RunContext, state=None):
 
 def node_analyze_vulnerability(ctx: RunContext):
     def analyze_vulnerability(state: UnifiedAnalysisState) -> dict[str, Any]:
+        reuse = collaboration_flow.reused(ctx, state, AGENT_VULNERABILITY, "analyze_vulnerability")
+        if reuse is not None:
+            return reuse
         if not state.routing.include_vulnerability:
             return {"stage_status": state.record_stage("analyze_vulnerability", "skipped")}
         asset_summary = ""
@@ -635,17 +774,18 @@ def node_analyze_vulnerability(ctx: RunContext):
             "fixed 仅属于 version_impact，不能当作 applicability 枚举。官方精确发行版、源包、版本和授权清单"
             "足够时可确认静态受影响；触发条件与实际利用另外表达，缺少利用痕迹不否定静态适用性。"
             "branch_check 未定或冲突必须保留，不能通过提高置信度消除分歧。"
-            f"\n可引用的注册证据 ID（supporting_evidence_ids 只能从中选择）: {json.dumps(sorted(ctx.packet_evidence_ids))}\n"
+            f"\n可引用的注册证据 ID：{context_budget.dumps_compact(_bounded_registry_ids(state, ctx), max_chars=6000)}\n"
             "CVE/GHSA 编号、URL、SHA256 不是注册证据 ID；写入 rationale 说明来源，不能放进引用字段。"
             "没有注册证据时引用列表留空并明确证据缺口，禁止自造引用。"
             + _vulnerability_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, VULNERABILITY_ANALYST_SPEC, context_text,
-                                           validate_fn=_vulnerability_evidence_validator(ctx, state))
+                                           validate_fn=_vulnerability_evidence_validator(ctx, state), state=state)
         update: dict[str, Any] = {"stage_status": state.record_stage(
             "analyze_vulnerability", "failed" if degraded else "succeeded")}
         if output is not None:
             update["vulnerability"] = output
+            update.update(collaboration_flow.publish(ctx, state, AGENT_VULNERABILITY, output))
         else:
             update["degraded_roles"] = state.degraded_roles + [AGENT_VULNERABILITY]
             update["error"] = degraded
@@ -655,6 +795,9 @@ def node_analyze_vulnerability(ctx: RunContext):
 
 def node_analyze_runtime(ctx: RunContext):
     def analyze_runtime(state: UnifiedAnalysisState) -> dict[str, Any]:
+        reuse = collaboration_flow.reused(ctx, state, AGENT_RUNTIME, "analyze_runtime")
+        if reuse is not None:
+            return reuse
         routing = state.routing
         if not routing.include_runtime:
             capability_limited = routing_mod._runtime_capability_unsupported(state.capability_marks)
@@ -702,11 +845,12 @@ def node_analyze_runtime(ctx: RunContext):
             + _runtime_prep_context(state)
         )
         output, degraded = _run_specialist(ctx, RUNTIME_ANALYST_SPEC, context_text,
-                                           validate_fn=_runtime_evidence_validator(ctx))
+                                           validate_fn=_runtime_evidence_validator(ctx, state), state=state)
         update: dict[str, Any] = {"stage_status": state.record_stage(
             "analyze_runtime", "failed" if degraded else "succeeded")}
         if output is not None:
             update["runtime"] = output
+            update.update(collaboration_flow.publish(ctx, state, AGENT_RUNTIME, output))
         else:
             update["degraded_roles"] = state.degraded_roles + [AGENT_RUNTIME]
             update["runtime_program_fallback"] = {
@@ -734,7 +878,10 @@ def node_detect_conflicts(ctx: RunContext):
 
 
 def _route_after_conflicts(state: UnifiedAnalysisState) -> str:
+    if collaboration_flow.inbox(state) and state.collaboration_rounds < state.budgets.message_rounds:
+        return "exchange_messages"
     if (state.conflict_result.has_major_conflict
+            and any(item.category in {"fact_version", "substantive_judgment"} for item in state.conflict_result.conflicts)
             and state.rereview_used < state.budgets.rereview_rounds):
         return "directed_rereview"
     return "decide"
@@ -758,7 +905,7 @@ def _is_empty_default(output: dict[str, Any] | None) -> bool:
 
 def node_directed_rereview(ctx: RunContext):
     def directed_rereview(state: UnifiedAnalysisState) -> dict[str, Any]:
-        involved = sorted({agent for item in state.conflict_result.conflicts
+        involved = sorted({agent for item in state.conflict_result.conflicts if item.category in {"fact_version", "substantive_judgment"}
                            for agent in item.involved_agents})
         descriptions = [item.description for item in state.conflict_result.conflicts]
         update: dict[str, Any] = {
@@ -768,9 +915,9 @@ def node_directed_rereview(ctx: RunContext):
         degraded = list(state.degraded_roles)
         spec_map = {
             AGENT_VULNERABILITY: (VULNERABILITY_ANALYST_SPEC, state.vulnerability,
-                                  _vulnerability_evidence_validator(ctx)),
+                                  _vulnerability_evidence_validator(ctx, state)),
             AGENT_RUNTIME: (RUNTIME_ANALYST_SPEC, state.runtime,
-                            _runtime_evidence_validator(ctx)),
+                            _runtime_evidence_validator(ctx, state)),
             AGENT_ASSET: (ASSET_INVESTIGATOR_SPEC, state.investigation, None),
         }
         for name in involved:
@@ -792,7 +939,7 @@ def node_directed_rereview(ctx: RunContext):
                 "仍须输出完整结构化结果。"
             )
             output, degraded_reason = _run_specialist(ctx, spec, context_text,
-                                                      validate_fn=validator)
+                                                      validate_fn=validator, state=state)
             key = {AGENT_VULNERABILITY: "vulnerability",
                    AGENT_RUNTIME: "runtime",
                    AGENT_ASSET: "investigation"}[name]
@@ -813,6 +960,11 @@ def node_directed_rereview(ctx: RunContext):
                     "status": "discarded_empty_rereview", "note": "复议输出为空默认值，保留原结论"})
             else:
                 update[key] = output
+                published = collaboration_flow.publish(ctx, state, name, output)
+                for field in ("shared_findings", "collaboration_messages"):
+                    update[field] = collaboration_mod.merge_immutable(update.get(field, []), published[field])
+                update.setdefault("role_provenance", {}).update(published["role_provenance"])
+                update.setdefault("message_receipts", {}).update(published["message_receipts"])
         update["degraded_roles"] = degraded
         refreshed = conflicts_mod.merge_rereview(state.conflict_result, {
             **state.model_dump(), **update})
@@ -822,6 +974,18 @@ def node_directed_rereview(ctx: RunContext):
 
 
 def _route_after_decide(state: UnifiedAnalysisState) -> str:
+    return "harness_precheck"
+
+
+def _route_after_precheck(state: UnifiedAnalysisState) -> str:
+    feedback = state.harness_feedback
+    if feedback.get("terminal"):
+        return "finalize"
+    if (feedback.get("status") not in {"executable", "authorization_required", "no_action"}
+            and state.candidate_intents and state.plan_feedback_used < state.budgets.plan_feedback_rounds):
+        return "plan_feedback"
+    if collaboration_flow.inbox(state) and state.collaboration_rounds < state.budgets.message_rounds:
+        return "exchange_messages"
     decision = state.decision or {}
     requests = decision.get("follow_up_requests") or []
     # Stage-10 效率契约：inventory 类补查申请是操作员门控采集——本轮内新证据
@@ -837,8 +1001,19 @@ def _route_after_decide(state: UnifiedAnalysisState) -> str:
     return "finalize"
 
 
+def _route_after_follow_ups(state: UnifiedAnalysisState) -> str:
+    # A failed, deferred or identical investigation cannot justify another full decision.
+    return "decide" if any(item.get("output") and item.get("changed", True)
+                           for item in state.follow_up_results) else "finalize"
+
+
 def node_decide(ctx: RunContext):
     def decide(state: UnifiedAnalysisState) -> dict[str, Any]:
+        reuse = collaboration_flow.reused(ctx, state, AGENT_DECISION, "decide")
+        if reuse is not None:
+            return reuse
+        with ctx.session() as db:
+            capabilities = harness_bridge.query_capabilities(db, state)
         facts = _deterministic_facts(state)
         # 语义消融（实验专用）：被屏蔽角色的报告不进入决策输入——角色照常执行，
         # 决策端按「该维度信息缺失」研判，用于度量各角色的独立分析贡献
@@ -848,14 +1023,17 @@ def node_decide(ctx: RunContext):
                                 else state.vulnerability)
         runtime_report = (None if AGENT_RUNTIME in ctx.ablation_mask
                           else (state.runtime or state.runtime_program_fallback))
+        registry_ids = _bounded_registry_ids(state, ctx, preferred=_decision_known_ids(state))
         decision_context = {
             "object_id": state.object_id,
             "task_type": state.task_type,
             "baseline": {k: v for k, v in state.baseline.items()
                          if k not in {"packet_evidence_ids"}},
-            "asset_report": asset_report,
-            "vulnerability_report": vulnerability_report,
-            "runtime_report": runtime_report,
+            "asset_report": collaboration_flow.compact_report(asset_report),
+            "vulnerability_report": collaboration_flow.compact_report(vulnerability_report),
+            "runtime_report": collaboration_flow.compact_report(runtime_report),
+            "harness_capabilities": capabilities,
+            "harness_feedback": state.harness_feedback,
             "runtime_report_is_program_fallback": state.runtime is None,
             "conflict_result": state.conflict_result.model_dump(),
             "degraded_roles": state.degraded_roles,
@@ -865,18 +1043,29 @@ def node_decide(ctx: RunContext):
             "deterministic_facts": facts,
             "follow_up_results": state.follow_up_results or None,
             "follow_up_round_used": state.follow_ups_used,
-            # 防幻觉：可引用的证据 ID 全集（引用之外一律视为编造）
-            "available_evidence_ids": sorted(_decision_known_ids(state)),
+            # 防幻觉：可引用证据 ID 的有界渲染（全集仅用于服务端校验，不进提示词——
+            # 实测把 28.5 万条 ID 全量序列化会产出 7.15M 字符提示词，模型侧直接 400）。
+            # 仍然保持"顶层是数组"的形状，避免破坏既有消费方（检测器正则、离线脚本）。
+            "available_evidence_ids": registry_ids["sample"],
+            "available_evidence_ids_total": registry_ids["total"],
+            "available_evidence_ids_note": registry_ids["note"],
         }
         if masked:
             decision_context["semantic_ablation_masked"] = masked
         context_text = (
             "综合以下结构化材料完成研判与处置规划。\n"
+            "Harness 能力是当前执行约束；policy_denied 不得重试绕过。缺产物、依赖或恢复点时调整为补证/人工处置，"
+            "不要重复不可执行计划。metadata dry-run 不代表现场依赖已验证，更不代表批准。\n"
             f"{json.dumps(decision_context, ensure_ascii=False, default=str)}\n"
             "要求：\n"
+            "采集能力约束：unavailable 不等于服务故障；不得承诺通过重启获得采集器不支持的指标。"
+            "logread 环形日志的历史丢失量可能不可知，验证条件应保留 unavailable 和能力缺口，"
+            "不能要求重启后 dropped_events 必须变为数值。不要重复已完成调查。\n"
             "1. impact_status/risk_direction/recommended_action 只能取 schema 枚举；"
-            "supporting_evidence_ids 只能引用 available_evidence_ids 中列出的证据 ID"
-            "（CVE 编号、版本号、主机名都不是证据 ID，禁止填入）；\n"
+            "available_evidence_ids 是本次可引用注册 ID 的有界样例，"
+            "available_evidence_ids_total 是注册表全集条数（截断不等于不存在）；"
+            "supporting_evidence_ids 只能引用**已注册**的证据 ID（样例之外、由工具真实返回的"
+            "注册 ID 同样有效；CVE 编号、版本号、URL、哈希、主机名都不是证据 ID，禁止填入）；\n"
             "2. 分层研判模型（M4.2）——四个维度各自独立评估、各自表达证据不足，"
             "在 verdict 的三个 dimension 字段中分开填写（status/conclusion/confidence/"
             "supporting_evidence_ids/gaps）：\n"
@@ -952,10 +1141,12 @@ def node_decide(ctx: RunContext):
             return errors
 
         output, degraded = _run_specialist(ctx, DECISION_PLANNER_SPEC, context_text,
-                                           validate_fn=combined_validator)
-        update: dict[str, Any] = {"stage_status": state.record_stage("decide", "succeeded")}
+                                           validate_fn=combined_validator, state=state)
+        update: dict[str, Any] = {"stage_status": state.record_stage("decide", "succeeded"),
+                                  "harness_capabilities": capabilities}
         if output is not None:
             update["decision"] = output
+            update.update(collaboration_flow.publish(ctx, state, AGENT_DECISION, output))
         else:
             # 程序兜底（继承 System B fail-safe）：保留角色降级信息，不虚构裁定。
             # program_fallback 显式标记：实验统计/消费方据此把兜底口径与 LLM 判定
@@ -1135,6 +1326,8 @@ def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
 def _decision_known_ids(state: UnifiedAnalysisState) -> set[str]:
     """决策者可引用的证据全集：事件证据包 + 运行时证据 + 预取证据清单 +
     各专家报告已引用项。"""
+    if state.evidence_snapshot:
+        return set(state.evidence_snapshot.get("evidence_registry") or {})
     known: set[str] = set(state.baseline.get("packet_evidence_ids") or [])
     inventory_id = ((_prep(state).get("asset_facts") or {}).get("inventory_provenance") or {}).get("inventory_evidence_id")
     if inventory_id:
@@ -1196,6 +1389,10 @@ def node_execute_follow_ups(ctx: RunContext):
         update: dict[str, Any] = {"follow_ups_used": state.follow_ups_used + 1}
         degraded = list(state.degraded_roles)
         for request in requests:
+            if ctx.remaining_s() <= min(300.0, ctx.run_deadline_s * 0.25):
+                results.append({"question": request.get("question"), "status": "budget_reserved_for_decision",
+                                "resolved": False})
+                continue
             if request.get("collection_capability") == "inventory":
                 db = ctx.session()
                 try:
@@ -1211,7 +1408,7 @@ def node_execute_follow_ups(ctx: RunContext):
                     db.close()
                 continue
             spec = SPEC_BY_NAME.get(request.get("target_agent", ""))
-            if spec is None:
+            if spec is None or spec.name == AGENT_DECISION:
                 results.append({"agent": request.get("target_agent", ""), "error": "unknown target"})
                 continue
             previous = {
@@ -1230,15 +1427,23 @@ def node_execute_follow_ups(ctx: RunContext):
                 "若你的工具无法回答该问题，在 data_gaps 如实说明而不是给出推断。"
             )
             validator = {
-                AGENT_RUNTIME: _runtime_evidence_validator(ctx),
-                AGENT_VULNERABILITY: _vulnerability_evidence_validator(ctx),
+                AGENT_RUNTIME: _runtime_evidence_validator(ctx, state),
+                AGENT_VULNERABILITY: _vulnerability_evidence_validator(ctx, state),
                 AGENT_ASSET: None,
             }.get(spec.name)
             output, degraded_reason = _run_specialist(ctx, spec, context_text,
-                                                      validate_fn=validator)
+                                                      validate_fn=validator, state=state)
             entry: dict[str, Any] = {"agent": spec.name, "question": request.get("question", "")}
             if output is not None:
                 entry["output"] = output
+                from app.services.unified.investigation import judgment
+                entry["changed"] = judgment(output) != judgment(previous)
+                entry["new_evidence"] = False
+                update[{AGENT_ASSET: "investigation", AGENT_VULNERABILITY: "vulnerability", AGENT_RUNTIME: "runtime"}[spec.name]] = output
+                published = collaboration_flow.publish(ctx, state, spec.name, output)
+                for field in ("shared_findings", "collaboration_messages"):
+                    update[field] = collaboration_mod.merge_immutable(update.get(field, []), published[field])
+                update.setdefault("role_provenance", {}).update(published["role_provenance"])
             else:
                 entry["error"] = degraded_reason
                 degraded.append(spec.name)
@@ -1248,6 +1453,32 @@ def node_execute_follow_ups(ctx: RunContext):
         update["stage_status"] = state.record_stage("execute_follow_ups", "succeeded")
         return update
     return execute_follow_ups
+
+
+def _role_validator(ctx, state, role):
+    return {AGENT_RUNTIME: _runtime_evidence_validator(ctx, state),
+            AGENT_VULNERABILITY: _vulnerability_evidence_validator(ctx, state)}.get(role)
+
+
+def node_harness_precheck(ctx):
+    def precheck(state):
+        intents = harness_bridge.build_candidate_intents(state, (state.decision or {}).get("response_plan") or {})
+        with ctx.session() as db:
+            feedback = harness_bridge.precheck_intents(db, state, intents)
+        messages = collaboration_flow.system_message(ctx, state, "PLAN_FEEDBACK",
+            json.dumps({k: feedback.get(k) for k in ("status", "terminal", "reasons", "feedback")}, ensure_ascii=False),
+            action="Respect terminal policy denial; otherwise revise only the disposition against concrete missing conditions.")
+        return {"candidate_intents": intents, "harness_feedback": feedback,
+            "collaboration_messages": messages, "stage_status": {"harness_precheck": "succeeded"},
+            **({"collaboration_stop_reason": "policy_denied"} if feedback.get("terminal") else {})}
+    return precheck
+
+
+def node_plan_feedback(ctx):
+    def feedback(state):
+        return {"plan_feedback_used": state.plan_feedback_used + 1,
+            "reuse_roles": [r for r in state.reuse_roles if r != AGENT_DECISION]}
+    return feedback
 
 
 def node_finalize(ctx: RunContext):
@@ -1273,6 +1504,14 @@ def node_finalize(ctx: RunContext):
             db.close()
         snapshot = state.model_dump()
         final: dict[str, Any] = {"pipeline_version": PIPELINE_VERSION}
+        final["evidence_snapshot_id"] = state.evidence_snapshot_id
+        final["candidate_intents"] = state.candidate_intents
+        final["harness_feedback"] = state.harness_feedback
+        final["collaboration"] = {"message_count": len(state.collaboration_messages),
+            "receipts": state.message_receipts, "replay_roles": state.replay_roles,
+            "reused_roles": state.reuse_roles, "stop_reason": state.collaboration_stop_reason,
+            "full_four_role_execution": all(state.role_provenance.get(role, {}).get("status") == "executed"
+                for role in (AGENT_ASSET, AGENT_VULNERABILITY, AGENT_RUNTIME, AGENT_DECISION))}
         if state.task_type == TASK_RISK_REVIEW:
             policy = audit_policy.apply_unified_audit_policy(snapshot)
             if state.mode == "historical":
@@ -1299,6 +1538,13 @@ def node_finalize(ctx: RunContext):
             plan["requires_approval"] = True   # 程序强制：LLM 计划永远待审批
             final["plan"] = plan
             final["plan_execution_mode"] = "pending_approval"
+        if state.harness_feedback.get("terminal"):
+            final["plan_execution_mode"] = "blocked"
+        if state.evidence_snapshot.get("integrity_errors") or state.collaboration_stop_reason in {"policy_denied", "message_budget_exhausted", "evidence_partial"} or collaboration_flow.inbox(state):
+            if final.get("policy"):
+                final["policy"]["status"] = "pending_human_review"
+                final["policy"]["final_score"] = final["policy"]["final_level"] = None
+                final["policy"]["reasons"].append("collaboration_requires_human_review")
         final["usage"] = ctx.meter.as_dict()
         final["degraded_roles"] = list(dict.fromkeys(state.degraded_roles))
         db = ctx.session()
@@ -1327,7 +1573,10 @@ def build_graph(ctx: RunContext):
     graph.add_node("analyze_runtime", node_analyze_runtime(ctx))
     graph.add_node("detect_conflicts", node_detect_conflicts(ctx))
     graph.add_node("directed_rereview", node_directed_rereview(ctx))
+    graph.add_node("exchange_messages", collaboration_flow.node_exchange(ctx))
     graph.add_node("decide", node_decide(ctx))
+    graph.add_node("harness_precheck", node_harness_precheck(ctx))
+    graph.add_node("plan_feedback", node_plan_feedback(ctx))
     graph.add_node("execute_follow_ups", node_execute_follow_ups(ctx))
     graph.add_node("finalize", node_finalize(ctx))
 
@@ -1337,14 +1586,18 @@ def build_graph(ctx: RunContext):
     # Agent 2 ∥ Agent 3 并行（共同仅依赖 Agent 1）
     graph.add_edge("investigate_asset", "analyze_vulnerability")
     graph.add_edge("investigate_asset", "analyze_runtime")
-    graph.add_edge("analyze_vulnerability", "detect_conflicts")
-    graph.add_edge("analyze_runtime", "detect_conflicts")
+    graph.add_edge(["analyze_vulnerability", "analyze_runtime"], "detect_conflicts")
     graph.add_conditional_edges("detect_conflicts", _route_after_conflicts,
-                                {"directed_rereview": "directed_rereview", "decide": "decide"})
+                                {"directed_rereview": "directed_rereview", "decide": "decide", "exchange_messages": "exchange_messages"})
+    graph.add_edge("exchange_messages", "detect_conflicts")
     graph.add_edge("directed_rereview", "decide")
     graph.add_conditional_edges("decide", _route_after_decide,
-                                {"execute_follow_ups": "execute_follow_ups", "finalize": "finalize"})
-    graph.add_edge("execute_follow_ups", "decide")
+                                {"harness_precheck": "harness_precheck"})
+    graph.add_conditional_edges("harness_precheck", _route_after_precheck,
+        {name: name for name in ("plan_feedback", "exchange_messages", "execute_follow_ups", "finalize")})
+    graph.add_edge("plan_feedback", "decide")
+    graph.add_conditional_edges("execute_follow_ups", _route_after_follow_ups,
+                                {"decide": "decide", "finalize": "finalize"})
     graph.add_edge("finalize", END)
     return graph.compile()
 

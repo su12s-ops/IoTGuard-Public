@@ -1,0 +1,119 @@
+<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Vulnerability · risk decision</span>
+      <div class="risk-title">
+        <h1>CVE-2026-63073</h1>
+        <span class="sev"><i class="dot" style="width:5px;height:5px;background:currentColor"></i>严重 · CVSS 9.8</span>
+      </div>
+      <div class="risk-sub"><span class="pkg">openssl 3.0.13-0ubuntu3.5</span><i class="sep" style="width:1px;height:10px;background:var(--line)"></i><span>wyh-VMware-Virtual-Platform</span><i class="sep" style="width:1px;height:10px;background:var(--line)"></i><span class="chip muted">Ubuntu 24.04</span></div>
+      <div class="meta"><span>最后更新 10:28:12</span><i class="sep"></i><span>证据完整度 78%</span><i class="sep"></i><span>NVD · Canonical · Falco</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn ghost"><svg class="icon"><use href="#i-flag"/></svg>标记误报</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-wrench"/></svg>生成修复计划</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:76px minmax(0,1fr)">
+    <section class="card summary">
+      <div class="cell"><div class="label">风险分</div><div class="value">80.47</div><div class="hint">综合 · P1</div></div>
+      <div class="cell"><div class="label">CVSS</div><div class="value">9.8</div><div class="hint">Critical</div></div>
+      <div class="cell"><div class="label">EPSS</div><div class="value">1.16%</div><div class="hint">未来 30 天</div></div>
+      <div class="cell"><div class="label">CISA KEV</div><div class="value">否</div><div class="hint">未列入</div></div>
+      <div class="cell"><div class="label">运行时证据</div><div class="value text">上下文关联</div><div class="hint" style="color:var(--high)">Falco · 2 分钟前</div></div>
+      <div class="cell"><div class="label">处置建议</div><div class="value text" style="color:var(--crit)">立即修复</div><div class="hint">需人工确认</div></div>
+    </section>
+
+    <div class="grid" style="grid-template-columns:minmax(0,1.9fr) minmax(0,1fr)">
+      <div class="grid" style="grid-template-rows:400px 221px">
+        <section class="card feature">
+          <div class="card-head">
+            <div><div class="card-title">判定依据</div><div class="card-desc">四步独立判定；任一步缺失都会降级为“证据不足”。</div></div>
+            <a class="link" href="#">查看原始证据 <svg class="icon"><use href="#i-chev-right"/></svg></a>
+          </div>
+          <div class="flow">
+            <div class="flow-step"><div class="no">01 · ADVISORY</div><div class="t">公告适用性</div><div class="m">GHSA-2026-7f3c<br>NVD / Canonical</div><div class="s"><span class="chip low"><i class="dot"></i>命中</span></div></div>
+            <div class="flow-step"><div class="no">02 · VERSION</div><div class="t">版本比对</div><div class="m">3.0.13 &lt; 3.0.13-0ubuntu3.6<br>APT 已安装</div><div class="s"><span class="chip low"><i class="dot"></i>命中</span></div></div>
+            <div class="flow-step"><div class="no">03 · EXPOSURE</div><div class="t">服务暴露</div><div class="m">443, 8443 · nmap<br>internet_exposed</div><div class="s"><span class="chip low"><i class="dot"></i>公网可达</span></div></div>
+            <div class="flow-step"><div class="no">04 · RUNTIME</div><div class="t">运行时证据</div><div class="m">4 条 Falco 事件 · 10:28<br>未观察到利用链</div><div class="s"><span class="chip high"><i class="dot"></i>上下文关联</span></div></div>
+          </div>
+          <div style="padding:0 17px">
+            <div style="display:flex;align-items:center;justify-content:space-between;padding-top:8px;border-top:1px solid var(--line-soft)">
+              <span style="color:var(--ink);font-size:10px;font-weight:650">风险分解</span>
+              <span class="num" style="color:var(--muted);font-size:8.5px">综合 80.47 / 100</span>
+            </div>
+            <div style="padding-top:4px">
+              <div class="factor"><span>技术严重度</span><span class="track"><i class="fill" style="width:98%"></i></span><span class="val">98</span></div>
+              <div class="factor"><span>可利用性</span><span class="track"><i class="fill" style="width:72%"></i></span><span class="val">72</span></div>
+              <div class="factor"><span>服务暴露</span><span class="track"><i class="fill" style="width:100%"></i></span><span class="val">100</span></div>
+              <div class="factor"><span>运行时</span><span class="track"><i class="fill" style="width:66%;background:var(--high)"></i></span><span class="val">66</span></div>
+              <div class="factor"><span>业务重要度</span><span class="track"><i class="fill" style="width:50%"></i></span><span class="val">50</span></div>
+            </div>
+            <div style="display:flex;align-items:center;gap:6px;margin-top:6px;padding-top:7px;border-top:1px solid var(--line-soft)">
+              <span style="color:var(--muted);font-size:8.5px">引用</span>
+              <span class="chip info" style="height:18px;font-size:8px">GHSA-2026-7f3c</span>
+              <span class="chip info" style="height:18px;font-size:8px">APT</span>
+              <span class="chip info" style="height:18px;font-size:8px">Falco · 4</span>
+              <span class="link" style="margin-left:auto;font-size:8.5px">证据链 <svg class="icon"><use href="#i-chev-right"/></svg></span>
+            </div>
+          </div>
+          <div class="card-foot"><span>3 步命中，1 步需补证；机器结论不替代人工签收。</span><span class="num">policy v3</span></div>
+        </section>
+
+        <section class="terminal">
+          <div class="term-head"><span>Evidence / Falco</span><span class="right"><i class="dot"></i>2 分钟前</span></div>
+          <pre><span class="c"># 2026-10-21 10:27:41 · runtime_events</span>
+<span class="k">execve</span>    <span class="s">/usr/bin/openssl</span>   uid=0  pid=1842
+<span class="k">connect</span>   <span class="n">10.24.8.11:443</span> → <span class="n">172.20.4.9:51822</span>
+<span class="k">open</span>      <span class="s">/etc/ssl/private/server.key</span>   read
+<span class="k">rule</span>      <span class="r">Read sensitive file untrusted</span>
+<span class="c"># confidence 66 / 100 · runtime contextual</span></pre>
+          <div class="term-foot"><span>4 条事件 · evt_8f21</span><a class="link" href="#" style="color:#7fd6c8;font-size:8.5px">打开事件 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+        </section>
+      </div>
+
+      <div class="grid" style="grid-template-rows:410px 211px">
+        <section class="card">
+          <div class="card-head">
+            <div><div class="card-title">人工裁决</div><div class="card-desc">机器结论只作为输入，不替代责任签收。</div></div>
+            <span class="chip high"><i class="dot"></i>待审查</span>
+          </div>
+          <div class="card-body decision" style="padding-top:10px">
+            <div class="recommend">
+              <span class="ic"><svg class="icon"><use href="#i-alert"/></svg></span>
+              <div><div class="t">建议立即修复</div><div class="d">版本命中且 443 端口公网可达；运行时证据支持上下文关联，但不构成利用确认。</div></div>
+            </div>
+            <div>
+              <div class="conf-top"><span>模型置信度</span><b>82%</b></div>
+              <div class="conf-bar"><i style="width:82%"></i></div>
+            </div>
+            <div class="field">
+              <label>裁决理由</label>
+              <div class="textarea">版本 3.0.13 低于修复版本，443 端口对外暴露；Falco 观察到 openssl 读取私钥，建议按 P1 排期。<br><span style="color:var(--muted);font-size:8.5px">可补充复验说明，提交后写入审计。</span></div>
+            </div>
+            <div style="display:grid;gap:5px;padding:7px 8px;border:1px solid var(--line-soft);border-radius:var(--radius-sm);background:var(--surface-2)">
+              <div style="display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--ink-2)"><i class="dot ok"></i>证据引用 4/4 · 策略版本 v3</div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--ink-2)"><i class="dot ok"></i>资产锁已获取 · 工具预算 3/5</div>
+              <div style="display:flex;align-items:center;gap:6px;font-size:8.5px;color:var(--high)"><i class="dot warn"></i>执行授权未申请 · 设备写默认关闭</div>
+            </div>
+            <div class="actions-row">
+              <button class="btn primary">确认受影响</button>
+              <button class="btn">判为不受影响</button>
+            </div>
+            <div class="decision-note">裁决会写入审计日志，并触发修复计划候选；不会直接修改设备。</div>
+          </div>
+          <div class="card-foot"><span class="num">AUD-2026-1042</span><span>2 位审批人 · 1 位已签</span></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head" style="padding-top:12px"><div class="card-title" style="font-size:12px">关联记录</div><a class="link" href="#">全部 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+          <div class="rel"><span class="ic"><svg class="icon"><use href="#i-branch"/></svg></span><span class="name">匹配候选</span><span class="id">#87</span><span class="chip high"><i class="dot"></i>待补证</span><span class="chev"><svg class="icon"><use href="#i-chev-right"/></svg></span></div>
+          <div class="rel"><span class="ic"><svg class="icon"><use href="#i-shield"/></svg></span><span class="name">风险事件</span><span class="id">R-0412</span><span class="chip high"><i class="dot"></i>待审查</span><span class="chev"><svg class="icon"><use href="#i-chev-right"/></svg></span></div>
+          <div class="rel"><span class="ic"><svg class="icon"><use href="#i-cpu"/></svg></span><span class="name">Agent 运行</span><span class="id">UA-1042</span><span class="chip low"><i class="dot"></i>已完成</span><span class="chev"><svg class="icon"><use href="#i-chev-right"/></svg></span></div>
+          <div class="rel"><span class="ic"><svg class="icon"><use href="#i-wrench"/></svg></span><span class="name">Harness 计划</span><span class="id">—</span><span class="chip muted"><i class="dot"></i>未创建</span><span class="chev"><svg class="icon"><use href="#i-chev-right"/></svg></span></div>
+        </section>
+      </div>
+    </div>
+  </div>
+</div>

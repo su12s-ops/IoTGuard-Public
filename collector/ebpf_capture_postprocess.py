@@ -161,6 +161,8 @@ def _base_event(msg: dict[str, Any], hostname: str, boot_id: str,
         "timestamp": to_iso(msg["nsecs"], boot_epoch),
         "hostname": hostname,
         "source": "ebpf_bpftrace",
+        "operation": {"execve": "exec", "openat": "open", "connect": "connect"}[msg["kind"]],
+        "result": "initiated" if msg["kind"] == "connect" else "attempt",
         "user": user_name(msg["uid"]),
         "process_id": msg["pid"],
     }

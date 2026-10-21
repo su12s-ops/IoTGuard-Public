@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>IoTGuard · 报告与归档</title>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body data-theme="prism">
+<svg style="position:absolute;width:0;height:0;overflow:hidden" aria-hidden="true">
+  <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1.3"/><rect x="14" y="4" width="6" height="6" rx="1.3"/><rect x="4" y="14" width="6" height="6" rx="1.3"/><rect x="14" y="14" width="6" height="6" rx="1.3"/></symbol>
+  <symbol id="i-server" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="6" rx="1.6"/><rect x="3.5" y="13.5" width="17" height="6" rx="1.6"/><path d="M7 7.5h.01M7 16.5h.01M11 7.5h3M11 16.5h3"/></symbol>
+  <symbol id="i-bug" viewBox="0 0 24 24"><path d="M8 9a4 4 0 0 1 8 0v1.5H8V9Z"/><path d="M8 10.5v4a4 4 0 0 0 8 0v-4"/><path d="M8 12H5.5M18.5 12H16M8.5 16.5 6 19M15.5 16.5 18 19M9 5.5 7.5 3.5M15 5.5l1.5-2"/></symbol>
+  <symbol id="i-cpu" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2"/><rect x="10" y="10" width="4" height="4" rx="1"/><path d="M9 3v4M15 3v4M9 17v4M15 17v4M3 9h4M3 15h4M17 9h4M17 15h4"/></symbol>
+  <symbol id="i-wrench" viewBox="0 0 24 24"><path d="M14.7 6.3a4 4 0 0 0-5.4 5.4L4 17l3 3 5.3-5.3a4 4 0 0 0 5.4-5.4l-2.5 2.5-2.8-2.8 2.3-2.7Z"/></symbol>
+  <symbol id="i-activity" viewBox="0 0 24 24"><path d="M3 12h4l2.5-6 5 12 2.5-6h4"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5Z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></symbol>
+  <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/></symbol>
+  <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></symbol>
+  <symbol id="i-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 1 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9"/><path d="M10 21h4"/></symbol>
+  <symbol id="i-chev-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+  <symbol id="i-chev-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 4v10"/><path d="m8 11 4 4 4-4"/><path d="M5 20h14"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13l10-6.5-10-6.5Z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7"/><path d="M20 4v5h-5"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+  <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></symbol>
+  <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 4 3 20h18L12 4Z"/><path d="M12 10v4M12 17h.01"/></symbol>
+  <symbol id="i-arrow-up" viewBox="0 0 24 24"><path d="M7 17 17 7M9 7h8v8"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></symbol>
+  <symbol id="i-flag" viewBox="0 0 24 24"><path d="M6 21V4M6 5h10l-2 3 2 3H6"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 5 6v5.5c0 4.2 2.8 7.5 7 9 4.2-1.5 7-4.8 7-9V6l-7-3Z"/><path d="m9 12 2 2 4-4"/></symbol>
+  <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><circle cx="18" cy="9" r="2"/><path d="M6 8v8M8 6h5a5 5 0 0 1 5 5"/></symbol>
+  <symbol id="i-layers" viewBox="0 0 24 24"><path d="m12 3 9 5-9 5-9-5 9-5Z"/><path d="m3 13 9 5 9-5"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 6h16M7 12h10M10 18h4"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+</svg>
+
+<div class="shell">
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark">IG</span>
+      <div><div class="brand-name">IoTGuard</div><div class="brand-sub">Security Console</div></div>
+    </div>
+    <div class="ws">
+      <span class="ws-env">LAB</span>
+      <div><div class="ws-name">物联网实验室</div><div class="ws-sub">4 台资产 · 3 个采集节点</div></div>
+      <svg class="icon"><use href="#i-chev-down"/></svg>
+    </div>
+    <nav class="nav">
+      <p class="nav-label">工作台</p>
+      <a class="" href="#"><svg class="icon"><use href="#i-grid"/></svg>安全态势</a>
+      <a class="" href="#"><svg class="icon"><use href="#i-server"/></svg>资产与发现</a>
+      <a class="" href="#"><svg class="icon"><use href="#i-bug"/></svg>漏洞与风险<span class="nav-count hot">49</span></a>
+      <a class="" href="#"><svg class="icon"><use href="#i-cpu"/></svg>智能研判</a>
+      <a class="" href="#"><svg class="icon"><use href="#i-wrench"/></svg>修复与验证<span class="nav-count">3</span></a>
+      <a class="" href="#"><svg class="icon"><use href="#i-activity"/></svg>运行与审计</a>
+      <p class="nav-label">运营</p>
+      <a class="active" href="#"><svg class="icon"><use href="#i-file"/></svg>报告与归档</a>
+      <a class="" href="#"><svg class="icon"><use href="#i-monitor"/></svg>SOC 态势大屏</a>
+    </nav>
+    <div class="rail-foot">
+      <div class="user">
+        <span class="avatar">WY</span>
+        <div><div class="user-name">王工</div><div class="user-role">安全工程师</div></div>
+        <svg class="icon"><use href="#i-chev-right"/></svg>
+      </div>
+      <div class="rail-meta"><span>v0.2.0</span><span>working-tree</span></div>
+    </div>
+  </aside>
+
+  <div class="frame">
+    <header class="topbar">
+      <div class="crumbs"><span>运营</span><svg class="icon"><use href="#i-chev-right"/></svg><b>报告与归档</b></div>
+      <div class="search"><svg class="icon"><use href="#i-search"/></svg><span>搜索 CVE、资产或任务</span><span class="kbd">Ctrl K</span></div>
+      <div class="top-right">
+        <div class="health">
+          <span class="seg"><i class="dot ok"></i><b>服务</b></span>
+          <span class="seg"><i class="dot warn"></i>节点 <b>1/2</b></span>
+          <span class="seg"><i class="dot warn"></i>传感器 <b>1/3</b></span>
+          <span class="seg"><i class="dot warn"></i>证据 <b>部分过期</b></span>
+        </div>
+        <button class="icon-btn"><svg class="icon"><use href="#i-lock"/></svg></button>
+        <button class="icon-btn"><svg class="icon"><use href="#i-bell"/></svg><i class="ping"></i></button>
+        <span class="top-avatar">WY</span>
+      </div>
+    </header>
+
+    <main class="main">
+﻿<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Reports &amp; archive · immutable</span>
+      <h1>报告与归档</h1>
+      <p class="sub">报告是可复核的交付物：数据口径、证据引用与生成时间都随归档保存。</p>
+      <div class="meta"><span>12 份归档</span><i class="sep"></i><span>最近生成 10:25</span><i class="sep"></i><span>保留 90 天</span><i class="sep"></i><span>SHA-256 校验</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-download"/></svg>下载最新</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-plus"/></svg>生成报告</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:84px minmax(0,1fr) 120px">
+    <div class="grid g-4">
+      <div class="card" style="padding:11px 13px;flex-direction:row;align-items:center;gap:10px">
+        <div class="stat-icon" style="width:32px;height:32px;background:var(--crit-soft);color:var(--crit)"><svg class="icon"><use href="#i-file"/></svg></div>
+        <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:700">PDF</div><div style="color:var(--muted);font-size:8.5px">1.2 MB · 带封面</div></div>
+        <a class="link" href="#">导出</a>
+      </div>
+      <div class="card" style="padding:11px 13px;flex-direction:row;align-items:center;gap:10px">
+        <div class="stat-icon" style="width:32px;height:32px;background:var(--info-soft);color:var(--info)"><svg class="icon"><use href="#i-file"/></svg></div>
+        <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:700">Markdown</div><div style="color:var(--muted);font-size:8.5px">24 KB · 可 diff</div></div>
+        <a class="link" href="#">导出</a>
+      </div>
+      <div class="card" style="padding:11px 13px;flex-direction:row;align-items:center;gap:10px">
+        <div class="stat-icon" style="width:32px;height:32px;background:var(--low-soft);color:var(--low)"><svg class="icon"><use href="#i-file"/></svg></div>
+        <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:700">JSON</div><div style="color:var(--muted);font-size:8.5px">86 KB · 机器可读</div></div>
+        <a class="link" href="#">导出</a>
+      </div>
+      <div class="card" style="padding:11px 13px;flex-direction:row;align-items:center;gap:10px">
+        <div class="stat-icon" style="width:32px;height:32px;background:var(--high-soft);color:var(--high)"><svg class="icon"><use href="#i-file"/></svg></div>
+        <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:700">CSV</div><div style="color:var(--muted);font-size:8.5px">12 KB · 明细</div></div>
+        <a class="link" href="#">导出</a>
+      </div>
+    </div>
+
+    <div class="grid" style="grid-template-columns:minmax(0,0.72fr) minmax(0,1.6fr)">
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">归档列表</div><div class="card-desc">按生成时间倒序</div></div>
+          <span class="chip muted">12 份</span>
+        </div>
+        <div style="padding:6px 0 0">
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft);background:var(--accent-soft);border-left:3px solid var(--accent)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">风险周报 · 2026-W42</div><div style="color:var(--muted);font-size:8.5px">10-21 10:25 · PDF / MD / JSON</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">OpenWrt 修复复验</div><div style="color:var(--muted);font-size:8.5px">10-20 18:40 · PDF / JSON</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">Zephyr 固件回归</div><div style="color:var(--muted);font-size:8.5px">10-19 15:12 · PDF / CSV</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">情报源覆盖审计</div><div style="color:var(--muted);font-size:8.5px">10-18 09:30 · MD / JSON</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">风险周报 · 2026-W41</div><div style="color:var(--muted);font-size:8.5px">10-14 10:20 · PDF / MD</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px;border-bottom:1px solid var(--line-soft)">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">采集节点健康审计</div><div style="color:var(--muted);font-size:8.5px">10-12 16:05 · JSON / CSV</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+          <div style="display:flex;align-items:center;gap:9px;padding:0 16px;height:56px">
+            <div style="min-width:0;flex:1"><div style="font-size:10.5px;font-weight:650">风险周报 · 2026-W40</div><div style="color:var(--muted);font-size:8.5px">10-07 10:18 · PDF / MD</div></div>
+            <span class="chip low" style="height:18px;font-size:8px">已归档</span>
+          </div>
+        </div>
+        <div class="card-foot"><span>归档不可修改；重新生成会创建新版本。</span><span class="num">12 / 12</span></div>
+      </section>
+
+      <section class="card" style="padding:13px;background:var(--surface-2)">
+        <div class="paper">
+          <div class="paper-cover">
+            <div class="paper-kicker">IoTGuard / Weekly risk report</div>
+            <h2>风险周报 · 2026-W42</h2>
+            <div class="paper-sub">物联网实验室 · 4 台资产 · 数据截至 2026-10-21 10:25</div>
+            <div class="paper-meta"><span>生成 10:25:32</span><span>版本 v0.2.0</span><span>SHA-256 67ce…f56d</span></div>
+          </div>
+          <div class="paper-metrics">
+            <div><span>高风险 / 严重</span><b>49</b></div>
+            <div><span>待人工审查</span><b>3</b></div>
+            <div><span>本周新增</span><b>+6</b></div>
+          </div>
+          <h3>本期结论</h3>
+          <p>风险集中在 <b>wyh-VMware</b> 的 openssl 与 OpenWrt 的 cgi-io；版本命中与公网暴露均已确认。运行时证据只支持上下文关联，不能作为利用确认。建议先处理 P1 / P2，再补 logread 证据。</p>
+          <h3>优先处置</h3>
+          <table>
+            <thead><tr><th>#</th><th>CVE</th><th>资产</th><th>风险分</th><th>建议</th></tr></thead>
+            <tbody>
+              <tr><td>P1</td><td>CVE-2026-63073</td><td>wyh-VMware</td><td>80.5</td><td>立即修复</td></tr>
+              <tr><td>P2</td><td>CVE-2026-92939</td><td>Zephyr-Sensor-01</td><td>77.6</td><td>排期修复</td></tr>
+              <tr><td>P3</td><td>CVE-2026-15981</td><td>Ubuntu-Collector</td><td>76.8</td><td>继续补证</td></tr>
+            </tbody>
+          </table>
+          <div class="foot">机密 · 仅限授权环境 · 生成后不可修改 · 证据引用见附录 A</div>
+        </div>
+      </section>
+    </div>
+
+    <section class="card">
+      <div class="card-head" style="padding-top:12px"><div><div class="card-title">归档与保留</div><div class="card-desc">自动归档、保留周期与完整性校验</div></div><button class="btn sm"><svg class="icon"><use href="#i-download"/></svg>立即归档</button></div>
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px;padding:8px 17px 12px">
+        <div><div style="color:var(--muted);font-size:8.5px">自动归档</div><div style="margin-top:3px;font-size:10.5px;font-weight:650">每日 02:00</div><div style="color:var(--muted);font-size:8.5px;margin-top:2px">上次 02:00 · 成功</div></div>
+        <div><div style="color:var(--muted);font-size:8.5px">保留周期</div><div style="margin-top:3px;font-size:10.5px;font-weight:650">90 天</div><div style="color:var(--muted);font-size:8.5px;margin-top:2px">到期自动清理</div></div>
+        <div><div style="color:var(--muted);font-size:8.5px">完整性</div><div style="margin-top:3px;font-size:10.5px;font-weight:650">SHA-256</div><div style="color:var(--muted);font-size:8.5px;margin-top:2px">12 / 12 校验通过</div></div>
+      </div>
+    </section>
+  </div>
+</div>
+
+
+    </main>
+  </div>
+</div>
+</body>
+</html>

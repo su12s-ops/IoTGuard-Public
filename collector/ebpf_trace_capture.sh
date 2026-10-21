@@ -156,8 +156,9 @@ PROG
 )
 
 run_probe() {  # $1=BPF 程序文本
+  PROBE_RC=0
   timeout --signal=INT --kill-after=5 "${DURATION}" bpftrace -q -e "$1" \
-    > "${RAW_OUT}" 2> "${OUT_JSON}.err" || true
+    > "${RAW_OUT}" 2> "${OUT_JSON}.err" || PROBE_RC=$?
 }
 
 PROBE_PROFILE="enhanced"
@@ -169,15 +170,22 @@ else
   echo "[LinuxGuard] 挂载 eBPF 探针（execve+argv+start_time / tcp_connect / openat），采集 ${DURATION}s ..."
   run_probe "${BPF_ENHANCED}"
   # 增强版编译失败（无 BTF/字段缺失等）→ 自动回退旧版，如实降级不中断采集
-  if [ ! -s "${RAW_OUT}" ] && grep -qi "error" "${OUT_JSON}.err" 2>/dev/null; then
+  if [ "$PROBE_RC" -ne 0 ] && [ "$PROBE_RC" -ne 124 ]; then
     echo "[LinuxGuard] 增强探针编译失败，回退旧版探针（降级：无 argv/start_time）：" >&2
-    grep "ERROR" "${OUT_JSON}.err" | head -3 >&2
+    head -3 "${OUT_JSON}.err" >&2
     PROBE_PROFILE="legacy-fallback"
     run_probe "${BPF_LEGACY}"
   fi
 fi
 
-echo "[LinuxGuard] eBPF 探针结束（profile=${PROBE_PROFILE}），共捕获 $(grep -c '^LG|' "${RAW_OUT}" 2>/dev/null || echo 0) 条原始事件"
+HEALTH_FILE="${OUT_JSON}.health.json"
+if [ "$PROBE_RC" -ne 0 ] && [ "$PROBE_RC" -ne 124 ]; then
+  printf '{"status":"degraded","phase":"failed","dropped_events":null,"capabilities":{"driver":"bpftrace"}}\n' > "${HEALTH_FILE}.tmp"
+  mv "${HEALTH_FILE}.tmp" "$HEALTH_FILE"
+  cat "${OUT_JSON}.err" >&2
+  exit "$PROBE_RC"
+fi
+echo "[LinuxGuard] eBPF 探针结束（profile=${PROBE_PROFILE}），共捕获 $(grep -c '^LG|' "${RAW_OUT}" 2>/dev/null || true) 条原始事件"
 
 # ── 后处理：管道格式 → 后端统一事件 JSONL（P1 独立模块，新旧格式兼容） ──
 python3 "${SCRIPT_DIR}/ebpf_capture_postprocess.py" "${RAW_OUT}" "${OUT_JSON}" "${HOSTNAME_VAL}"
@@ -185,7 +193,6 @@ python3 "${SCRIPT_DIR}/ebpf_capture_postprocess.py" "${RAW_OUT}" "${OUT_JSON}" "
 # ── P0 采集可靠性：解析 bpftrace 丢失计数 → 探针健康文件（supervisor 语义） ──
 # bpftrace 在退出时向 stderr 报告 "N events lost"（perf 缓冲丢失）。
 # 能解析到 → dropped_events=真实数值；解析不到 → unavailable（绝不虚构为零）。
-HEALTH_FILE="/tmp/linuxguard-probe-health.json"
 LOST=$(grep -Eo '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null | grep -Eo '^[0-9]+' | paste -sd+ - | bc 2>/dev/null || echo "")
 if [ -n "$LOST" ] && [ "$LOST" -ge 0 ] 2>/dev/null; then
   DROPPED_JSON="$LOST"
@@ -197,12 +204,13 @@ fi
 # 缺陷（非法 JSON）与脚本中止缺陷同源于此，一并由 || true 修复
 DETAIL_LOST=$(grep -Ec '[0-9]+ events? lost' "${OUT_JSON}.err" 2>/dev/null || true)
 DETAIL_LOST=${DETAIL_LOST:-0}
-cat > "$HEALTH_FILE" <<HEALTH
-{"status": "running", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "bpftrace", "lost_source": "bpftrace_stderr", "probe_profile": "${PROBE_PROFILE}", "argv": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false ), "start_time": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false )}, "detail": "events lost: ${DETAIL_LOST} 条 stderr 丢失报告；null=本次运行未报告丢失计数（unavailable，非零丢失）；probe_profile=${PROBE_PROFILE}"}
+cat > "${HEALTH_FILE}.tmp" <<HEALTH
+{"status": "stopped", "dropped_events": ${DROPPED_JSON}, "capabilities": {"driver": "bpftrace", "lost_source": "bpftrace_stderr", "probe_profile": "${PROBE_PROFILE}", "argv": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false ), "start_time": $( [ "${PROBE_PROFILE}" = "enhanced" ] && echo true || echo false )}, "detail": "Capture window finished; lost reports=${DETAIL_LOST}; null=unavailable; profile=${PROBE_PROFILE}"}
 HEALTH
+mv "${HEALTH_FILE}.tmp" "$HEALTH_FILE"
 echo "[LinuxGuard] 探针健康文件: ${HEALTH_FILE}（供转发器 --health-file 消费）"
 
 if [ -n "$API_BASE" ]; then
   echo "[LinuxGuard] 上传到 ${API_BASE}/runtime/ebpf/upload ..."
-  curl -fsS -F "file=@${OUT_JSON}" "${API_BASE}/runtime/ebpf/upload" && echo
+  python3 "${SCRIPT_DIR}/ebpf_event_collector.py" --file "$OUT_JSON" --api "$API_BASE" --source bpftrace --spool-file "${OUT_JSON}.wal.jsonl"
 fi

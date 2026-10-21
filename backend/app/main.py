@@ -100,9 +100,19 @@ async def lifespan(_: FastAPI):
     print(f"[startup] 工作目录: {_startup_info['working_directory']}")
     from app.services.collection_tasks import periodic_runtime_collection
     schedule = asyncio.create_task(periodic_runtime_collection())
+    from app.services.runtime_outbox import start_worker
+    evidence_stop, evidence_thread = start_worker(SessionLocal)
+    from app.services.unified.continuation import start_worker as start_continuation
+    continuation_stop = None
+    if not collection_only_mode():
+        continuation_stop, _continuation_thread = start_continuation(SessionLocal)
     try:
         yield
     finally:
+        if continuation_stop is not None:
+            continuation_stop.set()
+        evidence_stop.set()
+        await asyncio.to_thread(evidence_thread.join, 35)
         schedule.cancel()
         try:
             await schedule
@@ -124,6 +134,13 @@ def _record_db_path():
 
 
 app = FastAPI(title=API_TITLE, version=API_VERSION, lifespan=lifespan)
+
+from app.services.runtime_outbox import EvidenceBackpressure
+
+
+@app.exception_handler(EvidenceBackpressure)
+async def evidence_backpressure(request: Request, exc: EvidenceBackpressure):
+    return JSONResponse(status_code=503, content={"detail": str(exc)}, headers={"Retry-After": "5"})
 
 
 @app.middleware("http")

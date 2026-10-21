@@ -104,9 +104,10 @@ def test_file_evidence_on_watched_paths(client, real_capture):
     assert "/etc/iotguard/selftest.conf" in paths              # 写入
     assert "/opt/firmware/.selftest" in paths                  # 写入
     by_path = {event["file_path"]: event for event in events}
-    assert by_path["/etc/iotguard/selftest.conf"]["operation"] == "write"
-    assert by_path["/opt/firmware/.selftest"]["severity"] == "error"
-    assert by_path["/etc/shadow"]["severity"] == "warning"     # 读 shadow
+    # openat proves an open attempt, not completed byte reads/writes.
+    assert by_path["/etc/iotguard/selftest.conf"]["operation"] == "open"
+    assert by_path["/opt/firmware/.selftest"]["severity"] == "warning"
+    assert by_path["/etc/shadow"]["operation"] == "open"
     assert by_path["/etc/mosquitto/mosquitto.conf"]["process"] == "mosquitto"
     assert by_path["/etc/iotguard/selftest.conf"]["process"] == "bash"
 
@@ -189,7 +190,7 @@ def test_falco_event_also_becomes_typed_evidence(client):
     files = client.get("/api/runtime/evidence/file").json()["events"]
     shadow = next(e for e in files if e["file_path"] == "/etc/shadow")
     assert shadow["process"] == "wget" and shadow["user"] == "root"
-    assert shadow["operation"] == "write" and shadow["severity"] == "critical"
+    assert shadow["operation"] == "open" and shadow["severity"] == "error"
     networks = client.get("/api/runtime/evidence/network").json()["events"]
     outbound = next(e for e in networks if e["destination_ip"] == "198.51.100.9")
     assert outbound["destination_port"] == 443 and outbound["process"] == "curl"

@@ -1,0 +1,151 @@
+<div class="page">
+        <header class="page-head">
+          <div>
+            <span class="eyebrow"><i class="dot"></i>Security posture · 21 oct 2026</span>
+            <h1>安全态势</h1>
+            <p class="sub">从情报命中到运行证据，先看需要动手的对象，再进入工作台处理。</p>
+            <div class="meta"><span>数据读取于 10:25:32</span><i class="sep"></i><span>4 台资产</span><i class="sep"></i><span>12,958 条情报</span><i class="sep"></i><span>口径：资产级风险</span></div>
+          </div>
+          <div class="actions">
+            <button class="btn"><svg class="icon"><use href="#i-download"/></svg>导出周报</button>
+            <button class="btn primary"><svg class="icon"><use href="#i-play"/></svg>发起研判</button>
+          </div>
+        </header>
+
+        <div class="content" style="grid-template-rows:300px minmax(0,1fr)">
+          <div class="grid g-2-1">
+            <section class="card feature">
+              <div class="card-head">
+                <div><div class="card-title">风险态势</div><div class="card-desc">资产级风险 · 近 30 天</div></div>
+                <span class="chip muted">近 30 天</span>
+              </div>
+              <div class="card-body" style="display:flex;gap:20px;padding-top:6px">
+                <div style="width:232px;flex:0 0 auto;border-right:1px solid var(--line-soft);padding-right:18px">
+                  <div style="display:flex;align-items:flex-end;gap:10px">
+                    <span class="big-number">49</span>
+                    <span style="padding-bottom:4px;color:var(--ink-3);font-size:10.5px;line-height:1.4">高风险<br>及严重</span>
+                  </div>
+                  <span class="chip crit" style="margin-top:8px"><svg class="icon" style="width:10px;height:10px"><use href="#i-arrow-up"/></svg>+6 较上周</span>
+                  <div class="stack" style="margin-top:14px">
+                    <i style="width:1.8%;min-width:3px;background:var(--crit)"></i>
+                    <i style="width:17.6%;background:var(--high)"></i>
+                    <i style="width:45.6%;background:var(--mid)"></i>
+                    <i style="width:36.4%;background:var(--low)"></i>
+                  </div>
+                  <div class="legend" style="margin-top:12px;display:grid;grid-template-columns:1fr 1fr;gap:7px 10px">
+                    <span><i class="dot" style="background:var(--crit)"></i>严重<b>1</b></span>
+                    <span><i class="dot" style="background:var(--high)"></i>高危<b>48</b></span>
+                    <span><i class="dot" style="background:var(--mid)"></i>中危<b>124</b></span>
+                    <span><i class="dot" style="background:var(--low)"></i>低危<b>99</b></span>
+                  </div>
+                  <div style="display:flex;align-items:center;gap:8px;margin-top:14px;padding-top:10px;border-top:1px solid var(--line-soft);color:var(--muted);font-size:9.5px">
+                    <span>处置率</span><b class="num" style="color:var(--ink)">38%</b>
+                    <span style="flex:1;height:4px;border-radius:3px;background:var(--line-soft);overflow:hidden"><i style="display:block;width:38%;height:4px;background:var(--accent)"></i></span>
+                  </div>
+                </div>
+                <div style="flex:1;min-width:0">
+                  <div style="display:flex;justify-content:space-between;color:var(--muted);font-size:9.5px"><span>新增风险</span><span><b class="num" style="color:var(--accent)">+38%</b> 环比</span></div>
+                  <svg class="chart" viewBox="0 0 380 150" preserveAspectRatio="none" style="height:154px;margin-top:4px">
+                    <defs><linearGradient id="g1" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="var(--accent)" stop-opacity=".22"/><stop offset="1" stop-color="var(--accent)" stop-opacity="0"/></linearGradient></defs>
+                    <g stroke="var(--grid-line)" stroke-width="1">
+                      <line x1="26" y1="34" x2="372" y2="34"/><line x1="26" y1="80" x2="372" y2="80"/><line x1="26" y1="126" x2="372" y2="126"/>
+                    </g>
+                    <path d="M28.0,121.6C30.0,121.1 35.8,118.8 39.7,118.6C43.6,118.3 47.5,120.6 51.4,120.1C55.4,119.6 59.3,116.9 63.2,115.6C67.1,114.4 71.0,112.9 74.9,112.7C78.8,112.4 82.7,114.6 86.6,114.1C90.5,113.6 94.4,110.9 98.3,109.7C102.3,108.5 106.2,107.0 110.1,106.7C114.0,106.5 117.9,108.9 121.8,108.2C125.7,107.5 129.6,103.8 133.5,102.3C137.4,100.8 141.3,99.6 145.2,99.3C149.1,99.1 153.1,101.5 157.0,100.8C160.9,100.1 164.8,96.3 168.7,94.9C172.6,93.4 176.5,92.1 180.4,91.9C184.3,91.6 188.2,94.1 192.1,93.4C196.0,92.6 200.0,88.9 203.9,87.4C207.8,86.0 211.7,84.7 215.6,84.5C219.5,84.2 223.4,86.5 227.3,86.0C231.2,85.5 235.1,83.0 239.0,81.5C242.9,80.0 246.9,77.6 250.8,77.1C254.7,76.6 258.6,79.3 262.5,78.6C266.4,77.8 270.3,74.4 274.2,72.6C278.1,70.9 282.0,68.7 285.9,68.2C289.8,67.7 293.7,70.4 297.7,69.7C301.6,68.9 305.5,65.2 309.4,63.7C313.3,62.2 317.2,61.0 321.1,60.8C325.0,60.5 328.9,63.0 332.8,62.2C336.7,61.5 340.6,57.8 344.6,56.3C348.5,54.8 352.4,53.6 356.3,53.3C360.2,53.1 366.0,54.6 368.0,54.8 L368,140 L28,140 Z" fill="url(#g1)"/>
+                    <path d="M28.0,121.6C30.0,121.1 35.8,118.8 39.7,118.6C43.6,118.3 47.5,120.6 51.4,120.1C55.4,119.6 59.3,116.9 63.2,115.6C67.1,114.4 71.0,112.9 74.9,112.7C78.8,112.4 82.7,114.6 86.6,114.1C90.5,113.6 94.4,110.9 98.3,109.7C102.3,108.5 106.2,107.0 110.1,106.7C114.0,106.5 117.9,108.9 121.8,108.2C125.7,107.5 129.6,103.8 133.5,102.3C137.4,100.8 141.3,99.6 145.2,99.3C149.1,99.1 153.1,101.5 157.0,100.8C160.9,100.1 164.8,96.3 168.7,94.9C172.6,93.4 176.5,92.1 180.4,91.9C184.3,91.6 188.2,94.1 192.1,93.4C196.0,92.6 200.0,88.9 203.9,87.4C207.8,86.0 211.7,84.7 215.6,84.5C219.5,84.2 223.4,86.5 227.3,86.0C231.2,85.5 235.1,83.0 239.0,81.5C242.9,80.0 246.9,77.6 250.8,77.1C254.7,76.6 258.6,79.3 262.5,78.6C266.4,77.8 270.3,74.4 274.2,72.6C278.1,70.9 282.0,68.7 285.9,68.2C289.8,67.7 293.7,70.4 297.7,69.7C301.6,68.9 305.5,65.2 309.4,63.7C313.3,62.2 317.2,61.0 321.1,60.8C325.0,60.5 328.9,63.0 332.8,62.2C336.7,61.5 340.6,57.8 344.6,56.3C348.5,54.8 352.4,53.6 356.3,53.3C360.2,53.1 366.0,54.6 368.0,54.8" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"/>
+                    <circle cx="368" cy="54.8" r="3.2" fill="var(--surface)" stroke="var(--accent)" stroke-width="2"/>
+                  </svg>
+                  <div style="display:flex;justify-content:space-between;color:var(--muted);font:8.5px var(--font-num);padding:0 2px"><span>09-22</span><span>09-29</span><span>10-06</span><span>10-13</span><span>10-21</span></div>
+                </div>
+              </div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <div><div class="card-title">运行证据</div><div class="card-desc">节点、传感器与证据新鲜度</div></div>
+                <span class="chip high"><i class="dot"></i>需关注</span>
+              </div>
+              <div class="card-body" style="padding-top:8px">
+                <div style="display:flex;align-items:center;gap:14px">
+                  <div class="gauge" style="width:84px;height:84px">
+                    <svg width="84" height="84" viewBox="0 0 92 92">
+                      <circle cx="46" cy="46" r="38" fill="none" stroke="var(--line-soft)" stroke-width="8"/>
+                      <circle cx="46" cy="46" r="38" fill="none" stroke="var(--accent)" stroke-width="8" stroke-linecap="round" stroke-dasharray="148 239"/>
+                    </svg>
+                    <div class="gauge-center"><b>62%</b><span>资产覆盖率</span></div>
+                  </div>
+                  <div style="min-width:0">
+                    <div style="font-size:11.5px;font-weight:650">2 个资产有运行时关联</div>
+                    <div style="margin-top:3px;color:var(--muted);font-size:9.5px;line-height:1.5">1 个资产有 2 分钟内的 Falco 事件；logread 已过期 20 小时。</div>
+                    <div style="margin-top:5px;color:var(--high);font-size:9px;font-weight:600">部分证据过期 · 不能视为“无风险”</div>
+                  </div>
+                </div>
+              </div>
+              <div style="border-top:1px solid var(--line-soft);margin-top:2px">
+                <div style="display:flex;align-items:center;gap:7px;height:31px;padding:0 17px;font-size:10.5px"><i class="dot ok"></i><span style="flex:1">Falco · Ubuntu Collector</span><span class="num" style="color:var(--muted);font-size:9px">2 分钟前</span></div>
+                <div style="display:flex;align-items:center;gap:7px;height:31px;padding:0 17px;border-top:1px solid var(--line-soft);font-size:10.5px"><i class="dot bad"></i><span style="flex:1">logread · OpenWrt-Lab</span><span class="num" style="color:var(--muted);font-size:9px">20 小时前</span></div>
+                <div style="display:flex;align-items:center;gap:7px;height:31px;padding:0 17px;border-top:1px solid var(--line-soft);font-size:10.5px"><i class="dot unknown"></i><span style="flex:1">Zephyr · Sensor-01</span><span class="num" style="color:var(--muted);font-size:9px">未接入</span></div>
+              </div>
+              <div class="card-foot"><span>70,000+ 事件 · 3 个传感器</span><a class="link" href="#">查看运行时 <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+            </section>
+          </div>
+
+          <div class="grid g-2-1">
+            <section class="card">
+              <div class="card-head">
+                <div><div class="card-title">优先处置</div><div class="card-desc">按综合风险分排序 · 前 6 条</div></div>
+                <a class="link" href="#">全部 49 条 <svg class="icon"><use href="#i-chev-right"/></svg></a>
+              </div>
+              <div class="table-wrap">
+                <table style="table-layout:fixed">
+                  <colgroup><col style="width:34px"><col style="width:148px"><col style="width:142px"><col style="width:88px"><col style="width:100px"><col style="width:78px"><col style="width:66px"><col style="width:24px"></colgroup>
+                  <thead><tr><th>#</th><th>CVE</th><th>资产</th><th>风险分</th><th>证据</th><th>状态</th><th>更新</th><th></th></tr></thead>
+                  <tbody>
+                    <tr><td class="num" style="color:var(--muted)">P1</td><td class="mono">CVE-2026-63073</td><td class="name">wyh-VMware</td><td><span class="score crit"><b>80.5</b><i><em style="width:80.5%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip high"><i class="dot"></i>待研判</span></td><td class="num" style="font-size:9px;color:var(--muted)">2 分钟前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                    <tr><td class="num" style="color:var(--muted)">P2</td><td class="mono">CVE-2026-92939</td><td class="name">Zephyr-Sensor-01</td><td><span class="score high"><b>77.6</b><i><em style="width:77.6%"></em></i></span></td><td><span class="chip low"><i class="dot"></i>已验证</span></td><td><span class="chip mid"><i class="dot"></i>待审批</span></td><td class="num" style="font-size:9px;color:var(--muted)">18 分钟前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                    <tr><td class="num" style="color:var(--muted)">P3</td><td class="mono">CVE-2026-15981</td><td class="name">Ubuntu-Collector</td><td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td><td><span class="chip muted"><i class="dot"></i>未观测</span></td><td><span class="chip info"><i class="dot"></i>候选</span></td><td class="num" style="font-size:9px;color:var(--muted)">1 小时前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                    <tr><td class="num" style="color:var(--muted)">P4</td><td class="mono">CVE-2026-81707</td><td class="name">OpenWrt-000c</td><td><span class="score high"><b>76.8</b><i><em style="width:76.8%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip high"><i class="dot"></i>待研判</span></td><td class="num" style="font-size:9px;color:var(--muted)">3 小时前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                    <tr><td class="num" style="color:var(--muted)">P5</td><td class="mono">CVE-2026-43118</td><td class="name">Zephyr-Sensor-01</td><td><span class="score mid"><b>71.2</b><i><em style="width:71.2%"></em></i></span></td><td><span class="chip info"><i class="dot"></i>上下文关联</span></td><td><span class="chip accent"><i class="dot"></i>已排期</span></td><td class="num" style="font-size:9px;color:var(--muted)">昨天</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                    <tr><td class="num" style="color:var(--muted)">P6</td><td class="mono">CVE-2026-30217</td><td class="name">OpenWrt-Lab-0050</td><td><span class="score mid"><b>68.4</b><i><em style="width:68.4%"></em></i></span></td><td><span class="chip muted"><i class="dot"></i>未观测</span></td><td><span class="chip info"><i class="dot"></i>候选</span></td><td class="num" style="font-size:9px;color:var(--muted)">2 天前</td><td><svg class="icon" style="width:12px;height:12px;color:var(--line-strong)"><use href="#i-chev-right"/></svg></td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-foot"><span>风险分综合 CVSS、EPSS、暴露面与运行时证据；不代表已确认利用。</span><span class="num">49 条 · 3 条待审查</span></div>
+            </section>
+
+            <section class="card">
+              <div class="card-head">
+                <div><div class="card-title">智能体运行</div><div class="card-desc">四智能体协作 · 共享证据</div></div>
+                <span class="chip accent"><i class="dot"></i>运行中</span>
+              </div>
+              <div class="card-body" style="padding-top:10px">
+                <div class="agent-flow" style="display:grid;gap:0">
+                  <div style="display:grid;grid-template-columns:22px 1fr auto;gap:9px;position:relative;padding-bottom:15px">
+                    <span class="step-dot" style="width:22px;height:22px;background:var(--low-soft);border-color:var(--low-line);color:var(--low)"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+                    <div><div style="font-size:11.5px;font-weight:650">资产调查</div><div style="color:var(--muted);font-size:9.5px">已完成 · 4 个对象</div></div>
+                    <span class="num" style="color:var(--muted);font-size:9px">10:24</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:22px 1fr auto;gap:9px;padding-bottom:15px">
+                    <span class="step-dot" style="width:22px;height:22px;background:var(--low-soft);border-color:var(--low-line);color:var(--low)"><svg class="icon" style="width:11px;height:11px"><use href="#i-check"/></svg></span>
+                    <div><div style="font-size:11.5px;font-weight:650">漏洞分析</div><div style="color:var(--muted);font-size:9.5px">已完成 · 128 条候选</div></div>
+                    <span class="num" style="color:var(--muted);font-size:9px">10:26</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:22px 1fr auto;gap:9px;padding-bottom:15px">
+                    <span class="step-dot" style="width:22px;height:22px;background:var(--accent);border-color:var(--accent);color:var(--accent-ink);box-shadow:0 0 0 4px var(--accent-soft)"><svg class="icon" style="width:11px;height:11px"><use href="#i-clock"/></svg></span>
+                    <div><div style="font-size:11.5px;font-weight:650">运行时分析</div><div style="color:var(--muted);font-size:9.5px">正在补证 · 2 个节点</div></div>
+                    <span class="num" style="color:var(--muted);font-size:9px">10:28</span>
+                  </div>
+                  <div style="display:grid;grid-template-columns:22px 1fr auto;gap:9px">
+                    <span class="step-dot" style="width:22px;height:22px"><i class="dot" style="width:5px;height:5px"></i></span>
+                    <div><div style="font-size:11.5px;font-weight:650">决策规划</div><div style="color:var(--muted);font-size:9.5px">等待上游 · 未开始</div></div>
+                    <span class="num" style="color:var(--muted);font-size:9px">—</span>
+                  </div>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);margin-top:12px;padding-top:10px;border-top:1px solid var(--line-soft)"><div><div style="color:var(--muted);font-size:8.5px">对象</div><div class="num" style="margin-top:1px;font-size:15px;font-weight:700">4</div></div><div><div style="color:var(--muted);font-size:8.5px">候选</div><div class="num" style="margin-top:1px;font-size:15px;font-weight:700">128</div></div><div><div style="color:var(--muted);font-size:8.5px">待审查</div><div class="num" style="margin-top:1px;font-size:15px;font-weight:700;color:var(--high)">3</div></div></div><div style="margin-top:12px;padding:9px 10px;border:1px solid var(--high-line);border-radius:8px;background:var(--high-soft);color:var(--high);font-size:9.5px;font-weight:600;display:flex;align-items:center;gap:7px">
+                  <svg class="icon" style="width:12px;height:12px"><use href="#i-alert"/></svg>3 条记录待人工审查<a class="link" href="#" style="margin-left:auto;color:var(--high);font-size:9px">去处理 <svg class="icon"><use href="#i-chev-right"/></svg></a>
+                </div>
+              </div>
+              <div class="card-foot"><span class="num">UA-20261021-1042</span><a class="link" href="#">打开 AgentOps <svg class="icon"><use href="#i-chev-right"/></svg></a></div>
+            </section>
+          </div>
+        </div>
+      </div>

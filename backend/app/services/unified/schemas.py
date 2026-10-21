@@ -61,6 +61,18 @@ class VerificationStep(BaseModel):
     evidence_source: str = ""
 
 
+class CollaborationMessageDraft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    receiver: Literal["asset_investigator", "vulnerability_analyst", "runtime_analyst", "decision_planner", "all"]
+    message_type: Literal["FINDING", "QUESTION", "CHALLENGE", "EVIDENCE_REQUEST",
+                          "EVIDENCE_UPDATE", "CONFLICT", "RESOLUTION", "PLAN_FEEDBACK"]
+    claim: str = Field(min_length=1, max_length=1200)
+    evidence_ids: list[str] = Field(default_factory=list, max_length=30)
+    requested_action: str = Field(default="", max_length=800)
+    reply_to: str = ""
+    finding_id: str = ""
+
+
 class UnifiedAgentOutput(BaseModel):
     """四个智能体输出的公共底座。
 
@@ -73,6 +85,7 @@ class UnifiedAgentOutput(BaseModel):
     notes: list[str] = Field(default_factory=list, description="程序注入的预分拣记录或模型补充说明")
     data_gaps: list[str] = Field(default_factory=list, description="工具未能覆盖的信息缺口（如实声明，不得编造）")
     confidence: float = Field(ge=0, le=1, default=0.5)
+    messages: list[CollaborationMessageDraft] = Field(default_factory=list, max_length=6)
 
 
 # ── Agent 1：Asset & Evidence Investigator ───────────────────────────────────
@@ -429,13 +442,16 @@ class ConflictItemRecord(BaseModel):
     code: str
     description: str
     involved_agents: list[str] = Field(default_factory=list)
+    category: Literal["dimension_difference", "fact_version", "substantive_judgment",
+                      "plan_feasibility", "safety_block"] = "substantive_judgment"
+    evidence_ids: list[str] = Field(default_factory=list)
 
 
 class ConflictResultRecord(BaseModel):
     model_config = ConfigDict(extra="ignore")
     has_major_conflict: bool = False
     conflicts: list[ConflictItemRecord] = Field(default_factory=list)
-    rereview_count: int = Field(default=0, ge=0, le=1)
+    rereview_count: int = Field(default=0, ge=0)
     unresolved: bool = False
 
 

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta, timezone
 from sqlalchemy import func
 
 from app import models
+from app.services.event_semantics import semantics
 
 IDENTITY_FIELDS = ("process_id", "parent_process_id", "process_exec_id", "parent_exec_id",
                    "process_start_time", "boot_id", "sensor_id", "executable", "container_id")
@@ -119,7 +120,7 @@ def timeline(db, asset_id, limit=300):
                        "pid": row.process_id, "category": row.category, "event_type": row.event_type,
                        "file_path": row.file_path, "destination": row.destination, "port": row.port,
                        "source": row.source, "sensor_id": row.sensor_id, "rule": row.rule,
-                       "evidence_level": "runtime_observation"})
+                       "evidence_level": "runtime_observation", **semantics(json.loads(row.raw_json or "{}"))})
     edges, seen = [], set()
     for event in events:
         parent = f"{asset_id}:exec:{event['parent_exec_id']}"

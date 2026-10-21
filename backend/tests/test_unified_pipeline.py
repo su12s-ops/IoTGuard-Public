@@ -383,13 +383,29 @@ class TestConflicts:
         assert result.unresolved
 
     def test_runtime_alert_vs_not_affected_cross_conflict(self):
-        # §7-7：运行时告警 vs 不受影响——必须冲突转人工，不允许自动压过
+        # M4.2：泛化/未绑定 CVE 的运行时告警属于维度差异，不推翻静态结论、不触发重研
+        # （语义规格见 test_unified_conflict_classification.py）
         result = conflicts_mod.detect_conflicts({
             "baseline": {},
             "runtime": {"behavior_level": "ACTIVE", "evidence_freshness": "fresh"},
             "vulnerability": {"findings": [{"applicability": "not_affected"}]}})
         codes = [item.code for item in result.conflicts]
-        assert "runtime_alert_vs_not_affected" in codes
+        assert "runtime_alert_vs_not_affected" not in codes
+        assert {item.category for item in result.conflicts} == {"dimension_difference"}
+        assert not result.unresolved
+        # 绑定新鲜且 CVE 特异的运行时证据，才是必须转人工的实质冲突
+        result = conflicts_mod.detect_conflicts({
+            "baseline": {},
+            "evidence_snapshot": {
+                "snapshot_id": "s1", "created_at": "2026-10-21T00:00:00+00:00",
+                "evidence_registry": {"SE-1": {"kind": "runtime", "cve_id": "CVE-2026-81001",
+                                               "timestamp": "2026-10-20T23:00:00+00:00"}}},
+            "runtime": {"behavior_level": "ACTIVE", "evidence_freshness": "fresh", "findings": [
+                {"evidence_id": "SE-1", "aspect": "process", "relation": "cve_related_evidence"}]},
+            "vulnerability": {"findings": [{"cve_id": "CVE-2026-81001",
+                                            "applicability": "not_affected"}]}})
+        assert "runtime_alert_vs_not_affected" in [item.code for item in result.conflicts]
+        assert result.unresolved
 
     def test_baseline_high_vs_all_resolved(self):
         result = conflicts_mod.detect_conflicts({
@@ -448,6 +464,41 @@ class TestAuditPolicy:
                                        "confidence": 0.9}]}})
         assert decision.status == "pending_human_review"
         assert "agent_degraded:runtime_analyst" in decision.reasons
+
+    def test_resolved_human_review_cannot_be_auto_reversed(self):
+        """与已签收结论相反的裁定必须转人工（实测 risk 272 曾 auto_confirmed）。"""
+        decision = audit_policy.apply_unified_audit_policy({
+            "baseline": {**self._baseline(), "match_status": "fixed",
+                         "preliminary_score": 30.0, "preliminary_level": "Low",
+                         "review_status": "resolved", "review_verdict": "confirmed_affected"},
+            "degraded_roles": [],
+            "investigation": {"evidence_quality": "sufficient"},
+            "runtime": {},
+            "conflict_result": {},
+            "decision": {"verdicts": [{"risk_direction": "maintain",
+                                       "recommended_action": "monitor",
+                                       "recommended_priority": "low",
+                                       "impact_status": "not_affected",
+                                       "confidence": 0.72}]}})
+        assert decision.status == "pending_human_review"
+        assert any(reason.startswith("contradicts_resolved_review")
+                   for reason in decision.reasons)
+        # 与已签收结论一致时不追加该原因
+        agree = audit_policy.apply_unified_audit_policy({
+            "baseline": {**self._baseline(), "match_status": "fixed",
+                         "preliminary_score": 30.0, "preliminary_level": "Low",
+                         "review_status": "resolved", "review_verdict": "confirmed_affected"},
+            "degraded_roles": [],
+            "investigation": {"evidence_quality": "sufficient"},
+            "runtime": {},
+            "conflict_result": {},
+            "decision": {"verdicts": [{"risk_direction": "maintain",
+                                       "recommended_action": "scheduled_fix",
+                                       "recommended_priority": "medium",
+                                       "impact_status": "confirmed_affected",
+                                       "confidence": 0.8}]}})
+        assert not any(reason.startswith("contradicts_resolved_review")
+                       for reason in agree.reasons)
 
     def test_stale_verified_gates_auto_confirm(self):
         decision = audit_policy.apply_unified_audit_policy({
@@ -646,7 +697,8 @@ class TestGraphTopology:
         client = ScriptedClient({
             "资产与证据调查员": [json_response(GOOD_ASSET)],
             "漏洞分析师": [json_response(GOOD_VULN)],
-            "运行时分析师": [json_response(GOOD_RUNTIME), json_response(GOOD_RUNTIME)],
+            "运行时分析师": [json_response(GOOD_RUNTIME), json_response({
+                **GOOD_RUNTIME, "data_gaps": ["补查确认父进程未被当前采集覆盖，仍需补证"]})],
             "研判与处置规划师": [decide_first, json_response(GOOD_DECISION)],
         })
         state = base_state()
@@ -1154,8 +1206,8 @@ def test_inventory_only_followups_skip_rereading_decision(session_factory):
     assert final.decision.get("follow_up_requests"), "申请本身必须保留在决策结果中"
 
 
-def test_targeted_evidence_followup_still_runs_full_loop(session_factory):
-    """针对既有证据的定向复查（target_agent）保留原路径：补查 + 第二次决策。"""
+def test_identical_evidence_followup_does_not_repeat_decision(session_factory):
+    """补查保留原始结果；完全相同的报告不再触发第二次决策。"""
     db = session_factory()
     make_asset(db)
     make_evidence(db)
@@ -1180,8 +1232,10 @@ def test_targeted_evidence_followup_still_runs_full_loop(session_factory):
     })
     final, _ctx = run_graph(session_factory, base_state(), client)
     decide_llm_calls = len([s for s in client.sent if s.startswith("你是研判与处置规划师")])
-    assert decide_llm_calls == 2
+    assert decide_llm_calls == 1
     assert final.follow_ups_used == 1
+    assert final.follow_up_results[-1]["changed"] is False
+    assert final.final["policy"]["status"] == "pending_human_review"
 
 
 def test_rereview_inherits_full_context_and_failure_keeps_original(session_factory):

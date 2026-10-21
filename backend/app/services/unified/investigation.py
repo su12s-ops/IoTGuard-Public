@@ -83,7 +83,7 @@ def propose(db, run_id, request):
     return item
 
 
-def authorize(db, item, request_hash, connection_id, actor, reason):
+def authorize(db, item, request_hash, connection_id, actor, reason, auto_resume=False):
     proposal = json.loads(item.request_json)
     if request_hash != item.request_hash or fingerprint(proposal) != item.request_hash:
         raise ValueError("request_changed")
@@ -102,6 +102,9 @@ def authorize(db, item, request_hash, connection_id, actor, reason):
     run = collection_tasks.create_run(db, connection_id, request_id=item.id)
     item.collection_run_id = run.id
     item.authorized_by, item.authorization_reason = actor, reason
+    item.result_json = encode({"continuation": {"auto_resume": auto_resume,
+        "authorized_by": actor, "request_hash": request_hash,
+        "scope": "one_inventory_collection_and_one_reassessment"}})
     item.status = "authorized"
     db.commit()  # Record explicit authorization before dispatch; retry is idempotent.
     tracing.emit(db, run.trace_id, "investigation_authorized", actor=actor, status="authorized",
@@ -112,6 +115,8 @@ def authorize(db, item, request_hash, connection_id, actor, reason):
 
 def resume(db, item, client_factory=None):
     from app.services.unified.runner import run_unified_sync
+    if item.status == "no_new_evidence":
+        return db.query(models.UnifiedAnalysisRun).filter_by(run_id=item.source_run_id).one()
     if item.reanalysis_run_id:
         return db.query(models.UnifiedAnalysisRun).filter_by(run_id=item.reanalysis_run_id).one()
     run = collection_tasks.get_run(db, item.collection_run_id) if item.collection_run_id else None
@@ -126,6 +131,7 @@ def resume(db, item, client_factory=None):
     if json.loads(asset.inventory_metadata_json or "{}").get("collection_run_id") != run.id:
         raise ValueError("collection_superseded")
     parent = db.query(models.UnifiedAnalysisRun).filter_by(run_id=item.source_run_id).one()
+    continuation = json.loads(item.result_json or "{}").get("continuation", {})
     if parent.mode == "formal":
         from app import config
         risk = db.get(models.RiskAssessment, parent.risk_id)
@@ -140,6 +146,13 @@ def resume(db, item, client_factory=None):
     if claimed.rowcount != 1:
         db.rollback()
         raise ValueError("reanalysis_already_claimed")
+    if not substantive_change(json.loads(item.before_json), evidence_view(db, item.asset_id)):
+        item.status = "no_new_evidence"
+        item.result_json = encode({"continuation": continuation, "evidence_id": evidence_id,
+            "substantive_update": False, "gap_resolution": "unchanged_inventory_facts",
+            "reason": "固定清单已复采但事实未变化；保留原审核结论，不自动重跑模型。运行时缺口需对应采集能力。"})
+        db.commit()
+        return parent
     if parent.mode == "formal":
         changed_risk = db.execute(update(models.RiskAssessment).where(
             models.RiskAssessment.id == risk.id,
@@ -171,7 +184,7 @@ def resume(db, item, client_factory=None):
         if config.UNIFIED_PIPELINE_MODE != "on" or not risk or not risk.active:
             raise ValueError("active_formal_source_required")
         kwargs["sink"] = formal_sink
-    run_unified_sync(db, child, force_full_review=True, investigation_goal=goal, **kwargs)
+    run_unified_sync(db, child, replay_from_run_id=parent.run_id, investigation_goal=goal, **kwargs)
     if parent.mode == "formal" and child.status != "completed":
         risk.review_status, risk.human_review_required = "pending_human_review", True
         risk.final_score = risk.risk_level = risk.decision = None
@@ -189,7 +202,7 @@ def resume(db, item, client_factory=None):
     contributions = {role: {"judgment_changed": judgment(old.get(key)) != judgment(new.get(key)),
         "output_changed": old.get(key) != new.get(key), "before": old.get(key), "after": new.get(key)}
         for role, key in zip(ALL_AGENT_IDS, ("investigation", "vulnerability", "runtime", "decision"))}
-    item.result_json = encode({"evidence_id": evidence_id, "substantive_update": changed,
+    item.result_json = encode({"continuation": continuation, "evidence_id": evidence_id, "substantive_update": changed,
         "gap_resolution": "current_inventory_verified_partial_question",
         "model_variance_only": not changed,
         "raw_model_confidence_preserved": True,
@@ -211,8 +224,11 @@ def resume(db, item, client_factory=None):
 
 def judgment(report):
     report = report or {}
+    # 声明的新缺口（data_gaps/missing_evidence）也是决策输入：
+    # 补查只多了缺口、判断没变时，决策者必须看到新缺口；只有「返回完全相同报告」才跳过二次决策。
     keys = ("evidence_quality", "behavior_level", "runtime_status", "exploitation_relation", "impact_status",
-            "risk_direction", "recommended_action", "recommended_priority", "applicability", "version_impact", "installed_version")
+            "risk_direction", "recommended_action", "recommended_priority", "applicability", "version_impact",
+            "installed_version", "data_gaps", "missing_evidence")
     return {**{k: report[k] for k in keys if k in report},
         **{k: [judgment(v) for v in report[k]] for k in ("findings", "verdicts") if k in report}}
 

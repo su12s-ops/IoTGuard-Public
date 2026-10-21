@@ -29,6 +29,7 @@ def _quote(identifier: str) -> str:
 
 # 固定表白名单：每个可调用体内仅出现字面量 SQL；表名绝不拼接进语句。
 _TABLE_PRAGMA = {
+    "runtime_evidence_job": lambda conn: conn.execute("PRAGMA table_info(runtime_evidence_job)").fetchall(),
     "linux_asset": lambda conn: conn.execute("PRAGMA table_info(linux_asset)").fetchall(),
     "asset_package": lambda conn: conn.execute("PRAGMA table_info(asset_package)").fetchall(),
     "asset_service": lambda conn: conn.execute("PRAGMA table_info(asset_service)").fetchall(),
@@ -50,6 +51,7 @@ _TABLE_PRAGMA = {
     "harness_asset_lock": lambda conn: conn.execute("PRAGMA table_info(harness_asset_lock)").fetchall(),
 }
 _TABLE_DELETE = {
+    "runtime_evidence_job": lambda conn: conn.execute("DELETE FROM runtime_evidence_job"),
     "linux_asset": lambda conn: conn.execute("DELETE FROM linux_asset"),
     "asset_package": lambda conn: conn.execute("DELETE FROM asset_package"),
     "asset_service": lambda conn: conn.execute("DELETE FROM asset_service"),

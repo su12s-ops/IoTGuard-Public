@@ -189,6 +189,7 @@ async def ingest_ebpf_events_batch(payload: dict[str, Any], db: Session = Depend
     duplicates = sum(1 for event in stored if event.get("duplicate"))
     return {
         "ack": True,
+        "evidence_pending": sum(1 for event in stored if event.get("evidence_state") == "pending"),
         "received": len(events_in),
         "accepted": len(stored) - duplicates,
         "duplicates": duplicates,
@@ -326,7 +327,7 @@ class SensorHeartbeat(BaseModel):
     model_config = ConfigDict(extra="forbid")
     asset_id: int = Field(gt=0)
     sensor_id: str = Field(min_length=1, max_length=128)
-    source: Literal["falco", "tetragon", "bpftrace", "logread", "runtime_probe"]
+    source: Literal["falco", "tetragon", "bpftrace", "c_ebpf", "logread", "runtime_probe"]
     status: Literal["running", "degraded", "stopped", "unsupported"]
     dropped_events: int | None = Field(default=None, ge=0)
     capabilities: dict = Field(default_factory=dict)
@@ -341,7 +342,8 @@ def ebpf_reliability(db: Session = Depends(get_db)):
     绝不虚构为零（dropped_events 仅在采集器如实上报时为数值）。
     """
     from app.services.runtime_telemetry import reliability_snapshot
-    return reliability_snapshot(db)
+    from app.services.runtime_outbox import snapshot
+    return {**reliability_snapshot(db), "evidence_processing": snapshot(db)}
 
 
 @router.post("/sensors/heartbeat", dependencies=[Depends(require_control)])

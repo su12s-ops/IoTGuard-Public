@@ -1,0 +1,141 @@
+﻿<div class="page">
+  <header class="page-head">
+    <div>
+      <span class="eyebrow"><i class="dot"></i>Multi-agent analysis · run 1042</span>
+      <h1>智能研判</h1>
+      <p class="sub">四个智能体共享证据、按确定性流程协作；流程结束不等于风险已获审批。</p>
+      <div class="meta"><span>UA-20261021-1042</span><i class="sep"></i><span>4 个对象</span><i class="sep"></i><span>128 条候选</span><i class="sep"></i><span>3 条待人工审查</span></div>
+    </div>
+    <div class="actions">
+      <button class="btn"><svg class="icon"><use href="#i-branch"/></svg>查看 Trace</button>
+      <button class="btn primary"><svg class="icon"><use href="#i-play"/></svg>发起研判</button>
+    </div>
+  </header>
+
+  <div class="content" style="grid-template-rows:152px minmax(0,1fr) 128px">
+    <section class="card" style="padding:0 13px;justify-content:center">
+      <div class="pipeline" style="height:118px">
+        <div class="pipe-card done" style="height:118px">
+          <div class="pipe-top"><span class="pipe-no">01 / ASSET</span><span class="chip low" style="height:18px;font-size:8px;margin-left:auto"><i class="dot"></i>完成</span></div>
+          <div class="pipe-role">资产调查</div>
+          <div class="pipe-state">读取 SSH 清单与身份端点</div>
+          <div class="pipe-meta"><span>4 个对象</span><span>14s</span></div>
+          <div class="conf-bar" style="margin-top:6px"><i style="width:100%;background:var(--low)"></i></div>
+        </div>
+        <div class="pipe-card done" style="height:118px">
+          <div class="pipe-top"><span class="pipe-no">02 / VULN</span><span class="chip low" style="height:18px;font-size:8px;margin-left:auto"><i class="dot"></i>完成</span></div>
+          <div class="pipe-role">漏洞分析</div>
+          <div class="pipe-state">公告适用性与版本比对</div>
+          <div class="pipe-meta"><span>128 条候选</span><span>2m 10s</span></div>
+          <div class="conf-bar" style="margin-top:6px"><i style="width:100%;background:var(--low)"></i></div>
+        </div>
+        <div class="pipe-card active" style="height:118px">
+          <div class="pipe-top"><span class="pipe-no">03 / RUNTIME</span><span class="chip accent" style="height:18px;font-size:8px;margin-left:auto"><i class="dot"></i>补证中</span></div>
+          <div class="pipe-role">运行时分析</div>
+          <div class="pipe-state">Falco 事件与进程时间线</div>
+          <div class="pipe-meta"><span>4 条事件</span><span>1m 42s</span></div>
+          <div class="conf-bar" style="margin-top:6px"><i style="width:66%"></i></div>
+        </div>
+        <div class="pipe-card" style="height:118px">
+          <div class="pipe-top"><span class="pipe-no">04 / DECISION</span><span class="chip muted" style="height:18px;font-size:8px;margin-left:auto"><i class="dot"></i>等待</span></div>
+          <div class="pipe-role">决策规划</div>
+          <div class="pipe-state">等待上游证据与人工门禁</div>
+          <div class="pipe-meta"><span>0 个建议</span><span>—</span></div>
+          <div class="conf-bar" style="margin-top:6px"><i style="width:0"></i></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="grid g-2-1">
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">运行轨迹</div><div class="card-desc">工具调用、证据引用与智能体交接</div></div>
+          <span class="chip muted num">UA-1042 · 6 events</span>
+        </div>
+        <div class="card-body" style="padding-top:8px">
+          <div style="display:grid">
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px;border-bottom:1px solid var(--line-soft)">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:24:02</span><i class="dot low" style="background:var(--low)"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">资产调查</b> <span style="color:var(--muted)">读取 SSH 清单</span></span>
+              <span style="color:var(--muted);font-size:8.5px">4 个对象</span><span class="chip low" style="height:18px;font-size:8px">完成</span>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px;border-bottom:1px solid var(--line-soft)">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:24:18</span><i class="dot" style="background:var(--low)"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">资产调查</b> <span style="color:var(--muted)">写入证据引用</span></span>
+              <span style="color:var(--muted);font-size:8.5px">12 条引用</span><span class="chip low" style="height:18px;font-size:8px">完成</span>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px;border-bottom:1px solid var(--line-soft)">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:26:10</span><i class="dot" style="background:var(--low)"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">漏洞分析</b> <span style="color:var(--muted)">版本比对 · openssl</span></span>
+              <span style="color:var(--muted);font-size:8.5px">128 候选</span><span class="chip low" style="height:18px;font-size:8px">完成</span>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px;border-bottom:1px solid var(--line-soft)">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:28:04</span><i class="dot" style="background:var(--accent)"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">运行时分析</b> <span style="color:var(--muted)">拉取 Falco 事件</span></span>
+              <span style="color:var(--muted);font-size:8.5px">4 条事件</span><span class="chip accent" style="height:18px;font-size:8px">补证中</span>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px;border-bottom:1px solid var(--line-soft)">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:28:12</span><i class="dot" style="background:var(--accent)"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">运行时分析</b> <span style="color:var(--muted)">关联 openssl 读取私钥</span></span>
+              <span style="color:var(--muted);font-size:8.5px">1 条关联</span><span class="chip accent" style="height:18px;font-size:8px">补证中</span>
+            </div>
+            <div style="display:grid;grid-template-columns:50px 10px minmax(0,1fr) 96px 60px;gap:8px;align-items:center;min-height:51px">
+              <span class="num" style="color:var(--muted);font-size:8.5px">10:28:20</span><i class="dot unknown"></i>
+              <span style="font-size:10px"><b style="color:var(--ink)">决策规划</b> <span style="color:var(--muted)">等待人工审查</span></span>
+              <span style="color:var(--muted);font-size:8.5px">3 条待审</span><span class="chip muted" style="height:18px;font-size:8px">等待</span>
+            </div>
+          </div>
+        </div>
+        <div class="card-foot"><span>共享证据 12 条 · 工具调用 9 次 · 无重复执行</span><span class="num">policy v3</span></div>
+      </section>
+
+      <section class="card">
+        <div class="card-head">
+          <div><div class="card-title">决策门禁</div><div class="card-desc">机器结论必须通过的四道检查</div></div>
+          <span class="chip high"><i class="dot"></i>3 待审</span>
+        </div>
+        <div class="card-body" style="padding-top:8px">
+          <div style="display:grid;gap:0">
+            <div style="display:flex;align-items:center;gap:8px;height:38px;border-bottom:1px solid var(--line-soft)"><i class="dot ok"></i><span style="font-size:10px;flex:1">证据引用完整</span><span class="num" style="font-size:9px;color:var(--muted)">12 / 12</span></div>
+            <div style="display:flex;align-items:center;gap:8px;height:38px;border-bottom:1px solid var(--line-soft)"><i class="dot ok"></i><span style="font-size:10px;flex:1">对象级人工审查</span><span class="num" style="font-size:9px;color:var(--muted)">3 / 3</span></div>
+            <div style="display:flex;align-items:center;gap:8px;height:38px;border-bottom:1px solid var(--line-soft)"><i class="dot ok"></i><span style="font-size:10px;flex:1">策略版本</span><span class="chip low" style="height:18px;font-size:8px">v3</span></div>
+            <div style="display:flex;align-items:center;gap:8px;height:38px"><i class="dot warn"></i><span style="font-size:10px;flex:1">执行授权</span><span class="chip high" style="height:18px;font-size:8px">未申请</span></div>
+          </div>
+          <div style="margin-top:8px;padding:9px 10px;border:1px solid var(--high-line);background:var(--high-soft);border-radius:var(--radius-sm);color:var(--high);font-size:9px;line-height:1.5">
+            <b>3 条记录待人工审查</b><br>流程已结束不代表风险已获审批；设备写默认关闭。
+          </div>
+          <button class="btn primary" style="width:100%;margin-top:8px;height:30px;font-size:10.5px">进入人工审查</button>
+        </div>
+        <div class="card-foot"><span>门禁结果会写入审计，不会自动执行修复。</span></div>
+      </section>
+    </div>
+
+    <div class="grid g-4">
+      <div class="card" style="padding:12px 13px">
+        <div style="display:flex;align-items:center;gap:7px;color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">ADVISORY
+          <span class="chip low" style="margin-left:auto;height:18px;font-size:8px"><i class="dot"></i>命中</span></div>
+        <div style="margin-top:6px;color:var(--ink);font-size:10.5px;font-weight:650">GHSA-2026-7f3c</div>
+        <div style="margin-top:2px;color:var(--muted);font-size:8.5px">NVD / Canonical · 10:24</div>
+      </div>
+      <div class="card" style="padding:12px 13px">
+        <div style="display:flex;align-items:center;gap:7px;color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">VERSION
+          <span class="chip low" style="margin-left:auto;height:18px;font-size:8px"><i class="dot"></i>命中</span></div>
+        <div style="margin-top:6px;color:var(--ink);font-size:10.5px;font-weight:650">3.0.13 &lt; 3.0.13-3.6</div>
+        <div style="margin-top:2px;color:var(--muted);font-size:8.5px">APT · installed 3.0.13</div>
+      </div>
+      <div class="card" style="padding:12px 13px">
+        <div style="display:flex;align-items:center;gap:7px;color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">RUNTIME
+          <span class="chip high" style="margin-left:auto;height:18px;font-size:8px"><i class="dot"></i>上下文</span></div>
+        <div style="margin-top:6px;color:var(--ink);font-size:10.5px;font-weight:650">Falco · evt_8f21</div>
+        <div style="margin-top:2px;color:var(--muted);font-size:8.5px">openssl · 10:28</div>
+      </div>
+      <div class="card" style="padding:12px 13px">
+        <div style="display:flex;align-items:center;gap:7px;color:var(--muted);font:700 8px var(--font-num);letter-spacing:.08em">POLICY
+          <span class="chip high" style="margin-left:auto;height:18px;font-size:8px"><i class="dot"></i>待审</span></div>
+        <div style="margin-top:6px;color:var(--ink);font-size:10.5px;font-weight:650">决策门禁 v3</div>
+        <div style="margin-top:2px;color:var(--muted);font-size:8.5px">3 条待人工签收</div>
+      </div>
+    </div>
+  </div>
+</div>
+

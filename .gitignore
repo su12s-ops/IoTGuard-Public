@@ -43,4 +43,6 @@ backend/package-lock.json
 
 # ── 其他运行产物 ──────────────────────────────────────────────────
 collector/sample_asset_outputs/
+# 原生 eBPF 传感器本地编译产物（guard.bpf.o / vmlinux.h / iotguard-sensor）
+collector/native/build/
 *.log
