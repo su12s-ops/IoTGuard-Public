@@ -2,6 +2,7 @@ import { reactive } from "vue";
 
 export const ui = reactive({
   tokenOpen: false,
+  experimentOpen: false,
   toasts: []
 });
 

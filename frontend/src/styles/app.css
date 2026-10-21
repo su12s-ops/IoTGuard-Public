@@ -1,213 +1,27 @@
-/* Application-level layout on top of the Editorial system. */
+/* Application-level layout helpers on top of the console design system. */
 
 html, body, #app { height: 100%; }
 body { overflow: hidden; }
 .shell { height: 100%; }
-.shell--bare { grid-template-columns: minmax(0, 1fr); }
 
-.main {
-  height: calc(100vh - 64px);
-  overflow: auto;
-  scrollbar-width: thin;
-}
-.main::-webkit-scrollbar { width: 10px; }
-.main::-webkit-scrollbar-thumb { background: rgba(24, 20, 16, .18); border: 3px solid transparent; background-clip: content-box; border-radius: 8px; }
+.main { flex: 1; min-height: 0; overflow: auto; }
 
-.page { height: auto; min-height: 858px; }
-
-.rail .nav { overflow-y: auto; scrollbar-width: none; }
-.rail .nav::-webkit-scrollbar { display: none; }
-
-.main--bare { padding: 14px 20px; overflow: hidden; }
-.soc-page { height: 100%; }
-
-.search input {
-  flex: 1;
-  min-width: 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--ink);
-  font: inherit;
-}
-.search input::placeholder { color: var(--muted); }
-
-.nav a { cursor: pointer; }
-.nav a.active { background: var(--rail-active); color: var(--rail-active-text); }
-
-.btn:disabled { opacity: .45; cursor: not-allowed; }
-.link { cursor: pointer; }
-
-.table-wrap { overflow: auto; }
-.table-wrap::-webkit-scrollbar { height: 8px; width: 8px; }
-.table-wrap::-webkit-scrollbar-thumb { background: var(--line); border-radius: 6px; }
-
-.table-link {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: var(--accent);
-  font: inherit;
-  cursor: pointer;
-  text-align: left;
-}
-.table-link:hover { text-decoration: underline; text-underline-offset: 3px; }
-
+.page { height: auto; }
 .page-head h1 { word-break: break-word; }
 
-.empty-state {
-  display: grid;
-  justify-items: center;
-  gap: 9px;
-  padding: 34px 20px;
-  color: var(--muted);
-  text-align: center;
-}
-.empty-state .icon { width: 30px; height: 30px; color: var(--line-strong); }
-.empty-state b { color: var(--ink-2); font-size: 12px; }
-.empty-state p { margin: 0; max-width: 440px; font-size: 10px; line-height: 1.65; }
+.nav a { cursor: pointer; }
 
-.loading-line {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 18px 2px;
-  color: var(--muted);
-  font-size: 10px;
-}
-.spinner {
-  width: 13px;
-  height: 13px;
-  border: 2px solid var(--line);
-  border-top-color: var(--accent);
-  border-radius: 50%;
-  animation: spin .8s linear infinite;
-}
-@keyframes spin { to { transform: rotate(360deg); } }
-
-.error-banner {
-  display: flex;
-  align-items: center;
-  gap: 9px;
-  padding: 8px 11px;
-  border: 1px solid var(--crit-line);
-  Background: var(--crit-soft);
-  color: var(--crit);
-  font-size: 10px;
-  line-height: 1.5;
-}
-.error-banner .icon { width: 13px; height: 13px; flex: 0 0 auto; }
-
-.modal-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 100;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: rgba(24, 20, 16, .48);
-  backdrop-filter: blur(3px);
-}
-.modal {
-  width: min(520px, 100%);
-  max-height: min(760px, calc(100vh - 48px));
-  overflow: auto;
-  border: 1px solid var(--ink);
-  background: var(--surface);
-  box-shadow: var(--shadow-pop);
-}
-.modal--wide { width: min(760px, 100%); }
-.modal-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 20px 14px; border-bottom: 1px solid var(--ink); }
-.modal-head h2 { margin: 0; font-size: 17px; font-weight: 700; }
-.modal-head p { margin: 4px 0 0; color: var(--muted); font-size: 10px; line-height: 1.55; }
-.modal-body { display: grid; gap: 12px; padding: 16px 20px 20px; }
-.modal-foot { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 20px 16px; border-top: 1px solid var(--ink); }
-.icon-close { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 2px; }
-
-.field-label { display: block; color: var(--muted); font-size: 10px; font-weight: 600; }
-.input, .select, .textarea {
-  width: 100%;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-sm);
-  background: var(--surface);
-  color: var(--ink);
-  font: inherit;
-  font-size: 12px;
-  outline: 0;
-}
-.input, .select { height: 34px; padding: 0 10px; }
-.textarea { min-height: 82px; padding: 9px 10px; resize: vertical; line-height: 1.6; }
-.input:focus, .select:focus, .textarea:focus { border-color: var(--ink); box-shadow: 0 0 0 2px var(--accent-soft); }
-.field-hint { color: var(--muted); font-size: 9px; line-height: 1.5; }
-
-.toast-stack { position: fixed; right: 20px; bottom: 20px; z-index: 120; display: grid; gap: 8px; }
-.toast {
-  min-width: 240px;
-  max-width: 420px;
-  padding: 10px 13px;
-  border: 1px solid var(--ink);
-  background: var(--surface);
-  color: var(--ink);
-  font-size: 11px;
-  line-height: 1.5;
-  box-shadow: var(--shadow-pop);
-}
-.toast.error { border-color: var(--crit); color: var(--crit); background: var(--crit-soft); }
-.toast.success { border-color: var(--accent); color: var(--accent-2); background: var(--accent-soft); }
-
-/* A few data helpers shared by views. */
-.strong { color: var(--ink); font-weight: 700; }
-.dim { color: var(--muted); }
-.right { text-align: right; }
-.nowrap { white-space: nowrap; }
-.wrap { overflow-wrap: anywhere; }
-
-.mini-bars { display: flex; align-items: flex-end; gap: 5px; height: 54px; }
-.mini-bars i { flex: 1; min-width: 0; background: var(--accent); opacity: .82; }
-.mini-bars i.high { background: var(--high); }
-.mini-bars i.crit { background: var(--crit); }
-
-.matrix { display: grid; grid-template-columns: 20px repeat(5, 1fr); grid-template-rows: repeat(5, 1fr) 16px; gap: 4px; height: 158px; }
-.matrix .axis { display: grid; place-items: center; color: var(--muted); font: 8px var(--font-num); }
-.matrix .axis.y { writing-mode: vertical-rl; transform: rotate(180deg); }
-.matrix .cell {
-  position: relative;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line-soft);
-  background: var(--surface-2);
-  color: var(--ink-2);
-  font: 700 9px var(--font-num);
-}
-.matrix .cell[data-tone="low"] { background: color-mix(in srgb, var(--low) 10%, var(--surface)); }
-.matrix .cell[data-tone="mid"] { background: color-mix(in srgb, var(--high) 14%, var(--surface)); }
-.matrix .cell[data-tone="high"] { background: color-mix(in srgb, var(--crit) 15%, var(--surface)); }
-.matrix .cell[data-tone="crit"] { background: color-mix(in srgb, var(--crit) 28%, var(--surface)); }
-
-@media (max-width: 1280px) {
-  .main { padding-left: 20px; padding-right: 20px; }
-  .page-head h1 { font-size: 31px; }
-  .g-2-1 { grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); }
-}
-
-@media (max-height: 940px) {
-  .page { min-height: 858px; }
-}
-
-.donut-wrap { position: relative; }
-.donut-wrap svg { display: block; }
-.donut-center { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
-.donut-center b { color: var(--ink); font: 700 21px/1 var(--font-num); letter-spacing: -.04em; }
-.donut-center span { margin-top: 3px; color: var(--muted); font-size: 8px; }
-
-.trend { display: flex; flex-direction: column; min-height: 0; }
-.trend .chart { flex: 1; min-height: 0; width: 100%; }
-
-.top-brand { display: flex; align-items: center; gap: 8px; padding-right: 12px; border-right: 1px solid var(--line); }
-.top-brand .brand-mark { width: 27px; height: 27px; border-radius: 8px; font-size: 9px; box-shadow: none; }
-.top-brand b { color: var(--ink); font-family: var(--font-display); font-size: 13px; letter-spacing: -.01em; }
-
-.checkbox-row { display: flex; align-items: center; gap: 7px; color: var(--ink-2); font-size: 11px; line-height: 1.5; }
-.checkbox-row input { accent-color: var(--accent); }
+.btn:disabled { cursor: not-allowed; }
+.link { cursor: pointer; }
 
 .table-wrap td { overflow: hidden; text-overflow: ellipsis; }
+
+.page > .content:last-child { padding-bottom: 4px; }
+
+/* Views that use a fixed grid template still get a sensible minimum. */
+.content > * { min-width: 0; }
+
+/* Legacy inline grids collapse gracefully. */
+@media (max-width: 1280px) {
+  .page-head h1 { font-size: 26px; }
+}

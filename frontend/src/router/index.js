@@ -5,7 +5,7 @@ const routes = [
     path: "/",
     name: "overview",
     component: () => import("../views/Overview.vue"),
-    meta: { title: "安全态势", root: "安全工作台" }
+    meta: { title: "安全总览", root: "安全工作台" }
   },
   {
     path: "/assets",
@@ -29,7 +29,7 @@ const routes = [
     path: "/agents",
     name: "agents",
     component: () => import("../views/Agents.vue"),
-    meta: { title: "智能研判", root: "安全工作台" }
+    meta: { title: "智能研判中心", root: "安全工作台" }
   },
   {
     path: "/repairs",
@@ -41,20 +41,12 @@ const routes = [
     path: "/runtime",
     name: "runtime",
     component: () => import("../views/Runtime.vue"),
-    meta: { title: "运行与审计", root: "安全工作台" }
+    meta: { title: "运行监控与审计", root: "安全工作台" }
   },
-  {
-    path: "/reports",
-    name: "reports",
-    component: () => import("../views/Reports.vue"),
-    meta: { title: "报告与归档", root: "运营" }
-  },
-  {
-    path: "/soc",
-    name: "soc",
-    component: () => import("../views/Soc.vue"),
-    meta: { title: "SOC 态势大屏", root: "运营", bare: true }
-  },
+
+  // Retired pages: reports now live in the dashboard, SOC is covered by runtime.
+  { path: "/reports", redirect: "/" },
+  { path: "/soc", redirect: "/runtime" },
 
   // Old entry points are intentionally redirected; the old workbench is gone.
   { path: "/workbench/:pathMatch(.*)*", redirect: "/" },

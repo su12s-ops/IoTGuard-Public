@@ -68,7 +68,22 @@ _MODEL_BY_TABLE = {
 }
 
 # Children must be removed before their RiskAssessment / vulnerability parent.
+# Keep only device inventory, connection/collection configuration, sensors,
+# policy and reference advisories. Everything produced by a run is listed here.
 DERIVED_DELETE_ORDER = (
+    models.TraceEvent,
+    models.TraceRun,
+    models.ScanRun,
+    models.DeviceVulnerabilityMatch,
+    models.RemediationWorkflowRun,
+    models.ApplicabilityCorrection,
+    models.RiskGovernanceEvent,
+    models.SecurityEvidence,
+    models.CollectionEvidence,
+    models.InvestigationRequest,
+    models.OfficialCveRecord,
+    models.UnifiedAnalysisRun,
+    models.AgentOrchestrationRun,
     models.HarnessAssetLock,
     models.HarnessToolCall,
     models.HarnessRun,
@@ -120,11 +135,29 @@ def clear_derived_data(db: Session) -> dict[str, int]:
     """Delete the complete derived experiment graph and retain inventory."""
     if db.query(models.HarnessRun).filter_by(status="running").first():
         raise ValueError("设备任务正在运行，暂不能重置实验数据")
+    if db.query(models.UnifiedAnalysisRun).filter(
+        models.UnifiedAnalysisRun.status.in_(("running", "queued_remote"))
+    ).first():
+        raise ValueError("智能研判正在运行，暂不能重置实验数据")
     counts = {
         model.__tablename__: db.query(model).count()
         for model in DERIVED_DELETE_ORDER
     }
     for model in DERIVED_DELETE_ORDER:
         db.query(model).delete(synchronize_session=False)
+    # Device rows stay, but the last run's assessment fields must not leak into
+    # the next round as if they were current results.
+    db.query(models.IotDevice).update(
+        {
+            models.IotDevice.risk_score: 0,
+            models.IotDevice.risk_score_basis: "none",
+            models.IotDevice.security_status: "unassessed",
+        },
+        synchronize_session=False,
+    )
+    db.query(models.ScanTarget).update(
+        {models.ScanTarget.last_run_id: None},
+        synchronize_session=False,
+    )
     db.commit()
     return counts

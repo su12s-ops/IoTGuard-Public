@@ -1,103 +1,116 @@
 <template>
   <div class="page">
     <PageHeader
-      eyebrow="Vulnerability & risk · triage"
       title="漏洞与风险"
-      description="公告候选、版本适用性与运行时证据分开表达，风险分只是排序，不是结论。"
+      subtitle="Vulnerability & Risk"
+      description="公告候选、版本适用性与运行时证据分开表达"
     >
       <template #meta>
         <span>{{ highCount }} 条高风险</span><i class="sep" /><span>{{ rows.length }} 条资产级风险</span><i class="sep" /><span>{{ pendingReview }} 条待人工审查</span><i class="sep" /><span>{{ matches.length }} 条候选匹配</span>
       </template>
       <template #actions>
-        <button class="btn" type="button" :disabled="calculating" @click="calculate"><Icon name="refresh" :size="14" />{{ calculating ? "计算中…" : "重新计算" }}</button>
-        <button class="btn primary" type="button" :disabled="!rows.length" @click="openFirst"><Icon name="play" :size="14" />进入风险审查</button>
+        <button class="btn" type="button" :disabled="calculating" @click="calculate"><Icon name="refresh" :size="15" />{{ calculating ? "计算中…" : "重新计算" }}</button>
+        <button class="btn primary" type="button" :disabled="!rows.length" @click="openFirst"><Icon name="shield" :size="15" />进入风险审查</button>
       </template>
     </PageHeader>
 
-    <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="13" />{{ error }}</div>
+    <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
-    <div class="content" style="grid-template-rows: 230px minmax(0, 1fr)">
-      <div class="grid g-2-1">
-        <section class="card feature">
+    <div class="kpi-row">
+      <KpiCard label="高危漏洞" :value="num(highCount)" unit="条" icon="shield-alert" tone="red" :sub="`严重 ${counts.Critical || 0} · 高危 ${counts.High || 0}`" />
+      <KpiCard label="中危漏洞" :value="num(counts.Medium || 0)" unit="条" icon="alert" tone="orange" :sub="`${share(counts.Medium)} 的资产级风险`" />
+      <KpiCard label="低危漏洞" :value="num(counts.Low || 0)" unit="条" icon="shield" tone="blue" :sub="`${share(counts.Low)} 的资产级风险`" />
+      <KpiCard label="待审查" :value="num(pendingReview)" unit="条" icon="target" tone="purple" :sub="`${pendingReview} 条风险等待人工签收`" />
+    </div>
+
+    <div class="risk-layout">
+      <div class="risk-left">
+        <section class="card">
           <div class="card-head">
-            <div><div class="card-title">风险矩阵</div><div class="card-desc">风险分 × 等级 · 数字为当前对象数</div></div>
-            <span class="chip crit"><i class="dot" />{{ counts.Critical || 0 }} 严重 · {{ counts.High || 0 }} 高危</span>
+            <div><div class="card-title">风险分布</div><div class="card-desc">按当前风险等级</div></div>
+            <span class="chip muted">{{ rows.length }} 条</span>
           </div>
-          <div class="card-body matrix-body">
-            <div class="matrix">
-              <template v-for="(row, y) in matrix" :key="y">
-                <div class="axis y">{{ yLabels[y] }}</div>
-                <div v-for="(cell, x) in row" :key="`${y}-${x}`" class="cell" :data-tone="cellTone(y, x)" :title="`${yLabels[y] || '未分级'} · 风险分 ${x * 20}–${x * 20 + 20}`">
-                  {{ cell || "" }}
-                </div>
-              </template>
-              <div></div><div class="axis">低</div><div class="axis"></div><div class="axis">中</div><div class="axis"></div><div class="axis">高</div>
-            </div>
-            <div class="matrix-copy">
-              <p>右上角是优先处理区：高等级、高风险分，且通常伴随运行时证据。</p>
-              <div class="matrix-legend">
-                <span><i class="dot" style="background: var(--low)" />低风险</span>
-                <span><i class="dot" style="background: var(--high)" />中风险</span>
-                <span><i class="dot" style="background: var(--crit)" />高风险</span>
-              </div>
-              <div class="matrix-note">矩阵只用于分诊；确认受影响仍需版本与证据链。</div>
-            </div>
+          <div class="risk-donut">
+            <DonutChart :items="riskItems" :size="132" center-label="总览" :center-value="num(rows.length)" />
+          </div>
+          <div class="legend-list" style="padding: 0 18px 16px">
+            <span v-for="item in riskItems" :key="item.label">
+              <i class="dot" :style="{ background: item.color }" />{{ item.label }}
+              <b>{{ num(item.value) }}</b><em>{{ pctOf(item.value) }}</em>
+            </span>
           </div>
         </section>
 
         <section class="card">
           <div class="card-head">
-            <div><div class="card-title">今日处置队列</div><div class="card-desc">{{ queue.length }} 条优先 · 按风险分</div></div>
-            <span class="chip high"><i class="dot" />P1 优先</span>
+            <div><div class="card-title">受影响设备类型</div><div class="card-desc">按资产命中计数</div></div>
           </div>
-          <div class="card-body" style="padding-top: 6px">
-            <div v-if="!queue.length" class="queue-empty">暂无待处置对象。</div>
-            <div v-for="row in queue" :key="row.key" class="queue-row" @click="openRisk(row)">
-              <span class="chip" :class="levelTone(row.level)" style="height: 18px; font-size: 8px">{{ levelLabel(row.level) }}</span>
-              <div class="queue-copy"><div class="mono">{{ row.cve_id }}</div><div>{{ row.hostname }} · {{ row.package_name || "—" }}</div></div>
-              <span class="num">{{ score(row.score) }}</span>
+          <div class="device-bars">
+            <div v-for="item in affectedAssets" :key="item.name" class="device-bar-row">
+              <span class="db-name" :title="item.name">{{ item.name }}</span>
+              <span class="db-track"><i :style="{ width: item.width, background: item.color }" /></span>
+              <b class="num">{{ item.count }}</b>
             </div>
-            <div class="queue-actions">
-              <button class="btn sm primary" type="button" @click="openFirst">逐条审查</button>
-              <button class="btn sm" type="button" @click="clearFilters">重置筛选</button>
+            <div v-if="!affectedAssets.length" class="empty-note" style="padding: 8px 0">暂无资产命中记录。</div>
+          </div>
+          <div class="card-foot"><span>同一资产可命中多条风险。</span><span class="num">{{ affectedAssets.length }} 类</span></div>
+        </section>
+
+        <section class="card">
+          <div class="card-head">
+            <div><div class="card-title">风险矩阵</div><div class="card-desc">等级 × 风险分区间</div></div>
+            <span class="chip crit"><i class="dot" />{{ counts.Critical || 0 }} 严重</span>
+          </div>
+          <div class="matrix-body">
+            <div class="matrix">
+              <template v-for="(row, y) in matrix" :key="y">
+                <div class="axis y">{{ yLabels[y] }}</div>
+                <div v-for="(cell, x) in row" :key="`${y}-${x}`" class="cell" :data-tone="cellTone(y, x)" :title="`${yLabels[y] || '未分级'} · 风险分 ${x * 20}–${x * 20 + 20}`">{{ cell || "" }}</div>
+              </template>
+              <div></div><div class="axis">低</div><div class="axis"></div><div class="axis">中</div><div class="axis"></div><div class="axis">高</div>
             </div>
           </div>
-          <div class="card-foot"><span>分派只改变责任人，不改变风险结论。</span><span class="num">{{ pendingReview }} / {{ rows.length }}</span></div>
+          <div class="card-foot"><span>右上角为优先处理区。</span><span class="num">0–100</span></div>
         </section>
       </div>
 
-      <section class="card">
+      <section class="card risk-list-card">
         <div class="card-head">
-          <div><div class="card-title">风险队列</div><div class="card-desc">严重度、证据与研判状态分开显示</div></div>
-          <span class="link" @click="clearFilters">清除筛选 <Icon name="filter" :size="12" /></span>
+          <div><div class="card-title">风险列表</div><div class="card-desc">严重度、证据与研判状态分开显示</div></div>
+          <span class="link" @click="clearFilters">清除筛选 <Icon name="filter" :size="13" /></span>
         </div>
-        <div class="queue-filters">
-          <label class="search-inline"><Icon name="search" :size="12" /><input v-model="search" type="search" placeholder="搜索 CVE、资产或软件包" /></label>
-          <span v-for="level in levels" :key="level" class="chip" :class="{ accent: severity === level }" @click="severity = severity === level ? '' : level">{{ levelLabel(level) }} {{ counts[level] || 0 }}</span>
-          <span class="chip" :class="{ accent: reviewOnly }" @click="reviewOnly = !reviewOnly">待审查 {{ pendingReview }}</span>
-          <span class="filters-count">{{ filteredRows.length }} / {{ rows.length }}</span>
+        <div class="risk-toolbar">
+          <div class="risk-tabs">
+            <span class="chip" :class="{ accent: !severity && !reviewOnly }" @click="clearFilters">全部 {{ rows.length }}</span>
+            <span v-for="level in levels" :key="level" class="chip" :class="{ accent: severity === level }" @click="severity = severity === level ? '' : level">{{ levelLabel(level) }} {{ counts[level] || 0 }}</span>
+            <span class="chip" :class="{ accent: reviewOnly }" @click="reviewOnly = !reviewOnly">待审查 {{ pendingReview }}</span>
+          </div>
+          <label class="search-inline"><Icon name="search" :size="14" /><input v-model="search" type="search" placeholder="搜索 CVE、资产或组件" /></label>
         </div>
-        <div v-if="loading" class="loading-line"><span class="spinner" />正在读取风险队列…</div>
-        <div v-else-if="!filteredRows.length" class="empty-wrap"><EmptyState title="没有符合条件的风险" description="调整搜索或筛选条件；候选记录不会因为未命中而消失。" icon="bug" /></div>
+        <div v-if="loading" class="loading-line" style="padding: 30px 18px"><span class="spinner" />正在读取风险队列…</div>
+        <div v-else-if="!filteredRows.length" class="empty-wrap" style="min-height: 320px">
+          <EmptyState title="没有符合条件的风险" description="调整搜索或筛选条件；候选记录不会因为未命中而消失。" icon="bug" />
+        </div>
         <div v-else class="table-wrap">
-          <table style="table-layout: fixed">
-            <colgroup><col style="width: 64px" /><col style="width: 152px" /><col style="width: 138px" /><col style="width: 78px" /><col style="width: 98px" /><col style="width: 86px" /><col style="width: 72px" /><col style="width: 20px" /></colgroup>
-            <thead><tr><th>等级</th><th>CVE</th><th>资产</th><th>风险分</th><th>证据</th><th>研判状态</th><th>更新</th><th></th></tr></thead>
+          <table class="risk-table">
+            <thead><tr><th>风险等级</th><th>CVE 编号</th><th>影响组件</th><th>发现设备</th><th>风险分</th><th>研判状态</th><th>操作</th></tr></thead>
             <tbody>
-              <tr v-for="row in filteredRows.slice(0, 7)" :key="row.key" style="cursor: pointer" @click="openRisk(row)">
+              <tr v-for="row in filteredRows.slice(0, 9)" :key="row.key" style="cursor: pointer" tabindex="0" role="link" @click="openRisk(row)" @keydown.enter="openRisk(row)">
                 <td><span class="chip" :class="levelTone(row.level)"><i class="dot" />{{ levelLabel(row.level) }}</span></td>
-                <td class="mono">{{ row.cve_id }}<small>{{ row.package_name || "—" }} · CVSS {{ cvss(row.cvss_score) }}</small></td>
-                <td class="name">{{ row.hostname }}<small>{{ row.active === false ? "历史归档" : "当前风险" }}</small></td>
+                <td class="mono">{{ row.cve_id }}<small>CVSS {{ cvss(row.cvss_score) }}</small></td>
+                <td>{{ row.package_name || "—" }}<small>{{ row.runtime === 'verified' ? "运行时已验证" : "公告候选" }}</small></td>
+                <td class="name" :title="row.hostname">{{ row.hostname }}<small>{{ row.active === false ? "历史归档" : "当前风险" }}</small></td>
                 <td><span class="score" :class="levelTone(row.level)"><b>{{ score(row.score) }}</b><i><em :style="{ width: `${Math.min(100, Number(row.score) || 0)}%` }" /></i></span></td>
-                <td><span class="chip" :class="runtimeTone(row.runtime)"><i class="dot" />{{ runtimeLabel(row.runtime) }}</span></td>
                 <td><span class="chip" :class="reviewTone(row)"><i class="dot" />{{ reviewLabel(row) }}</span></td>
-                <td class="num" style="font-size: 8.5px; color: var(--muted)">{{ row.updated_at ? timeAgo(row.updated_at) : "—" }}</td>
-                <td><Icon name="chev-right" :size="12" style="color: var(--line-strong)" /></td>
+                <td><button class="row-action" type="button" aria-label="查看风险详情" @click.stop="openRisk(row)"><Icon name="more" :size="15" /></button></td>
               </tr>
             </tbody>
           </table>
         </div>
-        <div class="card-foot"><span>风险分排序不代表确认受影响；候选记录必须保留“未评估”状态。</span><span class="num">{{ filteredRows.length }} / {{ rows.length }} 显示</span></div>
+        <div class="card-foot">
+          <span>风险分排序不代表确认受影响；候选记录必须保留“未评估”状态。</span>
+          <span class="num">{{ filteredRows.length }} / {{ rows.length }} 显示</span>
+        </div>
       </section>
     </div>
   </div>
@@ -109,10 +122,12 @@ import { useRoute, useRouter } from "vue-router";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
+import KpiCard from "../components/KpiCard.vue";
+import DonutChart from "../components/DonutChart.vue";
 import { api } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify } from "../stores/ui";
-import { cvss, levelLabel, levelTone, score, statusLabel, timeAgo } from "../utils/format";
+import { cvss, levelLabel, levelTone, num, score, statusLabel } from "../utils/format";
 
 const route = useRoute();
 const router = useRouter();
@@ -134,6 +149,30 @@ const counts = computed(() => rows.value.reduce((map, row) => {
 const highCount = computed(() => (counts.value.Critical || 0) + (counts.value.High || 0));
 const pendingReview = computed(() => rows.value.filter((row) => row.humanReviewRequired || row.reviewStatus === "pending_human_review").length);
 
+const riskItems = computed(() => [
+  { label: "严重", value: counts.value.Critical || 0, color: "#ef4444" },
+  { label: "高危", value: counts.value.High || 0, color: "#f97316" },
+  { label: "中危", value: counts.value.Medium || 0, color: "#f5b301" },
+  { label: "低危", value: counts.value.Low || 0, color: "#2f6fed" }
+]);
+
+const affectedAssets = computed(() => {
+  const map = rows.value.reduce((acc, row) => {
+    const name = row.hostname || "未知资产";
+    acc[name] = (acc[name] || 0) + 1;
+    return acc;
+  }, {});
+  const entries = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
+  const max = Math.max(...entries.map(([, value]) => value), 1);
+  const palette = ["#2f6fed", "#4f8cff", "#12b8d8", "#7c3aed", "#f97316"];
+  return entries.map(([name, count], index) => ({
+    name,
+    count,
+    width: `${Math.max(6, (count / max) * 100)}%`,
+    color: palette[index % palette.length]
+  }));
+});
+
 const filteredRows = computed(() => {
   const needle = search.value.trim().toLowerCase();
   return rows.value.filter((row) => {
@@ -143,8 +182,6 @@ const filteredRows = computed(() => {
     return true;
   });
 });
-
-const queue = computed(() => [...rows.value].sort((a, b) => (b.humanReviewRequired ? 1 : 0) - (a.humanReviewRequired ? 1 : 0) || Number(b.score) - Number(a.score)).slice(0, 3));
 
 const yLabels = ["严重", "高危", "中危", "低危", ""];
 const matrix = computed(() => {
@@ -164,12 +201,17 @@ function cellTone(y, x) {
   return "low";
 }
 
-function runtimeLabel(value) {
-  return { verified: "已验证", contextual: "上下文关联", not_observed: "未观测", waiting: "等待证据" }[value] || value || "未知";
+function share(value) {
+  if (!rows.value.length) return "0%";
+  const ratio = (Number(value) / rows.value.length) * 100;
+  return ratio > 0 && ratio < 1 ? "<1%" : `${Math.round(ratio)}%`;
 }
-function runtimeTone(value) {
-  return { verified: "low", contextual: "info", not_observed: "muted", waiting: "high" }[value] || "muted";
+function pctOf(value) {
+  if (!rows.value.length) return "0%";
+  const ratio = (Number(value) / rows.value.length) * 100;
+  return ratio > 0 && ratio < 1 ? "<1%" : `${Math.round(ratio)}%`;
 }
+
 function reviewLabel(row) {
   if (row.active === false) return "历史归档";
   if (row.humanReviewRequired || row.reviewStatus === "pending_human_review") return "待审查";
@@ -177,6 +219,7 @@ function reviewLabel(row) {
   return statusLabel(row.reviewStatus || "candidate");
 }
 function reviewTone(row) {
+  if (row.active === false) return "muted";
   if (row.humanReviewRequired || row.reviewStatus === "pending_human_review") return "high";
   if (row.reviewStatus === "human_confirmed") return "low";
   return "info";
@@ -247,26 +290,56 @@ onMounted(load);
 </script>
 
 <style scoped>
-.matrix-body { display: flex; gap: 18px; padding: 6px 17px 10px; }
-.matrix-body .matrix { flex: 1; min-width: 0; }
-.matrix-copy { width: 190px; flex: 0 0 auto; color: var(--muted); font-size: 9.5px; line-height: 1.55; padding-top: 2px; }
-.matrix-copy p { margin: 0; }
-.matrix-legend { display: grid; gap: 6px; margin-top: 10px; }
-.matrix-legend span { display: flex; align-items: center; gap: 6px; }
-.matrix-note { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line-soft); font-size: 9px; }
-.queue-row { display: flex; align-items: center; gap: 9px; min-height: 42px; border-bottom: 1px solid var(--line-soft); cursor: pointer; }
-.queue-row:last-of-type { border-bottom: 0; }
-.queue-copy { min-width: 0; flex: 1; }
-.queue-copy div:first-child { font-size: 10.5px; color: var(--ink); }
-.queue-copy div:last-child { color: var(--muted); font-size: 8.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.queue-row > .num { color: var(--ink); font: 700 11px var(--font-num); }
-.queue-empty { padding: 20px 0; color: var(--muted); font-size: 10px; }
-.queue-actions { display: flex; gap: 6px; margin-top: 8px; }
-.queue-actions .btn { flex: 1; height: 28px; font-size: 10px; }
-.queue-filters { display: flex; align-items: center; gap: 6px; padding: 9px 15px 0; flex-wrap: wrap; }
-.queue-filters .chip { cursor: pointer; height: 21px; font-size: 9px; }
-.search-inline { display: flex; align-items: center; gap: 6px; width: 210px; height: 28px; padding: 0 9px; border: 1px solid var(--line); background: var(--surface-2); color: var(--muted); }
-.search-inline input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 9.5px; color: var(--ink); }
-.filters-count { margin-left: auto; color: var(--muted); font: 8.5px var(--font-num); }
-.empty-wrap { display: grid; place-items: center; min-height: 260px; }
+.risk-layout { display: grid; grid-template-columns: 312px minmax(0, 1fr); gap: 16px; align-items: start; }
+.risk-left { display: grid; gap: 16px; }
+.risk-donut { display: grid; place-items: center; padding: 16px 0 12px; }
+.device-bars { display: grid; gap: 11px; padding: 12px 18px 14px; }
+.device-bar-row { display: grid; grid-template-columns: 104px minmax(0, 1fr) 32px; gap: 9px; align-items: center; }
+.db-name { color: #5b6b82; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.db-track { height: 7px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
+.db-track i { display: block; height: 7px; border-radius: 999px; }
+.device-bar-row b { text-align: right; color: var(--ink); font-size: 12px; font-weight: 700; }
+
+.risk-list-card { min-width: 0; }
+.risk-table { width: 100%; table-layout: fixed; }
+.risk-table th:nth-child(1), .risk-table td:nth-child(1) { width: 92px; }
+.risk-table th:nth-child(2), .risk-table td:nth-child(2) { width: 170px; }
+.risk-table th:nth-child(3), .risk-table td:nth-child(3) { width: 170px; }
+.risk-table th:nth-child(4), .risk-table td:nth-child(4) { width: 220px; }
+.risk-table th:nth-child(5), .risk-table td:nth-child(5) { width: 150px; }
+.risk-table th:nth-child(6), .risk-table td:nth-child(6) { width: 132px; }
+.risk-table th:nth-child(7), .risk-table td:nth-child(7) { width: 52px; }
+.risk-table .score i { width: 44px; }
+.risk-table td.name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 1500px) {
+  .risk-table th:nth-child(3), .risk-table td:nth-child(3) { display: none; }
+  .risk-table th:nth-child(1), .risk-table td:nth-child(1) { width: 92px; }
+  .risk-table th:nth-child(2), .risk-table td:nth-child(2) { width: 160px; }
+  .risk-table th:nth-child(4), .risk-table td:nth-child(4) { width: 200px; }
+  .risk-table th:nth-child(5), .risk-table td:nth-child(5) { width: 136px; }
+  .risk-table th:nth-child(6), .risk-table td:nth-child(6) { width: 124px; }
+  .risk-table th:nth-child(7), .risk-table td:nth-child(7) { width: 48px; }
+  .risk-table .score i { width: 36px; }
+}
+.matrix-body { padding: 12px 18px 14px; }
+.matrix-body .matrix { height: 168px; }
+.risk-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 18px 12px; flex-wrap: wrap; }
+.risk-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.risk-tabs .chip { cursor: pointer; height: 28px; border-radius: 8px; padding: 0 11px; }
+.risk-toolbar .search-inline { margin-left: auto; width: 240px; height: 34px; }
+.row-action {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: #64748b;
+}
+.row-action:hover { border-color: #e3ebf6; background: #f7fafd; color: var(--accent-2); }
+
+@media (max-width: 1280px) {
+  .risk-layout { grid-template-columns: minmax(0, 1fr); }
+}
 </style>

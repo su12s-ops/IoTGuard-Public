@@ -1,4 +1,4 @@
-﻿export const asNumber = (value, fallback = 0) => {
+export const asNumber = (value, fallback = 0) => {
   const n = Number(value);
   return Number.isFinite(n) ? n : fallback;
 };
@@ -88,6 +88,7 @@ export const statusLabel = (status) =>
     candidate: "候选",
     unassessed: "未评估",
     partial: "部分完成",
+    degraded: "降级",
     no_candidates: "无候选",
     not_affected: "不受影响",
     potentially_affected: "可能受影响",
@@ -106,7 +107,7 @@ export const statusLabel = (status) =>
   }[status] || status || "未知");
 
 export const statusTone = (status) => {
-  if (["failed", "blocked", "interrupted", "rolled_back"].includes(status)) return "crit";
+  if (["failed", "blocked", "interrupted", "rolled_back", "degraded"].includes(status)) return "crit";
   if (["awaiting_approval", "awaiting_preflight", "preflight_failed", "needs_evidence", "verification_required", "pending_human_review", "human_reviewing", "reanalysis_required"].includes(status)) return "high";
   if (["completed", "succeeded", "approved", "verified", "human_confirmed", "ready", "fixed", "not_affected"].includes(status)) return "low";
   if (["running", "queued_remote", "pending"].includes(status)) return "accent";

@@ -101,6 +101,14 @@ test.beforeEach(async ({ page }) => {
     else if (path === "/runtime/ebpf/status") body = { matched_asset_count: 1, matched_asset_ratio: 33, latest_event_at: "2026-10-21T10:24:00" };
     else if (path === "/runtime/ebpf/summary") body = { total: 2, high_value_count: 1, observation_mode_counts: { ebpf: 2, sensor: 0 } };
     else if (path === "/runtime/ebpf/events") body = { events: [] };
+    else if (path === "/experiment/state") body = {
+      summary: { assets: 3, iot_devices: 1, risks: 1, high_risks: 1, runtime_events: 2 },
+      kept: { linux_asset: 3, asset_package: 1, asset_service: 1, iot_device: 1 },
+      cache: { vulnerability_intelligence_source: 0 },
+      derived: { vulnerability_info: 1, vulnerability_match: 1, risk_assessment: 1, runtime_event: 2 },
+      active_runs: { unified: 0, harness: 0, orchestration: 0 },
+      archives: []
+    };
     else if (path === "/workflow/behavior-chains") body = [];
     await route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) });
   });
@@ -108,24 +116,44 @@ test.beforeEach(async ({ page }) => {
 
 test("shell renders and navigation stays inside the new app", async ({ page }) => {
   await page.goto("/");
-  await expect(page.locator("h1")).toHaveText("安全态势");
+  await expect(page.locator("h1")).toHaveText("安全总览");
   await expect(page.locator(".rail")).toBeVisible();
-  await expect(page.locator(".topbar")).toBeVisible();
+  await expect(page.locator(".top-actions")).toBeVisible();
+  await expect(page.locator(".kpi-row .kpi")).toHaveCount(4);
 
   await page.getByRole("link", { name: "资产与发现" }).click();
   await expect(page).toHaveURL(/\/assets$/);
   await expect(page.locator("h1")).toHaveText("资产与发现");
+  await expect(page.locator(".kpi-row .kpi")).toHaveCount(4);
 
   await page.getByRole("link", { name: "漏洞与风险" }).click();
   await expect(page).toHaveURL(/\/risks$/);
   await expect(page.locator("h1")).toHaveText("漏洞与风险");
+  await expect(page.locator(".risk-list-card table tbody tr")).toHaveCount(1);
 });
 
-test("soc is a bare full-width wall", async ({ page }) => {
+test("retired reports and SOC entries redirect to the live workspace", async ({ page }) => {
   await page.goto("/soc");
-  await expect(page.locator(".rail")).toHaveCount(0);
-  await expect(page.locator(".soc-page")).toBeVisible();
-  await expect(page.locator(".soc-title")).toContainText("安全运营总览");
+  await expect(page).toHaveURL(/\/runtime$/);
+  await expect(page.locator("h1")).toHaveText("运行监控与审计");
+
+  await page.goto("/reports");
+  await expect(page).toHaveURL(/\/$/);
+  await expect(page.locator("h1")).toHaveText("安全总览");
+
+  await expect(page.getByRole("link", { name: "报告与归档" })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "SOC 态势大屏" })).toHaveCount(0);
+});
+
+test("experiment lifecycle shows kept devices and derived data before a new round", async ({ page }) => {
+  await page.goto("/");
+  await page.locator(".rl-btn").click();
+  await expect(page.getByRole("heading", { name: "本轮实验与存档" })).toBeVisible();
+  await expect(page.getByText("保留 · 设备与配置")).toBeVisible();
+  await expect(page.getByText("归档并清理 · 运行产物")).toBeVisible();
+  await expect(page.getByRole("button", { name: "归档并开始新一轮" })).toBeVisible();
+  await expect(page.getByText("需要操作令牌")).toBeVisible();
+  await expect(page.locator(".exp-token-box input")).toBeVisible();
 });
 
 test("risk detail renders the decision layout", async ({ page }) => {

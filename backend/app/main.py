@@ -16,7 +16,7 @@ from sqlalchemy import text
 from app.config import API_TITLE, API_VERSION, DATABASE_URL, DEEPSEEK_MODEL
 from app.database import SessionLocal, init_db
 from app.routers import analysis, assets, dashboard, demo, matching, remediation, reports, risk, runtime, vulnerabilities, workflow, traces
-from app.routers import iot, harness, devices, remediation_workflow, scans, unified
+from app.routers import iot, harness, devices, remediation_workflow, scans, unified, experiment, rounds
 
 
 # ── 启动时记录的诊断信息 ──
@@ -37,7 +37,7 @@ def _env_enabled(name: str, default: str = "1") -> bool:
 
 
 def _cleanup_derived_data() -> None:
-    """每次启动时清空衍生数据，只保留资产清单（LinuxAsset/AssetPackage/AssetService）。"""
+    """每次启动时存档本轮结果并清空衍生数据，只保留资产与设备配置。"""
     if not _env_enabled("LINUXGUARD_ARCHIVE_ON_STARTUP", "0"):
         print("[startup] LINUXGUARD_ARCHIVE_ON_STARTUP=0, 跳过清理，保留上次实验数据")
         return
@@ -52,6 +52,15 @@ def _cleanup_derived_data() -> None:
             return
 
         from app.services.experiment_lifecycle import clear_derived_data
+        from app.services.result_archive import write_result_archive
+
+        try:
+            archive = write_result_archive(db, label="服务启动前自动存档", kind="startup")
+            print(f"[startup] 本轮结果已存档: {archive['filename']} ({archive['size_bytes']} bytes)")
+        except Exception as exc:
+            # Never delete experiment data when the archive could not be written.
+            print(f"[startup] 存档失败，取消清理以保护数据: {type(exc).__name__}: {exc}")
+            return
 
         counts = clear_derived_data(db)
 
@@ -336,3 +345,5 @@ app.include_router(remediation_workflow.router, prefix="/api")
 app.include_router(scans.router, prefix="/api")
 app.include_router(traces.router, prefix="/api")
 app.include_router(unified.router, prefix="/api")
+app.include_router(rounds.router, prefix="/api")
+app.include_router(experiment.router, prefix="/api")

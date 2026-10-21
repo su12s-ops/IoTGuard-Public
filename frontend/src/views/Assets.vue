@@ -1,131 +1,154 @@
 <template>
   <div class="page">
     <PageHeader
-      eyebrow="Asset discovery & inventory · Lab"
       title="资产与发现"
-      description="设备身份、组件清单与原始观测分开记录，每个发现都能回到来源。"
+      subtitle="Asset & Asset Discovery"
+      description="设备身份、组件清单与原始观测分开记录"
     >
       <template #meta>
         <span>{{ devices.length }} 台设备</span><i class="sep" /><span>{{ num(componentCount) }} 个组件</span><i class="sep" /><span>{{ trustedCount }}/{{ devices.length }} 身份可信</span><i class="sep" /><span>{{ incompleteCount }} 份清单待补</span>
       </template>
       <template #actions>
-        <button class="btn" type="button" @click="load"><Icon name="refresh" :size="14" />刷新</button>
-        <button class="btn" type="button" :disabled="uploading" @click="pickImport"><Icon name="download" :size="14" />{{ uploading ? "导入中…" : "导入清单" }}</button>
-        <button class="btn primary" type="button" @click="openDiscovery"><Icon name="search" :size="14" />发起发现</button>
+        <button class="btn" type="button" @click="load"><Icon name="refresh" :size="15" />刷新</button>
+        <button class="btn" type="button" :disabled="uploading" @click="pickImport"><Icon name="download" :size="15" />{{ uploading ? "导入中…" : "导入清单" }}</button>
+        <button class="btn primary" type="button" @click="openDiscovery"><Icon name="scan" :size="15" />发现新设备</button>
       </template>
     </PageHeader>
 
     <input ref="fileInput" type="file" accept=".json,.txt,.csv,.md" hidden @change="importAsset" />
 
-    <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="13" />{{ error }}</div>
+    <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
-    <div class="content" style="grid-template-rows: 84px minmax(0, 1fr) 152px">
-      <div class="stats">
-        <div class="stat">
-          <div class="stat-icon"><Icon name="server" /></div>
-          <div class="stat-copy"><div class="stat-label">登记设备</div><div class="stat-value">{{ devices.length }}<small>台</small></div></div>
-          <div class="stat-delta">{{ devices.length ? "台账" : "暂无" }}</div>
-        </div>
-        <div class="stat">
-          <div class="stat-icon" style="background: var(--info-soft); color: var(--info)"><Icon name="layers" /></div>
-          <div class="stat-copy"><div class="stat-label">组件记录</div><div class="stat-value">{{ num(componentCount) }}<small>条</small></div></div>
-          <div class="stat-delta" style="color: var(--info)">{{ ecosystemCount }} 个生态</div>
-        </div>
-        <div class="stat">
-          <div class="stat-icon" style="background: var(--low-soft); color: var(--low)"><Icon name="shield" /></div>
-          <div class="stat-copy"><div class="stat-label">身份可信</div><div class="stat-value">{{ trustedCount }}<small>/ {{ devices.length }}</small></div></div>
-          <div class="stat-delta">{{ devices.length ? Math.round((trustedCount / devices.length) * 100) : 0 }}%</div>
-        </div>
-        <div class="stat">
-          <div class="stat-icon" style="background: var(--high-soft); color: var(--high)"><Icon name="alert" /></div>
-          <div class="stat-copy"><div class="stat-label">清单待补</div><div class="stat-value">{{ incompleteCount }}<small>台</small></div></div>
-          <div class="stat-delta down">{{ incompleteCount ? "需补清单" : "已齐" }}</div>
-        </div>
-      </div>
+    <div class="kpi-row">
+      <KpiCard label="设备总数" :value="num(devices.length)" unit="台" icon="server" tone="blue" :sub="`${ecosystemCount} 个生态 · ${num(componentCount)} 个组件`" />
+      <KpiCard label="身份可信" :value="num(trustedCount)" unit="台" icon="shield" tone="green" :sub="`${trustRate} · 可信度 ≥ 90%`" />
+      <KpiCard label="清单待补" :value="num(incompleteCount)" unit="台" icon="layers" tone="orange" :sub="`${devices.length - incompleteCount} 台清单完整`" />
+      <KpiCard label="未识别设备" :value="num(unidentifiedCount)" unit="台" icon="scan" tone="purple" :sub="`版本缺失或身份可信度低`" />
+    </div>
 
-      <div class="grid g-2-1">
-        <section class="card">
-          <div class="card-head">
-            <div><div class="card-title">资产台账</div><div class="card-desc">设备身份与组件清单分开计数，不按 IP 自动合并</div></div>
-            <div style="display: flex; gap: 10px"><span class="link" @click="exportCsv">导出 CSV</span><span class="link" @click="load">重新读取 <Icon name="refresh" :size="12" /></span></div>
-          </div>
-          <div class="filters">
-            <span v-for="item in ecosystemFilters" :key="item.value" class="chip" :class="{ accent: eco === item.value }" @click="eco = item.value">{{ item.label }} {{ item.count }}</span>
-            <span class="filters-note">按身份可信度排序</span>
-          </div>
-          <div v-if="loading" class="loading-line"><span class="spinner" />正在读取资产台账…</div>
-          <div v-else-if="!filteredDevices.length" class="empty-wrap"><EmptyState title="暂无设备记录" description="接入设备或完成一次发现后，台账会出现在这里。" icon="server" /></div>
-          <div v-else class="table-wrap">
-            <table class="tall asset-table" style="table-layout: fixed">
-              <colgroup><col style="width: 185px" /><col style="width: 68px" /><col style="width: 108px" /><col style="width: 46px" /><col style="width: 108px" /><col style="width: 86px" /><col style="width: 86px" /><col style="width: 18px" /></colgroup>
-              <thead><tr><th>设备 / 身份</th><th>生态</th><th>系统 / 固件</th><th>组件</th><th>漏洞命中</th><th>运行时</th><th>修复能力</th><th></th></tr></thead>
-              <tbody>
-                <tr v-for="device in filteredDevices" :key="device.key" style="cursor: pointer" @click="selected = device">
-                  <td class="name">{{ device.name || device.key }}<small>{{ device.key }} · {{ ratioPct(device.identity_confidence, 0) }}</small></td>
-                  <td><span class="chip" :class="ecoClass(device.ecosystem)"><i class="dot" />{{ ecosystemLabel(device.ecosystem) }}</span></td>
-                  <td><span class="mono">{{ device.version || "未识别" }}</span><small>{{ device.inventory_complete === false ? "清单待补" : "清单完整" }}</small></td>
-                  <td class="num">{{ device.component_count ?? "—" }}</td>
-                  <td><span class="chip" :class="device.matches?.confirmed ? 'crit' : device.matches?.pending ? 'high' : 'muted'"><i class="dot" />{{ device.matches?.confirmed ?? 0 }} 确认 · {{ device.matches?.pending ?? 0 }} 待核</span></td>
-                  <td><span class="chip" :class="runtimeTone(device.runtime)"><i class="dot" />{{ runtimeLabel(device.runtime) }}</span></td>
-                  <td style="color: var(--muted); font-size: 9.5px">{{ remediationLabel(device.remediation) }}</td>
-                  <td><Icon name="chev-right" :size="12" style="color: var(--line-strong)" /></td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-          <div class="card-foot"><span>身份可信度来自 SSH 清单、HTTP 身份端点与 banner 指纹；三者不等价。</span><span class="num">{{ devices.length }} 台 · 最多 5 条</span></div>
-        </section>
-
-        <div class="grid" style="grid-template-rows: 1fr 1fr">
-          <section class="card">
-            <div class="card-head">
-              <div><div class="card-title">生态分布</div><div class="card-desc">按设备台账计数</div></div>
-              <span class="chip muted" style="height: 18px; font-size: 8px">{{ ecosystemCount }} 个生态</span>
-            </div>
-            <div class="card-body eco-body">
-              <DonutChart :items="ecosystemItems" :size="104" center-label="台设备" />
-              <div class="eco-legend">
-                <span v-for="item in ecosystemItems" :key="item.label"><i class="dot" :style="{ background: item.color }" />{{ item.label }}<b class="num">{{ item.value }}</b></span>
-              </div>
-            </div>
-            <div class="card-foot"><span>OpenWrt / Zephyr 按 IoT 设备管理；Ubuntu 单列基础设施。</span></div>
-          </section>
-
-          <section class="card">
-            <div class="card-head">
-              <div><div class="card-title">身份可信分布</div><div class="card-desc">每条记录保留原始观测方式</div></div>
-            </div>
-            <div class="card-body" style="padding-top: 9px">
-              <div v-for="bucket in confidenceBuckets" :key="bucket.label" class="cover-row" style="grid-template-columns: 88px 1fr 30px; margin-top: 9px">
-                <span>{{ bucket.label }}</span><span class="cover-bar"><i :style="{ width: bucket.width, background: bucket.color }" /></span><span class="cover-val">{{ bucket.count }}</span>
-              </div>
-              <div v-if="!devices.length" class="empty-note">暂无身份记录。</div>
-            </div>
-            <div class="card-foot"><span>没有响应不等于设备不存在；只代表当前探测未命中。</span><span class="link" @click="load">重新发现 <Icon name="chev-right" :size="12" /></span></div>
-          </section>
-        </div>
-      </div>
-
-      <section class="card">
+    <div class="asset-grid">
+      <section class="card type-card">
         <div class="card-head">
-          <div><div class="card-title">采集覆盖</div><div class="card-desc">身份、清单与评估是三条独立链路</div></div>
-          <span class="chip muted" style="height: 18px; font-size: 8px">最近同步 {{ updated || "尚未读取" }}</span>
+          <div><div class="card-title">设备类型</div><div class="card-desc">按设备台账计数</div></div>
         </div>
-        <div v-if="!coverageDevices.length" class="empty-note" style="padding: 18px">暂无覆盖记录。</div>
-        <div v-else class="cover-grid">
-          <div v-for="device in coverageDevices" :key="device.key" class="cover">
-            <div class="cover-name"><i class="dot" :style="{ background: ecoColor(device.ecosystem) }" />{{ device.name || device.key }}</div>
-            <div class="cover-row"><span>身份</span><span class="cover-bar"><i :class="pctClass(device.identity_confidence)" :style="{ width: ratioPct(device.identity_confidence) }" /></span><span class="cover-val">{{ ratioPct(device.identity_confidence, 0) }}</span></div>
-            <div class="cover-row"><span>清单</span><span class="cover-bar"><i :class="device.inventory_complete === false ? 'warn' : 'low'" :style="{ width: device.inventory_complete === false ? '40%' : device.inventory_complete ? '100%' : '0%' }" /></span><span class="cover-val">{{ device.inventory_complete === false ? "40%" : device.inventory_complete ? "100%" : "—" }}</span></div>
-            <div class="cover-row"><span>评估</span><span class="cover-bar"><i :class="assessmentClass(device.matches?.assessment)" :style="{ width: assessmentWidth(device.matches?.assessment) }" /></span><span class="cover-val">{{ assessmentLabel(device.matches?.assessment) }}</span></div>
+        <div class="type-list">
+          <button class="type-row" :class="{ active: eco === 'all' }" type="button" @click="setEco('all')">
+            <span class="type-ic" style="background: #eef4ff; color: #2f6fed"><Icon name="layers" :size="16" /></span>
+            <span class="type-name">全部设备</span>
+            <b class="num">{{ devices.length }}</b>
+            <Icon name="chev-right" :size="13" class="type-chev" />
+          </button>
+          <button
+            v-for="item in typeItems"
+            :key="item.value"
+            class="type-row"
+            :class="{ active: eco === item.value }"
+            type="button"
+            @click="setEco(item.value)"
+          >
+            <span class="type-ic" :style="{ background: item.soft, color: item.color }"><Icon :name="item.icon" :size="16" /></span>
+            <span class="type-name">{{ item.label }}</span>
+            <b class="num">{{ item.count }}</b>
+            <Icon name="chev-right" :size="13" class="type-chev" />
+          </button>
+        </div>
+        <div class="type-sep">
+          <div class="type-sep-title">身份可信度</div>
+          <div v-for="bucket in confidenceBuckets" :key="bucket.label" class="bucket-row">
+            <span>{{ bucket.label }}</span>
+            <span class="bucket-track"><i :class="bucket.tone" :style="{ width: bucket.width }" /></span>
+            <b class="num">{{ bucket.count }}</b>
           </div>
+        </div>
+        <div class="type-foot">
+          <span>身份来源：SSH 清单 / HTTP 端点 / banner 指纹</span>
         </div>
       </section>
+
+      <section class="card map-card">
+        <div class="card-head">
+          <div><div class="card-title">设备拓扑视图</div><div class="card-desc">按生态分组 · 点击类型可筛选清单</div></div>
+          <div class="segmented">
+            <span :class="{ active: view === 'map' }" @click="view = 'map'">拓扑图</span>
+            <span :class="{ active: view === 'list' }" @click="view = 'list'">列表视图</span>
+          </div>
+        </div>
+        <div v-if="view === 'map'" class="map-body">
+          <div class="map-legend">
+            <span v-for="item in typeItems" :key="item.value"><i class="dot" :style="{ background: item.color }" />{{ item.label }}<b>{{ item.count }}</b></span>
+          </div>
+          <TopologyMap :nodes="topologyNodes" :height="360" />
+          <div class="map-foot">
+            <span>按生态归并 · {{ devices.length }} 台设备</span>
+            <span class="num">{{ num(componentCount) }} 个组件</span>
+          </div>
+        </div>
+        <div v-else class="table-wrap map-list">
+          <table style="table-layout: fixed">
+            <colgroup><col style="width: 200px" /><col style="width: 96px" /><col style="width: 110px" /><col style="width: 64px" /><col style="width: 92px" /><col style="width: 90px" /></colgroup>
+            <thead><tr><th>设备</th><th>生态</th><th>系统 / 固件</th><th>组件</th><th>身份可信</th><th>漏洞命中</th></tr></thead>
+            <tbody>
+              <tr v-for="device in filteredDevices" :key="device.key" style="cursor: pointer" tabindex="0" role="button" @click="selected = device" @keydown.enter="selected = device">
+                <td class="name">{{ device.name || device.key }}<small>{{ device.ip_address || device.key }}</small></td>
+                <td><span class="chip" :class="ecoClass(device.ecosystem)"><i class="dot" />{{ ecosystemLabel(device.ecosystem) }}</span></td>
+                <td><span class="mono">{{ device.version || "未识别" }}</span><small>{{ device.inventory_complete === false ? "清单待补" : "清单完整" }}</small></td>
+                <td class="num">{{ device.component_count ?? "—" }}</td>
+                <td><span class="chip" :class="identityTone(device.identity_confidence)"><i class="dot" />{{ ratioPct(device.identity_confidence, 0) }}</span></td>
+                <td><span class="chip" :class="device.matches?.confirmed ? 'crit' : device.matches?.pending ? 'high' : 'muted'"><i class="dot" />{{ device.matches?.confirmed ?? 0 }} 确认</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <div v-if="!filteredDevices.length" class="empty-note" style="padding: 30px 18px">当前类型暂无设备。</div>
+        </div>
+      </section>
+
+      <section class="card recent-card">
+        <div class="card-head">
+          <div><div class="card-title">最近发现的设备</div><div class="card-desc">按清单采集时间排序</div></div>
+          <button class="link" type="button" @click="view = 'list'">更多 <Icon name="chev-right" :size="12" /></button>
+        </div>
+        <div class="recent-list">
+          <button v-for="device in recentDevices" :key="device.key" class="recent-row" type="button" @click="selected = device">
+            <span class="recent-ic" :style="{ background: ecoMeta(device.ecosystem).soft, color: ecoMeta(device.ecosystem).color }">
+              <Icon :name="ecoMeta(device.ecosystem).icon" :size="18" />
+            </span>
+            <span class="recent-copy">
+              <b>{{ device.name || device.key }}</b>
+              <small>{{ device.ip_address || (device.version ? `v${device.version}` : "地址未记录") }}</small>
+            </span>
+            <span class="recent-time">{{ device.inventory_collected_at ? timeAgo(device.inventory_collected_at) : "已登记" }}</span>
+            <Icon name="chev-right" :size="13" class="recent-chev" />
+          </button>
+          <div v-if="!recentDevices.length" class="empty-note" style="padding: 24px 18px">暂无设备记录，完成一次发现后即可看到。</div>
+        </div>
+        <div class="recent-foot"><span class="dot ok" />实时台账 · 最近同步 {{ updated || "尚未读取" }}</div>
+      </section>
     </div>
+
+    <section class="card">
+      <div class="card-head">
+        <div><div class="card-title">采集覆盖</div><div class="card-desc">身份、清单与评估是三条独立链路</div></div>
+        <div class="row">
+          <button class="link" type="button" @click="exportCsv"><Icon name="download" :size="13" />导出 CSV</button>
+          <span class="chip muted">最近同步 {{ updated || "尚未读取" }}</span>
+        </div>
+      </div>
+      <div v-if="!coverageDevices.length" class="empty-note" style="padding: 18px">暂无覆盖记录。</div>
+      <div v-else class="cover-grid">
+        <div v-for="device in coverageDevices" :key="device.key" class="cover">
+          <div class="cover-name"><i class="dot" :style="{ background: ecoMeta(device.ecosystem).color }" />{{ device.name || device.key }}</div>
+          <div class="cover-row"><span>身份</span><span class="cover-bar"><i :class="pctClass(device.identity_confidence)" :style="{ width: ratioPct(device.identity_confidence) }" /></span><span class="cover-val">{{ ratioPct(device.identity_confidence, 0) }}</span></div>
+          <div class="cover-row"><span>清单</span><span class="cover-bar"><i :class="device.inventory_complete === false ? 'warn' : 'low'" :style="{ width: device.inventory_complete === false ? '40%' : device.inventory_complete ? '100%' : '0%' }" /></span><span class="cover-val">{{ device.inventory_complete === false ? "40%" : device.inventory_complete ? "100%" : "—" }}</span></div>
+          <div class="cover-row"><span>评估</span><span class="cover-bar"><i :class="assessmentClass(device.matches?.assessment)" :style="{ width: assessmentWidth(device.matches?.assessment) }" /></span><span class="cover-val">{{ assessmentLabel(device.matches?.assessment) }}</span></div>
+        </div>
+      </div>
+      <div class="card-foot"><span>身份可信度来自 SSH 清单、HTTP 身份端点与 banner 指纹；三者不等价。</span><span>{{ devices.length }} 台设备</span></div>
+    </section>
 
     <Modal :open="Boolean(selected)" :title="selected?.name || '设备详情'" description="台账字段来自后端观测；未知字段不推测。" wide @close="selected = null">
       <div v-if="selected" class="detail-grid">
         <div><span>台账键</span><b class="mono">{{ selected.key }}</b></div>
+        <div><span>IP 地址</span><b class="mono">{{ selected.ip_address || "—" }}</b></div>
         <div><span>生态</span><b>{{ ecosystemLabel(selected.ecosystem) }}</b></div>
         <div><span>版本</span><b class="mono">{{ selected.version || "未识别" }}</b></div>
         <div><span>组件</span><b>{{ selected.component_count ?? "—" }}</b></div>
@@ -133,8 +156,8 @@
         <div><span>清单状态</span><b>{{ selected.inventory_complete === false ? "待补" : selected.inventory_complete ? "完整" : "未知" }}</b></div>
         <div><span>漏洞命中</span><b>{{ selected.matches?.count ?? "—" }} 条</b></div>
         <div><span>运行时</span><b>{{ runtimeLabel(selected.runtime) }}</b></div>
-        <div class="wide"><span>修复能力</span><b>{{ remediationLabel(selected.remediation) }}</b></div>
-        <div class="wide"><span>下一步</span><b>{{ selected.next_action || "—" }}</b></div>
+        <div><span>修复能力</span><b>{{ remediationLabel(selected.remediation) }}</b></div>
+        <div class="wide"><span>下一步</span><b>{{ nextActionLabel(selected.next_action) }}</b></div>
       </div>
       <template #footer><button class="btn" type="button" @click="selected = null">关闭</button></template>
     </Modal>
@@ -158,19 +181,20 @@
 import { computed, onMounted, ref } from "vue";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
-import EmptyState from "../components/EmptyState.vue";
-import DonutChart from "../components/DonutChart.vue";
+import KpiCard from "../components/KpiCard.vue";
+import TopologyMap from "../components/TopologyMap.vue";
 import Modal from "../components/Modal.vue";
 import { api } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
-import { ecosystemLabel, num, ratioPct } from "../utils/format";
+import { ecosystemLabel, num, ratioPct, timeAgo } from "../utils/format";
 
 const devices = ref([]);
 const loading = ref(true);
 const error = ref("");
 const updated = ref("");
 const eco = ref("all");
+const view = ref("map");
 const selected = ref(null);
 const fileInput = ref(null);
 const discoveryOpen = ref(false);
@@ -180,63 +204,101 @@ const enroll = ref(true);
 const discovering = ref(false);
 const uploading = ref(false);
 
+const ecoCatalog = {
+  openwrt: { icon: "router", color: "#f4622a", soft: "#fff1e8" },
+  zephyr: { icon: "cpu", color: "#12b76a", soft: "#e9fbf1" },
+  ubuntu: { icon: "server", color: "#2f6fed", soft: "#eef4ff" },
+  other_iot: { icon: "radio", color: "#7c3aed", soft: "#f3eeff" }
+};
+
+function ecoMeta(value) {
+  return ecoCatalog[value] || ecoCatalog.other_iot;
+}
+
 const ecosystemCount = computed(() => new Set(devices.value.map((d) => d.ecosystem).filter(Boolean)).size);
 const componentCount = computed(() => devices.value.reduce((sum, d) => sum + Number(d.component_count || 0), 0));
 const trustedCount = computed(() => devices.value.filter((d) => Number(d.identity_confidence) >= 0.9).length);
 const incompleteCount = computed(() => devices.value.filter((d) => d.inventory_complete === false).length);
+const unidentifiedCount = computed(() => devices.value.filter((d) => !d.version || Number(d.identity_confidence) < 0.5).length);
+const trustRate = computed(() => (devices.value.length ? `${Math.round((trustedCount.value / devices.value.length) * 100)}%` : ""));
 const coverageDevices = computed(() => devices.value.slice(0, 4));
 
-const filteredDevices = computed(() => {
-  const list = eco.value === "all" ? devices.value : devices.value.filter((d) => (d.ecosystem || "other_iot") === eco.value);
-  return list.slice(0, 5);
-});
-
-const ecosystemFilters = computed(() => {
-  const counts = devices.value.reduce((map, d) => {
-    const key = d.ecosystem || "other_iot";
-    map[key] = (map[key] || 0) + 1;
-    return map;
-  }, {});
-  const base = [{ value: "all", label: "全部", count: devices.value.length }];
-  for (const [key, count] of Object.entries(counts)) base.push({ value: key, label: ecosystemLabel(key), count });
-  return base;
-});
-
-const ecoColors = ["var(--accent)", "var(--chart-2)", "var(--chart-4)", "var(--chart-3)", "var(--high)"];
-const ecosystemItems = computed(() => {
-  const counts = devices.value.reduce((map, d) => {
-    const key = d.ecosystem || "other_iot";
-    map[key] = (map[key] || 0) + 1;
-    return map;
-  }, {});
-  return Object.entries(counts).map(([key, value], index) => ({ label: ecosystemLabel(key), value, color: ecoColors[index % ecoColors.length] }));
-});
-
 const confidenceBuckets = computed(() => {
+  const total = Math.max(devices.value.length, 1);
   const trusted = devices.value.filter((d) => Number(d.identity_confidence) >= 0.9).length;
   const partial = devices.value.filter((d) => Number(d.identity_confidence) >= 0.35 && Number(d.identity_confidence) < 0.9).length;
   const low = devices.value.length - trusted - partial;
-  const max = Math.max(devices.value.length, 1);
   return [
-    { label: "可信 ≥ 90%", count: trusted, width: `${(trusted / max) * 100}%`, color: "var(--low)" },
-    { label: "部分 35–90%", count: partial, width: `${(partial / max) * 100}%`, color: "var(--info)" },
-    { label: "低 / 未知", count: low, width: `${(low / max) * 100}%`, color: "var(--high)" }
+    { label: "可信 ≥ 90%", count: trusted, width: `${(trusted / total) * 100}%`, tone: "low" },
+    { label: "部分 35–90%", count: partial, width: `${(partial / total) * 100}%`, tone: "warn" },
+    { label: "低 / 未知", count: low, width: `${(low / total) * 100}%`, tone: "" }
   ];
 });
 
-const ecoClassMap = { openwrt: "accent", zephyr: "info", ubuntu: "low" };
-const ecoClass = (value) => ecoClassMap[value] || "muted";
-const ecoColor = (value) => ({ openwrt: "var(--accent)", zephyr: "var(--chart-2)", ubuntu: "var(--chart-4)" }[value] || "var(--muted)");
+const typeItems = computed(() => {
+  const counts = devices.value.reduce((map, d) => {
+    const key = d.ecosystem || "other_iot";
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+  return ["openwrt", "zephyr", "ubuntu", "other_iot"].map((key) => ({
+    value: key,
+    label: ecosystemLabel(key),
+    count: counts[key] || 0,
+    ...ecoMeta(key)
+  }));
+});
 
+const filteredDevices = computed(() => {
+  if (eco.value === "all") return devices.value;
+  return devices.value.filter((d) => (d.ecosystem || "other_iot") === eco.value);
+});
+
+const recentDevices = computed(() =>
+  [...devices.value]
+    .sort((a, b) => new Date(b.inventory_collected_at || 0) - new Date(a.inventory_collected_at || 0))
+    .slice(0, 5)
+);
+
+const topologyNodes = computed(() => {
+  const counts = devices.value.reduce((map, d) => {
+    const key = d.ecosystem || "other_iot";
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+  return [
+    { key: "openwrt", name: "OpenWrt", count: counts.openwrt || 0, ...ecoMeta("openwrt") },
+    { key: "zephyr", name: "Zephyr", count: counts.zephyr || 0, ...ecoMeta("zephyr") },
+    { key: "ubuntu", name: "Ubuntu", count: counts.ubuntu || 0, ...ecoMeta("ubuntu") },
+    { key: "other", name: "其他 IoT", count: counts.other_iot || 0, ...ecoMeta("other_iot") }
+  ];
+});
+
+function setEco(value) {
+  eco.value = value;
+  if (value !== "all") view.value = "list";
+}
+
+function ecoClass(value) {
+  return { openwrt: "accent", zephyr: "low", ubuntu: "info" }[value] || "muted";
+}
+function identityTone(value) {
+  const n = Number(value);
+  return n >= 0.9 ? "low" : n >= 0.35 ? "high" : "muted";
+}
 function runtimeLabel(value) {
   return { requires_sensor_evidence: "需传感器证据", ebpf_not_applicable: "RTOS 不支持 eBPF", requires_runtime_evidence: "需运行时证据" }[value] || value || "未记录";
 }
-function runtimeTone(value) {
-  if (value === "ebpf_not_applicable") return "muted";
-  return value ? "info" : "muted";
-}
 function remediationLabel(value) {
   return { requires_device_specific_plan: "需设备专用方案", firmware_update_not_automated: "固件更新未接通" }[value] || value || "—";
+}
+function nextActionLabel(value) {
+  return {
+    review_applicability: "复核漏洞适用性",
+    collect_inventory: "补采资产清单",
+    schedule_repair: "排期修复",
+    monitor: "持续观察"
+  }[value] || value || "—";
 }
 function assessmentLabel(value) {
   return { partial: "部分评估", unassessed: "未评估", complete: "已评估", evaluated: "已评估" }[value] || value || "未记录";
@@ -329,8 +391,24 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const result = await api.get("/devices/business/overview", { timeout: 25000 });
-    devices.value = result.data?.devices || [];
+    const [overview, inventory] = await Promise.allSettled([
+      api.get("/devices/business/overview", { timeout: 25000 }),
+      api.get("/assets", { timeout: 25000 })
+    ]);
+    const base = overview.status === "fulfilled" && Array.isArray(overview.value.data?.devices) ? overview.value.data.devices : [];
+    const meta = new Map();
+    if (inventory.status === "fulfilled" && Array.isArray(inventory.value.data)) {
+      for (const asset of inventory.value.data) meta.set(`asset:${asset.id}`, asset);
+    }
+    devices.value = base.map((device) => {
+      const extra = meta.get(device.key) || {};
+      return {
+        ...device,
+        ip_address: extra.ip_address || "",
+        inventory_collected_at: extra.inventory_collected_at || "",
+        os_name: extra.os_name || ""
+      };
+    });
     updated.value = new Date().toLocaleTimeString("zh-CN", { hour12: false });
   } catch (cause) {
     error.value = cause?.response?.data?.detail || "资产台账读取失败，请检查后端服务。";
@@ -343,21 +421,67 @@ onMounted(load);
 </script>
 
 <style scoped>
-.filters { display: flex; align-items: center; gap: 6px; padding: 9px 15px 0; flex-wrap: wrap; }
-.filters .chip { cursor: pointer; height: 21px; font-size: 9px; }
-.filters-note { margin-left: auto; color: var(--muted); font-size: 9px; }
-.empty-wrap { display: grid; place-items: center; min-height: 260px; }
-.eco-body { display: flex; align-items: center; gap: 16px; padding-top: 4px; }
-.eco-legend { display: grid; gap: 8px; font-size: 9.5px; color: var(--muted); flex: 1; }
-.eco-legend span { display: flex; align-items: center; gap: 6px; }
-.eco-legend b { margin-left: auto; color: var(--ink); font: 700 9.5px var(--font-num); }
-.empty-note { color: var(--muted); font-size: 9.5px; }
-.detail-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0; border-top: 1px solid var(--line); }
-.detail-grid > div { padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
-.detail-grid > div:nth-child(odd) { padding-right: 14px; }
-.detail-grid span { display: block; color: var(--muted); font-size: 9px; }
-.detail-grid b { display: block; margin-top: 3px; color: var(--ink); font-size: 11px; }
-.detail-grid .wide { grid-column: 1 / -1; }
-.asset-table td { overflow: hidden; text-overflow: ellipsis; }
-</style>
+.asset-grid { display: grid; grid-template-columns: 236px minmax(0, 1fr) 286px; gap: 16px; align-items: stretch; }
+.type-card, .recent-card { display: flex; flex-direction: column; }
+.type-list { display: grid; gap: 2px; padding: 10px 10px 6px; }
+.type-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 46px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--ink-2);
+  text-align: left;
+  transition: background 140ms ease;
+}
+.type-row:hover { background: #f7fafd; }
+.type-row.active { background: #eff5ff; box-shadow: inset 0 0 0 1px #d8e6ff; }
+.type-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto; }
+.type-name { flex: 1; font-size: 12.5px; font-weight: 600; color: #33465e; }
+.type-row.active .type-name { color: #1d4ed8; }
+.type-row b { color: var(--ink); font-size: 12.5px; font-weight: 700; }
+.type-chev { color: #c3d1e3; }
+.type-row.active .type-chev { color: #2f6fed; }
+.type-foot { margin-top: 0; padding: 10px 16px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+.type-sep { margin-top: auto; display: grid; gap: 8px; padding: 14px 16px 12px; border-top: 1px solid var(--line-soft); }
+.type-sep-title { color: var(--ink); font-size: 12px; font-weight: 700; }
+.bucket-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 24px; gap: 8px; align-items: center; color: var(--muted); font-size: 10.5px; }
+.bucket-track { height: 6px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
+.bucket-track i { display: block; height: 6px; border-radius: 999px; background: #c3d1e3; }
+.bucket-track i.low { background: var(--low); }
+.bucket-track i.warn { background: var(--high); }
+.bucket-row b { text-align: right; color: var(--ink-2); font-size: 11px; font-weight: 700; }
 
+.map-card { display: flex; flex-direction: column; }
+.map-body { padding: 8px 14px 0; }
+.map-legend { display: flex; align-items: center; gap: 16px; padding: 2px 4px 4px; color: #64748b; font-size: 11.5px; }
+.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend b { color: var(--ink); font-family: var(--font-num); font-weight: 700; }
+.map-list { max-height: 440px; }
+.map-foot { display: flex; align-items: center; justify-content: space-between; padding: 8px 6px 10px; border-top: 1px solid var(--line-soft); margin-top: 4px; color: var(--muted); font-size: 10.5px; }
+
+.recent-list { display: grid; padding: 6px 10px; }
+.recent-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+}
+.recent-row:hover { background: #f7fafd; }
+.recent-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; flex: 0 0 auto; }
+.recent-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
+.recent-copy b { color: var(--ink); font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-copy small { color: var(--muted); font-family: var(--font-num); font-size: 10.5px; }
+.recent-time { color: #64748b; font-size: 10px; white-space: nowrap; }
+.recent-chev { color: #c3d1e3; }
+.recent-foot { margin-top: auto; display: flex; align-items: center; gap: 7px; padding: 10px 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
+.recent-foot .dot { background: var(--low); }
+</style>

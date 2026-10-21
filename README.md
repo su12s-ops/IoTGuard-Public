@@ -15,7 +15,8 @@ IoTGuard 围绕设备身份、软件组件、官方漏洞公告和运行时证�
 | 四智能体 | 资产调查 → 漏洞分析与运行时分析 → 决策规划；只读补证、证据引用和对象级人审 |
 | 运行时取证 | Linux Falco/eBPF、OpenWrt logread；分别展示节点在线、传感器健康与证据新鲜度 |
 | 受控修复 | Harness 计划哈希审批、身份校验、资产锁、工具预算、回滚与复验入口；设备写默认关闭 |
-| 工作台与审计 | 安全态势、资产与发现、漏洞与风险、智能研判、修复与验证、运行与审计、报告与归档；SOC 位于 `/soc` |
+| 工作台与审计 | 安全总览、资产与发现、漏洞与风险、智能研判、修复与验证、运行监控与审计 |
+| 实验生命周期 | 保留设备、连接、传感器与采集配置；运行结果压缩存档；清理漏洞/风险/研判/修复/事件后开始新一轮 |
 
 ## 系统结构
 
@@ -95,7 +96,7 @@ python scripts/create_vm_config.py --role openwrt --disk "D:/lab/openwrt.vmdk" -
 
 ```text
 backend/       FastAPI、业务服务、智能体、Harness、迁移与回归测试
-frontend/      Vue 3 Editorial 工作台、Playwright 测试
+frontend/      Vue 3 安全控制台、Playwright 测试
 collector/     Linux / OpenWrt 采集、Falco 规则与部署脚本
 firmware/      Zephyr 源码、Kconfig、设备树与 QEMU 启动脚本
 simulator/     SmartCam 多协议模拟器，供发现联调
@@ -116,7 +117,8 @@ npm run test:e2e
 浏览器测试默认使用 Playwright Chromium，首次运行前执行 `npx playwright install chromium`；Windows 已安装 Edge 时可先设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。构建通过不代表现场设备连通、全部漏洞已修复或完整安全审计通过。
 
 - [产品状态与待完成工作](docs/STATUS.md)
-- [Editorial 前端替换记录](docs/FRONTEND_EDITORIAL_20261021.md)
+- [Console 前端设计系统](frontend/README.md)
+- [前端演进记录（历史）](docs/FRONTEND_EDITORIAL_20261021.md)
 - [环境重建与软件配置](deploy/README.md)
 - [部署说明](DEPLOYMENT.md)
 - [技术架构](TECHNICAL_ARCHITECTURE.md)

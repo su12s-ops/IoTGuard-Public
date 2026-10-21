@@ -1,23 +1,28 @@
 <template>
   <div class="page">
     <header class="page-head risk-head">
-      <div>
-        <router-link class="back-link" to="/risks"><Icon name="chev-left" :size="12" />返回风险队列</router-link>
-        <span class="eyebrow" style="margin-top: 8px"><i class="dot" />Vulnerability · risk decision</span>
-        <div class="risk-title">
-          <h1>{{ row?.cve_id || id }}</h1>
-          <span v-if="row" class="sev"><i class="dot" style="width: 5px; height: 5px; background: currentColor" />{{ levelLabel(level) }} · CVSS {{ cvss(row.cvss_score) }}</span>
+      <div class="ph-row">
+        <div class="ph-copy">
+          <router-link class="back-link" to="/risks"><Icon name="chev-left" :size="13" />返回风险队列</router-link>
+          <div class="risk-title">
+            <h1>{{ row?.cve_id || id }}</h1>
+            <span v-if="row" class="sev"><i class="dot" style="width: 5px; height: 5px; background: currentColor" />{{ levelLabel(level) }} · CVSS {{ cvss(row.cvss_score) }}</span>
+            <span v-if="row" class="chip muted">{{ row.active === false ? "历史归档" : "当前风险" }}</span>
+          </div>
         </div>
-        <div v-if="row" class="risk-sub">
-          <span class="pkg">{{ row.package_name || "—" }}</span><i class="sep" /><span>{{ row.hostname }}</span><i class="sep" /><span class="chip muted">{{ row.active === false ? "历史归档" : "当前风险" }}</span>
-        </div>
-        <div class="meta">
-          <span>{{ row?.updated_at ? `更新于 ${dateTime(row.updated_at)}` : "更新时间未记录" }}</span><i class="sep" /><span>risk_id {{ row?.risk_id ?? "—" }}</span><i class="sep" /><span>NVD · Canonical · Falco</span>
-        </div>
+        <TopActions />
       </div>
-      <div class="actions">
-        <button class="btn ghost" type="button" @click="openDecision('reject')"><Icon name="flag" :size="14" />标记误报</button>
-        <button class="btn primary" type="button" @click="goRepair"><Icon name="wrench" :size="14" />生成修复计划</button>
+      <div class="ph-row">
+        <div class="ph-sub">
+          <span v-if="row" class="pkg">{{ row.package_name || "—" }}</span><i class="sep" />
+          <span v-if="row">{{ row.hostname }}</span><i class="sep" />
+          <span>{{ row?.updated_at ? `更新于 ${dateTime(row.updated_at)}` : "更新时间未记录" }}</span><i class="sep" />
+          <span>risk_id {{ row?.risk_id ?? "—" }}</span>
+        </div>
+        <div class="actions">
+          <button class="btn" type="button" @click="openDecision('reject')"><Icon name="flag" :size="15" />标记误报</button>
+          <button class="btn primary" type="button" @click="goRepair"><Icon name="wrench" :size="15" />生成修复计划</button>
+        </div>
       </div>
     </header>
 
@@ -27,7 +32,7 @@
     <div v-else-if="!row" class="card"><EmptyState title="未找到该风险对象" description="它可能已被归档、合并，或不在当前风险队列中。" icon="bug" /></div>
 
     <template v-else>
-      <div class="content" style="grid-template-rows: 76px minmax(0, 1fr)">
+      <div class="content">
         <section class="card summary">
           <div class="cell"><div class="label">风险分</div><div class="value">{{ score(riskScore) }}</div><div class="hint">{{ levelLabel(level) }} · {{ decisionLabel }}</div></div>
           <div class="cell"><div class="label">CVSS</div><div class="value">{{ cvss(row.cvss_score) }}</div><div class="hint">{{ row.preliminary_level || "—" }}</div></div>
@@ -38,7 +43,7 @@
         </section>
 
         <div class="grid risk-grid" style="grid-template-columns: minmax(0, 1.9fr) minmax(0, 1fr)">
-          <div class="grid" style="grid-template-rows: 400px 221px">
+          <div class="grid" style="grid-template-rows: auto auto; align-content: start">
             <section class="card feature">
               <div class="card-head">
                 <div><div class="card-title">判定依据</div><div class="card-desc">四步独立判定；任一步缺失都会降级为“证据不足”。</div></div>
@@ -84,7 +89,7 @@
             </section>
           </div>
 
-          <div class="grid" style="grid-template-rows: 410px 211px">
+          <div class="grid" style="grid-template-rows: auto auto; align-content: start">
             <section class="card">
               <div class="card-head">
                 <div><div class="card-title">人工裁决</div><div class="card-desc">机器结论只作为输入，不替代责任签收。</div></div>
@@ -149,6 +154,7 @@ import { useRoute, useRouter } from "vue-router";
 import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
 import Modal from "../components/Modal.vue";
+import TopActions from "../components/TopActions.vue";
 import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, reviewRiskEvent } from "../api";
 import { controlSession } from "../api/controlSession";
 import { ui, notify } from "../stores/ui";
@@ -303,13 +309,17 @@ onMounted(load);
 </script>
 
 <style scoped>
-.risk-head { align-items: flex-end; }
-.back-link { display: inline-flex; align-items: center; gap: 3px; color: var(--muted); font-size: 9px; }
-.risk-sub { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 11.5px; margin-top: 3px; }
-.risk-sub .pkg { color: var(--ink-2); font-family: var(--font-num); font-size: 11px; }
-.risk-sub .sep { width: 1px; height: 10px; background: var(--line); }
-.risk-grid { height: 100%; }
-.gate-list { display: grid; gap: 5px; padding: 7px 8px; border: 1px solid var(--line-soft); background: var(--surface-2); }
-.gate-list div { display: flex; align-items: center; gap: 6px; font-size: 8.5px; color: var(--ink-2); }
-.gate-list span { margin-left: auto; color: var(--muted); font-family: var(--font-num); }
+.risk-head .ph-copy { display: grid; gap: 4px; justify-items: start; }
+.back-link { margin-bottom: 2px; }
+.risk-title { margin-top: 0; }
+.risk-sub { display: flex; align-items: center; gap: 9px; color: var(--ink-3); font-size: 12.5px; }
+.risk-sub .pkg { color: var(--ink-2); font-family: var(--font-num); font-size: 12px; }
+.gate-list { display: grid; gap: 5px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #f9fbfe; }
+.gate-list div { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2); }
+.gate-list span { margin-left: auto; color: var(--muted); font-family: var(--font-num); font-size: 10.5px; }
+.terminal { min-height: 258px; }
+.risk-grid { height: auto; }
+@media (max-width: 1280px) {
+  .risk-grid { grid-template-columns: minmax(0, 1fr) !important; }
+}
 </style>
