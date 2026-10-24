@@ -183,13 +183,21 @@ def _recompute_rank_in_engine(db: Session, asset_id: int | None = None) -> int:
 # Delivery candidate engine (exact match-bound, incremental implementation)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _candidate_fingerprint(
+def _candidate_facts(
     match: models.VulnerabilityMatch,
     asset: models.LinuxAsset,
     runtime: dict,
     source_fingerprint: str = "",
-) -> str:
-    import hashlib
+) -> dict:
+    """重评判据的事实载荷：只含与风险结论相关的可复核事实。
+
+    刻意排除三类随采集周期必然变化、但不构成事实变化的输入：
+    - asset.updated_at / 采集时间戳（每次清单写入必变）；
+    - 运行时事件 ID 与权重（持续遥测下 top-N 选取必然轮换、新鲜度桶随
+      时间漂移——属于采集时间/原始文本变化）。
+    覆盖类事实以 runtime.status（waiting/contextual/verified/not_observed
+    的覆盖等级）保留：证据从无到有、从上下文到直接命中的跃迁仍是事实变化。
+    """
     import json
 
     service_state = sorted(
@@ -202,7 +210,7 @@ def _candidate_fingerprint(
         )
         for service in asset.services
     )
-    payload = {
+    return {
         "match_id": match.id,
         "match_fingerprint": match.evidence_fingerprint,
         "installed_version": match.installed_version,
@@ -211,16 +219,46 @@ def _candidate_fingerprint(
         "package_name": match.package_name,
         "asset_exposure": asset.exposure_level,
         "asset_business": asset.business_level,
-        "asset_updated_at": str(asset.updated_at or ""),
+        "asset_os_version": asset.os_version,
+        "inventory_complete": bool(asset.inventory_complete),
         "services": service_state,
         "runtime_status": runtime.get("status", "waiting"),
-        "runtime_strength": runtime.get("strength_score", 0),
-        "runtime_event_ids": [event.get("id") for event in runtime.get("matched_events", [])],
         "source_fingerprint": source_fingerprint,
     }
+
+
+def _facts_hash(payload: dict) -> str:
+    import hashlib
+    import json
+
     return hashlib.sha256(
         json.dumps(payload, ensure_ascii=False, sort_keys=True, default=str).encode("utf-8")
     ).hexdigest()
+
+
+def _legacy_facts_changed(risk: models.RiskAssessment, values: dict) -> bool:
+    """旧算法行（candidate_facts_json 为空）的一次性迁移比对。
+
+    旧指纹哈希把采集时间戳和事件 ID 混入事实，无法与事实载荷直接比较；
+    迁移时先比较风险行自身留存的事实型字段（受影响判定、运行时覆盖
+    等级、适用性来源、发行版优先级），任一变化仍按事实变化处理。
+    未被行字段覆盖的事实类（修复版本出现/消失、服务集变化等）在本次
+    迁移中存在盲窗，由 candidate_facts_rebaseline 治理事件留痕；
+    自本次起行上写入事实载荷，后续比较恢复精确。
+    """
+    row_facts = {
+        "affected_status": risk.affected_status,
+        "runtime_status": risk.runtime_status,
+        "applicability_source": risk.applicability_source,
+        "ubuntu_priority": risk.ubuntu_priority,
+    }
+    new_facts = {
+        "affected_status": values.get("affected_status"),
+        "runtime_status": values.get("runtime_status"),
+        "applicability_source": values.get("applicability_source"),
+        "ubuntu_priority": values.get("ubuntu_priority"),
+    }
+    return any(str(row_facts[key]) != str(new_facts[key]) for key in row_facts)
 
 
 def _reset_for_reanalysis(risk: models.RiskAssessment, reason: str) -> None:
@@ -378,7 +416,9 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None, asset_id: int 
         action_multiplier = 0.9 + actionability_score / 1000.0
         baseline_score = round(min(100.0, static_score * context_multiplier * action_multiplier), 2)
         source_fingerprint = intelligence_fingerprint(db, match.cve_id)
-        fingerprint = _candidate_fingerprint(match, asset, runtime, source_fingerprint)
+        facts_payload = _candidate_facts(match, asset, runtime, source_fingerprint)
+        fingerprint = _facts_hash(facts_payload)
+        facts_json = json.dumps(facts_payload, ensure_ascii=False, sort_keys=True, default=str)
         risk_factors = {
             "ubuntu_applicability": {
                 "source": "canonical" if canonical else "nvd_fallback",
@@ -421,6 +461,7 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None, asset_id: int 
             "cve_id": match.cve_id,
             "package_name": match.package_name,
             "candidate_fingerprint": fingerprint,
+            "candidate_facts_json": facts_json,
             "active": True,
             "cvss_score": cvss,
             "epss_score": epss,
@@ -478,7 +519,15 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None, asset_id: int 
                 # A contradicted historical match is permanently ineligible.
                 # New applicability requires a new evidence-backed risk object.
                 continue
-            changed = risk.candidate_fingerprint != fingerprint or not risk.active
+            # 事实比对：新算法行直接比较事实载荷；旧算法行（无载荷）先按
+            # 行上留存的事实字段做一次迁移比对，仍一致则仅重建基线、不
+            # 失效结论——旧哈希混入采集时间戳与事件 ID，其失配不能归因于
+            # 事实变化，按其重置即「无事实变化也强制重跑全部角色」。
+            legacy_row = not (risk.candidate_facts_json or "").strip()
+            if legacy_row:
+                changed = _legacy_facts_changed(risk, values) or not risk.active
+            else:
+                changed = risk.candidate_facts_json != facts_json or not risk.active
             for name, value in values.items():
                 setattr(risk, name, value)
             if changed:
@@ -492,10 +541,28 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None, asset_id: int 
                 else:
                     record(db, risk, "risk_reanalysis_reset", "risk_engine", {
                         "original": snapshot(risk), "reason": "candidate_facts_changed",
+                        "facts": facts_payload,
                         "original_direction_semantics": "legacy_or_previous_contract"})
                     invalidate_prior_authorizations(db, risk, "candidate_facts_changed")
                     _reset_for_reanalysis(risk, "候选关键证据发生变化，需重新研判。")
                     _block_open_remediation_tasks(db, risk, "候选关键证据发生变化。")
+            elif legacy_row and risk.candidate_fingerprint:
+                from app.services.review_common.governance import record
+                record(db, risk, "candidate_facts_rebaseline", "risk_engine", {
+                    "reason": "legacy_fingerprint_migrated_to_fact_payload",
+                    "row_facts_unchanged": True,
+                    "facts": facts_payload,
+                    "inventory_sha256": asset.inventory_sha256 or "",
+                    "inventory_collected_at": str(asset.inventory_collected_at or "")})
+            elif risk.review_status not in {"candidate", "reanalysis_required"}:
+                # 事实未变且存在当期结论：保留结论，但记录本次核对的清单与
+                # 情报基线，保证“结论基于哪份证据”可追溯（来源追溯）。
+                from app.services.review_common.governance import record
+                record(db, risk, "candidate_facts_unchanged", "risk_engine", {
+                    "reason": "candidate_facts_identical",
+                    "facts": facts_payload,
+                    "inventory_sha256": asset.inventory_sha256 or "",
+                    "inventory_collected_at": str(asset.inventory_collected_at or "")})
         processed += 1
 
     # Historical risks are retained. They become inactive/resolved when their

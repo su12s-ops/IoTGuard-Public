@@ -237,6 +237,10 @@ class RiskAssessment(Base):
     cve_id = Column(String(32), index=True, nullable=False)
     package_name = Column(String(128), index=True, default="")
     candidate_fingerprint = Column(String(64), default="")
+    # 事实载荷（仅含组件版本/配置/情报/覆盖等事实输入的规范化 JSON）。
+    # 与 candidate_fingerprint（其哈希）共同构成重评判据的比较基础；
+    # 空串表示旧算法行，按迁移语义一次性重建基线。
+    candidate_facts_json = Column(Text, default="")
     active = Column(Boolean, default=True)
     cvss_score = Column(Float, default=0)
     epss_score = Column(Float, default=0)

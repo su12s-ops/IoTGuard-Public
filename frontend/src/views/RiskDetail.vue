@@ -21,6 +21,7 @@
         </div>
         <div class="actions">
           <button class="btn" type="button" @click="openDecision('reject')"><Icon name="flag" :size="15" />标记误报</button>
+          <button class="btn" type="button" :disabled="roundBusy" @click="openRound"><Icon name="play" :size="15" />{{ roundBusy ? "启动中…" : "分析本风险" }}</button>
           <button class="btn primary" type="button" @click="openRepair"><Icon name="wrench" :size="15" />创建修复任务</button>
         </div>
       </div>
@@ -178,6 +179,33 @@
       </template>
     </Modal>
 
+    <Modal :open="roundOpen" title="发起单风险分析轮次" description="对该风险所属资产执行：漏洞匹配 → 风险计算 → 仅本风险进入研判选择。其余候选如实标注不进入本批。" @close="roundOpen = false">
+      <div class="plan-rows-mini">
+        <div><span>资产</span><b>asset {{ row?.asset_id }} · {{ row?.hostname }}</b></div>
+        <div><span>风险</span><b>risk-{{ row?.risk_id }} · {{ row?.cve_id }}</b></div>
+        <div><span>当前审核状态</span><b>{{ expectedStatus }}</b></div>
+      </div>
+      <p class="field-hint">有当期结论（待人工复核/已确认等）的风险不满足再研判条件时，轮次会在匹配与风险计算后如实阻断，不会重跑模型。</p>
+      <template #footer>
+        <button class="btn" type="button" @click="roundOpen = false">取消</button>
+        <button class="btn primary" type="button" :disabled="roundBusy" @click="submitRound">{{ roundBusy ? "启动中…" : "开始分析" }}</button>
+      </template>
+    </Modal>
+
+    <Modal :open="Boolean(roundResult)" :title="roundResultTitle" :description="''" @close="roundResult = null">
+      <div v-if="roundResult" class="plan-rows-mini">
+        <div><span>轮次</span><b class="mono">{{ roundResult.round_id }}</b></div>
+        <div><span>状态</span><b>{{ roundResult.status }}</b></div>
+        <div><span>匹配 / 风险计算</span><b>{{ roundResult.counts?.matches ?? "—" }} / {{ roundResult.counts?.risks_calculated ?? "—" }}</b></div>
+        <div v-if="roundResult.counts?.candidates !== undefined"><span>候选 / 选择</span><b>{{ roundResult.counts.candidates }} / {{ roundResult.counts.selected }}</b></div>
+      </div>
+      <div v-if="roundResult?.blocked_reason" class="blocked-box">
+        <b>阻断原因</b>
+        <p class="mono">{{ roundResult.blocked_reason }}</p>
+      </div>
+      <p class="field-hint">轮次只驱动流程；风险状态以风险事件为准，结论仍须人工复核，不自动确认。</p>
+    </Modal>
+
     <Modal :open="repairOpen" title="创建 Harness 修复任务" description="同一资产、同一风险创建修复计划；无适用修复方案时会被策略阻断，不会伪造成功。" @close="repairOpen = false">
       <div class="plan-rows-mini">
         <div><span>资产</span><b>asset {{ row?.asset_id }} · {{ row?.hostname }}</b></div>
@@ -224,7 +252,7 @@ import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
 import Modal from "../components/Modal.vue";
 import TopActions from "../components/TopActions.vue";
-import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, reviewRiskEvent } from "../api";
+import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, reviewRiskEvent, startAssetRound } from "../api";
 import { createHarnessRun } from "../api/deviceOperations";
 import { controlSession } from "../api/controlSession";
 import { ui, notify } from "../stores/ui";
@@ -249,6 +277,47 @@ const repairBusy = ref(false);
 const repairResult = ref(null);
 const artifacts = ref([]);
 const artifactId = ref("");
+const roundOpen = ref(false);
+const roundBusy = ref(false);
+const roundResult = ref(null);
+
+const roundResultTitle = computed(() => {
+  const item = roundResult.value;
+  if (!item) return "分析轮次";
+  if (item.status === "blocked") return "轮次被阻断（匹配与风险计算已完成）";
+  if (item.status === "no_candidates") return "本轮零候选（未调用模型）";
+  return `分析轮次 ${item.round_id || ""}`;
+});
+
+async function openRound() {
+  if (!controlSession.token) {
+    notify("请先在顶栏设置操作令牌", "error");
+    ui.tokenOpen = true;
+    return;
+  }
+  roundResult.value = null;
+  roundOpen.value = true;
+}
+
+async function submitRound() {
+  if (!row.value) return;
+  roundBusy.value = true;
+  try {
+    const result = await startAssetRound(Number(row.value.asset_id), {
+      riskId: Number(row.value.risk_id ?? row.value.id)
+    });
+    roundResult.value = result?.round || result;
+    roundOpen.value = false;
+  } catch (cause) {
+    const detail = cause?.response?.data?.detail;
+    notify(typeof detail === "string" ? detail : (detail?.error || "分析轮次启动失败。"), "error");
+    if (cause?.response?.status === 401) {
+      ui.tokenOpen = true;
+    }
+  } finally {
+    roundBusy.value = false;
+  }
+}
 
 const DECISION_META = {
   confirm: {

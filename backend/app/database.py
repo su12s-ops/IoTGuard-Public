@@ -34,6 +34,7 @@ RISK_ASSESSMENT_COLUMN_MIGRATIONS = {
     "device_context_json": "TEXT DEFAULT '{}'",
     "package_name": "VARCHAR(128) DEFAULT ''",
     "candidate_fingerprint": "VARCHAR(64) DEFAULT ''",
+    "candidate_facts_json": "TEXT DEFAULT ''",
     "active": "BOOLEAN DEFAULT 1",
     "static_score": "FLOAT DEFAULT 0",
     "runtime_score": "FLOAT DEFAULT 0",
