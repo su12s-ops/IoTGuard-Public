@@ -1,6 +1,8 @@
 """固定案例重复验证：记录器字段契约 + 成功率/耗时/稳定性统计。"""
 import importlib.util
 import json
+import pytest
+from types import SimpleNamespace
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -112,6 +114,28 @@ def test_strategy_mismatch_is_refused_not_recorded():
     record._assert_strategy_applied("single_agent", {"routing": {
         "include_asset": False, "include_vulnerability": False,
         "include_runtime": False, "include_decision": True}}, "UA-z")
+
+
+def test_persisted_facts_hash_is_order_independent_but_tracks_fact_changes():
+    state = {"baseline": {"match_status": "fixed"},
+             "evidence_prep": {"as_of": "2026-10-21", "candidates": []}}
+    same = {"evidence_prep": state["evidence_prep"], "baseline": state["baseline"]}
+    assert record._state_facts_sha256(state) == record._state_facts_sha256(same)
+    changed = {**state, "evidence_prep": {"as_of": "2026-10-22", "candidates": []}}
+    assert record._state_facts_sha256(state) != record._state_facts_sha256(changed)
+    with pytest.raises(SystemExit, match="facts_snapshot_missing"):
+        record._state_facts_sha256({"baseline": state["baseline"]})
+
+
+@pytest.mark.parametrize("field,value", [("risk_id", 2), ("target_ref", "other"),
+                                          ("target_type", "other"), ("task_type", "other")])
+def test_import_rejects_wrong_case_identity(field, value):
+    case = {"case_id": "C-1", "risk_id": 1, "target_ref": "x"}
+    fields = {"run_id": "UA-1", "risk_id": 1, "target_ref": "x",
+              "target_type": "linux_host", "task_type": "risk_review"}
+    record._assert_case_matches_run(case, SimpleNamespace(**fields))
+    with pytest.raises(SystemExit, match="case_mismatch"):
+        record._assert_case_matches_run(case, SimpleNamespace(**{**fields, field: value}))
 
 
 def test_cli_requires_execution_mode(tmp_path):

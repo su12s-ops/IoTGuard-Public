@@ -15,7 +15,10 @@ export const fetchConnections = () => api.get("/iot/connections").then(r => r.da
 export const saveConnection = (data, id) => (id ? api.put("/iot/connections/" + id, data, control()) : api.post("/iot/connections", data, control())).then(r => r.data);
 export const collectDevice = id => api.post("/iot/connections/" + id + "/collect", null, control()).then(r => r.data);
 export const preflightConnection = id => api.get("/iot/connections/" + id + "/preflight", control()).then(r => r.data);
-export const fetchCollectionRuns = () => api.get("/iot/collection-runs", control()).then(r => r.data);
+export const fetchCollectionRuns = connectionId => api.get("/iot/collection-runs", {
+  ...control(),
+  params: connectionId ? { connection_id: connectionId } : {}
+}).then(r => r.data);
 export const createCollectionRun = (id, requestId) => api.post("/iot/connections/" + id + "/collection-runs", { request_id: requestId }, control()).then(r => r.data);
 export const executeCollectionRun = id => api.post("/iot/collection-runs/" + id + "/execute", null, control()).then(r => r.data);
 export const fetchCollectionRun = id => api.get("/iot/collection-runs/" + id, control()).then(r => r.data);

@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.nvd_package_mapping import is_unmapped_package
 from app.utils.version_compare import is_version_less
 from app.services.vulnerability_intelligence.kylin_provider import is_kylin_distribution, kylin_release_token
 from app.services.vulnerability_intelligence.service import (
@@ -89,6 +90,23 @@ def _evaluate_match(
     package_name = vulnerability.affected_package
     installed = (package.package_version or "").strip() if package else ""
     fixed = (vulnerability.fixed_version or "").strip()
+
+    # NVD 无 CPE 精确映射（或历史 'unknown' 哨兵）不得参与包匹配：
+    # 给出显式 not_applicable 结论并保留原因，绝不静默变成 unknown/affected，
+    # 也绝不以空包名去命中任何已安装包。
+    if is_unmapped_package(package_name):
+        return {
+            "installed_version": "",
+            "fixed_version": fixed,
+            "affected": False,
+            "match_status": "not_applicable",
+            "reason_code": "affected_package_unmapped",
+            "match_reason": (
+                f"{asset.hostname} 的 {vulnerability.cve_id} 来源为 NVD，但未提供可精确"
+                "映射到发行版包名的 CPE vendor/product；不做包匹配，也不生成受影响候选。"
+            ),
+            "confidence": 0.0,
+        }
 
     if canonical:
         source_name = (canonical.get("source") or "canonical").lower()

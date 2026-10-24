@@ -85,10 +85,10 @@
         </div>
         <div v-else class="table-wrap map-list">
           <table style="table-layout: fixed">
-            <colgroup><col style="width: 200px" /><col style="width: 96px" /><col style="width: 110px" /><col style="width: 64px" /><col style="width: 92px" /><col style="width: 90px" /></colgroup>
+            <colgroup><col style="width: 190px" /><col style="width: 88px" /><col style="width: 102px" /><col style="width: 52px" /><col style="width: 94px" /><col style="width: 94px" /></colgroup>
             <thead><tr><th>设备</th><th>生态</th><th>系统 / 固件</th><th>组件</th><th>身份可信</th><th>漏洞命中</th></tr></thead>
             <tbody>
-              <tr v-for="device in filteredDevices" :key="device.key" style="cursor: pointer" tabindex="0" role="button" @click="selected = device" @keydown.enter="selected = device">
+              <tr v-for="device in filteredDevices" :key="device.key" style="cursor: pointer" tabindex="0" role="button" @click="openDetail(device)" @keydown.enter="openDetail(device)">
                 <td class="name">{{ device.name || device.key }}<small>{{ device.ip_address || device.key }}</small></td>
                 <td><span class="chip" :class="ecoClass(device.ecosystem)"><i class="dot" />{{ ecosystemLabel(device.ecosystem) }}</span></td>
                 <td><span class="mono">{{ device.version || "未识别" }}</span><small>{{ device.inventory_complete === false ? "清单待补" : "清单完整" }}</small></td>
@@ -108,7 +108,7 @@
           <button class="link" type="button" @click="view = 'list'">更多 <Icon name="chev-right" :size="12" /></button>
         </div>
         <div class="recent-list">
-          <button v-for="device in recentDevices" :key="device.key" class="recent-row" type="button" @click="selected = device">
+          <button v-for="device in recentDevices" :key="device.key" class="recent-row" type="button" @click="openDetail(device)">
             <span class="recent-ic" :style="{ background: ecoMeta(device.ecosystem).soft, color: ecoMeta(device.ecosystem).color }">
               <Icon :name="ecoMeta(device.ecosystem).icon" :size="18" />
             </span>
@@ -116,7 +116,7 @@
               <b>{{ device.name || device.key }}</b>
               <small>{{ device.ip_address || (device.version ? `v${device.version}` : "地址未记录") }}</small>
             </span>
-            <span class="recent-time">{{ device.inventory_collected_at ? timeAgo(device.inventory_collected_at) : "已登记" }}</span>
+            <span class="recent-time">{{ device.inventory_collected_at ? timeAgoText(device.inventory_collected_at) : "已登记" }}</span>
             <Icon name="chev-right" :size="13" class="recent-chev" />
           </button>
           <div v-if="!recentDevices.length" class="empty-note" style="padding: 24px 18px">暂无设备记录，完成一次发现后即可看到。</div>
@@ -146,20 +146,35 @@
     </section>
 
     <Modal :open="Boolean(selected)" :title="selected?.name || '设备详情'" description="台账字段来自后端观测；未知字段不推测。" wide @close="selected = null">
-      <div v-if="selected" class="detail-grid">
+      <div v-if="selected" class="detail-tabs segmented" role="tablist" aria-label="设备详情视图">
+        <span role="tab" tabindex="0" :aria-selected="detailTab === 'overview'" :class="{ active: detailTab === 'overview' }" @click="detailTab = 'overview'" @keydown.enter="detailTab = 'overview'">台账详情</span>
+        <span role="tab" tabindex="0" :aria-selected="detailTab === 'collection'" :class="{ active: detailTab === 'collection' }" @click="detailTab = 'collection'" @keydown.enter="detailTab = 'collection'">连接与采集</span>
+        <span role="tab" tabindex="0" :aria-selected="detailTab === 'analysis'" :class="{ active: detailTab === 'analysis' }" @click="detailTab = 'analysis'" @keydown.enter="detailTab = 'analysis'">分析研判</span>
+      </div>
+      <div v-if="selected && detailTab === 'overview'" class="detail-grid">
         <div><span>台账键</span><b class="mono">{{ selected.key }}</b></div>
         <div><span>IP 地址</span><b class="mono">{{ selected.ip_address || "—" }}</b></div>
         <div><span>生态</span><b>{{ ecosystemLabel(selected.ecosystem) }}</b></div>
         <div><span>版本</span><b class="mono">{{ selected.version || "未识别" }}</b></div>
         <div><span>组件</span><b>{{ selected.component_count ?? "—" }}</b></div>
         <div><span>身份可信度</span><b>{{ ratioPct(selected.identity_confidence, 0) }}</b></div>
-        <div><span>清单状态</span><b>{{ selected.inventory_complete === false ? "待补" : selected.inventory_complete ? "完整" : "未知" }}</b></div>
+        <div><span>有效软件清单</span><b>{{ selected.inventory_complete && Number(selected.component_count) > 0 ? `是 · ${selected.component_count} 个组件` : "否 · 仅发现或清单待补" }}</b></div>
+        <div><span>最近清单采集</span><b>{{ selected.inventory_collected_at ? formatBackendTime(selected.inventory_collected_at) : "未记录" }}</b></div>
         <div><span>漏洞命中</span><b>{{ selected.matches?.count ?? "—" }} 条</b></div>
         <div><span>运行时</span><b>{{ runtimeLabel(selected.runtime) }}</b></div>
         <div><span>修复能力</span><b>{{ remediationLabel(selected.remediation) }}</b></div>
         <div class="wide"><span>下一步</span><b>{{ nextActionLabel(selected.next_action) }}</b></div>
       </div>
-      <template #footer><button class="btn" type="button" @click="selected = null">关闭</button></template>
+      <DeviceCollectionPanel v-else-if="selected && detailTab === 'collection'" :asset="selected" :open="true" @updated="onCollectionUpdated" />
+      <AssetAnalysisPanel v-else-if="selected && detailTab === 'analysis'" :asset="selected" :refresh-key="analysisRefresh" @started="onAnalysisStarted" />
+      <template #footer>
+        <template v-if="detailTab === 'overview'">
+          <button class="btn" type="button" :disabled="!selected?.asset_id" :title="selected?.asset_id ? '配置连接、预检并采集软件清单' : '仅已登记的 OpenWrt/Ubuntu 主机资产支持连接与采集'" @click="detailTab = 'collection'"><Icon name="activity" :size="14" />连接与采集</button>
+          <button class="btn primary" type="button" :disabled="!selected?.asset_id" :title="selected?.asset_id ? '匹配 → 风险计算 → 四智能体研判' : '仅已登记的资产支持分析'" @click="detailTab = 'analysis'"><Icon name="cpu" :size="14" />分析研判</button>
+        </template>
+        <button v-else class="btn" type="button" @click="detailTab = 'overview'">返回台账</button>
+        <button class="btn" type="button" @click="selected = null">关闭</button>
+      </template>
     </Modal>
 
     <Modal :open="discoveryOpen" title="发起授权发现" description="只扫描显式授权网段；没有响应不等于设备不存在。" @close="discoveryOpen = false">
@@ -178,16 +193,19 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
 import KpiCard from "../components/KpiCard.vue";
 import TopologyMap from "../components/TopologyMap.vue";
 import Modal from "../components/Modal.vue";
+import DeviceCollectionPanel from "../components/DeviceCollectionPanel.vue";
+import AssetAnalysisPanel from "../components/AssetAnalysisPanel.vue";
 import { api } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
-import { ecosystemLabel, num, ratioPct, timeAgo } from "../utils/format";
+import { ecosystemLabel, num, ratioPct } from "../utils/format";
+import { formatBackendTime, timeAgoText } from "../utils/deviceCollection";
 
 const devices = ref([]);
 const loading = ref(true);
@@ -196,6 +214,8 @@ const updated = ref("");
 const eco = ref("all");
 const view = ref("map");
 const selected = ref(null);
+const detailTab = ref("overview");
+const analysisRefresh = ref(0);
 const fileInput = ref(null);
 const discoveryOpen = ref(false);
 const cidr = ref("192.168.100.0/24");
@@ -277,6 +297,26 @@ const topologyNodes = computed(() => {
 function setEco(value) {
   eco.value = value;
   if (value !== "all") view.value = "list";
+}
+
+function openDetail(device) {
+  selected.value = device;
+  detailTab.value = "overview";
+}
+
+async function onCollectionUpdated() {
+  const key = selected.value?.key;
+  await load();
+  if (!key) return;
+  const fresh = devices.value.find((device) => device.key === key);
+  if (fresh) selected.value = { ...selected.value, ...fresh };
+  analysisRefresh.value += 1;
+}
+
+function onAnalysisStarted(round) {
+  if (round?.round_id) {
+    notify(`分析轮次 ${round.round_id} 已启动：候选 ${round.counts?.candidates ?? 0} 条，本轮选择 ${round.counts?.selected ?? 0} 条`, "success");
+  }
 }
 
 function ecoClass(value) {
@@ -402,8 +442,12 @@ async function load() {
     }
     devices.value = base.map((device) => {
       const extra = meta.get(device.key) || {};
+      const keyedId = typeof device.key === "string" && device.key.startsWith("asset:") ? Number(device.key.slice(6)) : null;
       return {
         ...device,
+        asset_id: Number.isFinite(keyedId) && keyedId > 0 ? keyedId : null,
+        distribution: extra.distribution || (device.ecosystem === "openwrt" ? "openwrt" : ""),
+        identity_source: extra.identity_source || "",
         ip_address: extra.ip_address || "",
         inventory_collected_at: extra.inventory_collected_at || "",
         os_name: extra.os_name || ""
@@ -417,11 +461,17 @@ async function load() {
   }
 }
 
+watch(selected, (value) => {
+  if (!value) detailTab.value = "overview";
+});
+
 onMounted(load);
 </script>
 
 <style scoped>
 .asset-grid { display: grid; grid-template-columns: 236px minmax(0, 1fr) 286px; gap: 16px; align-items: stretch; }
+.detail-tabs { justify-self: start; }
+.detail-tabs span { cursor: pointer; }
 .type-card, .recent-card { display: flex; flex-direction: column; }
 .type-list { display: grid; gap: 2px; padding: 10px 10px 6px; }
 .type-row {

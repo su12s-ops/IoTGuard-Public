@@ -198,8 +198,8 @@ const reviewLabel = computed(() => {
   if (row.value?.review_status === "human_confirmed") return "已确认";
   return statusLabel(row.value?.review_status || "candidate");
 });
-const reviewTone = computed(() => (row.value?.human_review_required || row.value?.review_status === "pending_human_review" ? "high" : row.value?.review_status === "human_confirmed" ? "low" : "info"));
-const recommendation = computed(() => row.value?.review_reason || row.value?.preliminary_reason || "版本适用性与暴露面需要人工签收；机器结论只作为输入。");
+const reviewTone = computed(() => (row.value?.human_review_required || row.value?.review_status === "pending_human_review" || row.value?.review_status === "quarantined_mapping" ? "high" : row.value?.review_status === "human_confirmed" ? "low" : "info"));
+const recommendation = computed(() => row.value?.review_status_reason || row.value?.review_reason || row.value?.preliminary_reason || "版本适用性与暴露面需要人工签收；机器结论只作为输入。");
 
 const factors = computed(() => {
   const source = row.value || {};

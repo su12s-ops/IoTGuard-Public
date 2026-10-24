@@ -13,6 +13,7 @@ from urllib.request import Request, ProxyHandler, build_opener, urlopen
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.nvd_package_mapping import UNMAPPED_PACKAGE
 from app.services.vulnerability_intelligence.base import classify_error
 from app.services.vulnerability_intelligence.cisa_kev_provider import CisaKevProvider
 from app.services.vulnerability_intelligence.epss_provider import EpssProvider
@@ -33,24 +34,6 @@ PACKAGE_ALIASES = {
     "apache_http_server": "apache2",
     "http_server": "apache2",
 }
-KNOWN_LINUX_PACKAGES = [
-    "openssl",
-    "nginx",
-    "sudo",
-    "openssh",
-    "openssh-server",
-    "curl",
-    "bash",
-    "systemd",
-    "mysql",
-    "mysql-server",
-    "redis",
-    "redis-server",
-    "apache",
-    "apache2",
-    "linux kernel",
-    "linux-kernel",
-]
 
 
 @dataclass
@@ -188,6 +171,7 @@ def _references(cve: dict[str, Any]) -> str:
 
 
 def _normalize_package(product: str) -> str:
+    """CPE product → 发行版包名；只使用显式别名表，不做文本猜测。"""
     product = (product or "").strip().lower().replace(" ", "_")
     return PACKAGE_ALIASES.get(product, product.replace("_", "-"))
 
@@ -215,6 +199,15 @@ def _walk_cpe_matches(configurations: list[dict[str, Any]]) -> list[dict[str, An
 
 
 def _affected_from_nvd(cve: dict[str, Any]) -> tuple[str, str, str]:
+    """从 NVD CVE 载荷提取（受影响产品, 发行版包名, 修复版本）。
+
+    包名只来自 CPE 的 vendor/product 精确映射（经 ``PACKAGE_ALIASES`` 显式
+    发行版别名表归一）。**没有 CPE 产品时返回 ``UNMAPPED_PACKAGE``（空串）**，
+    绝不使用描述/引用文本里的包名子串猜测——历史上 vm2、WordPress SAML 插件、
+    OpenSSH-for-Windows、openssl_encrypt 等公告因此被误映射到
+    openssl/openssh-server，进而产生虚假的 affected 风险。调用方（matching）
+    对未映射包名给出显式 not_applicable/unmapped 结论，不生成受影响候选。
+    """
     counts: dict[str, int] = {}
     fixed_candidates: list[str] = []
     affected_products: list[str] = []
@@ -234,17 +227,8 @@ def _affected_from_nvd(cve: dict[str, Any]) -> tuple[str, str, str]:
     if counts:
         affected_package = sorted(counts.items(), key=lambda item: item[1], reverse=True)[0][0]
     else:
-        text = " ".join(
-            [
-                _first_english(cve.get("descriptions", [])),
-                " ".join(ref.get("url", "") for ref in cve.get("references", []) if isinstance(ref, dict)),
-            ]
-        ).lower()
-        affected_package = "unknown"
-        for package in KNOWN_LINUX_PACKAGES:
-            if package in text:
-                affected_package = _normalize_package(package)
-                break
+        # 无 CPE：明确的「未映射」语义，由调用方决定不生成受影响候选。
+        affected_package = UNMAPPED_PACKAGE
     affected_product = ", ".join(sorted(set(affected_products))[:5])
     fixed_version = fixed_candidates[0] if fixed_candidates else ""
     return affected_product, affected_package, fixed_version
@@ -342,11 +326,17 @@ def _upsert_vulnerability(db: Session, item: dict[str, Any], kev: dict[str, Any]
     vuln.last_modified_date = cve.get("lastModified", "")
     vuln.source = "NVD CVE API"
     vuln.references = _references(cve)
-    vuln.remediation = (
-        f"NVD CPE versionEndExcluding={fixed_version}，请结合发行版安全公告确认修复包版本。"
-        if fixed_version
-        else "请结合发行版安全公告确认受影响软件包和修复版本。"
-    )
+    if affected_package == UNMAPPED_PACKAGE:
+        vuln.remediation = (
+            "NVD 未提供可精确映射到发行版包名的 CPE vendor/product；不得依据描述或"
+            "引用文本子串猜测包名。需以发行版官方公告补充适用性记录后再做匹配。"
+        )
+    elif fixed_version:
+        vuln.remediation = (
+            f"NVD CPE versionEndExcluding={fixed_version}，请结合发行版安全公告确认修复包版本。"
+        )
+    else:
+        vuln.remediation = "请结合发行版安全公告确认受影响软件包和修复版本。"
     db.flush()
 
     threat = db.query(models.ThreatIntelSource).filter_by(cve_id=cve_id).first()

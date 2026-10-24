@@ -116,6 +116,8 @@ npm run test:e2e
 
 浏览器测试默认使用 Playwright Chromium，首次运行前执行 `npx playwright install chromium`；Windows 已安装 Edge 时可先设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。构建通过不代表现场设备连通、全部漏洞已修复或完整安全审计通过。
 
+- [2026-10-23 质量收敛与运行验收](docs/QUALITY_20261023.md)
+- [隔离生产控制台启动与真实 HTTP 复验](docs/LOCAL_RUNTIME.md)
 - [产品状态与待完成工作](docs/STATUS.md)
 - [Console 前端设计系统](frontend/README.md)
 - [前端演进记录（历史）](docs/FRONTEND_EDITORIAL_20261021.md)

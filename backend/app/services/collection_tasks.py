@@ -103,6 +103,19 @@ def remote_node_id():
     return value if re.fullmatch(r"[A-Za-z0-9_.\-]{1,64}", value) else ""
 
 
+def collection_execution_mode():
+    """Select an executor without pretending the API host has another platform."""
+    mode = os.getenv("LINUXGUARD_COLLECTION_EXECUTION_MODE", "auto").strip().lower()
+    if mode not in {"auto", "pull", "local"}:
+        raise ValueError("invalid_collection_execution_mode")
+    return mode
+
+
+def uses_pull_execution(node):
+    mode = collection_execution_mode()
+    return mode == "pull" or (mode == "auto" and node["platform"] != "Linux")
+
+
 def registered_nodes():
     """Registered pull nodes: the M5 primary plus optional independently
     credentialed extras used by the isolated Stage-10 clone experiment.
@@ -216,16 +229,17 @@ def preflight(db, connection):
         passphrase_ref = connection.key_passphrase_env
         checks["passphrase_reference_configured"] = not passphrase_ref or bool(
             re.fullmatch(r"LINUXGUARD_DEVICE_[A-Z0-9_]{1,80}", passphrase_ref) and os.getenv(passphrase_ref, ""))
-    remote = not checks["node_platform"] and checks["remote_node_configured"]
+    pull = uses_pull_execution(node)
+    remote = pull and bool(node_for_asset(asset))
     if remote:
-        # Credentials belong to the execution node; Windows only validates names.
+        # Credentials belong to the execution node, including for Docker APIs.
         checks["authentication_reference_configured"] = valid_reference and auth == "ssh_key"
         checks.pop("key_path_metadata", None)
         checks["passphrase_reference_configured"] = not connection.key_passphrase_env
         if is_node_local(asset):
             checks["authentication_reference_configured"] = True
-    # 本机不是 Linux 时，登记在案的远程 Linux 采集节点可以承接执行；两者皆无则不可采集。
-    collection_capable = checks["node_platform"] or checks["remote_node_configured"]
+    # Pull requires a mapped node even on Linux; local requires a real Linux host.
+    collection_capable = remote if pull else checks["node_platform"]
     ready = collection_capable and all(
         value for name, value in checks.items() if name not in {"node_platform", "remote_node_configured"})
     return {"ready": ready, "checks": checks, "node": node, "connection_id": connection.id,
@@ -358,7 +372,8 @@ def execute(db, run):
         db.commit()
 
     try:
-        if device_access.collector_node()["platform"] != "Linux":
+        execution_node = device_access.collector_node()
+        if uses_pull_execution(execution_node):
             remote = node_for_asset(db.get(models.LinuxAsset, run.asset_id))
             if not remote:
                 raise device_access.DeviceOperationError("node_platform_invalid", "真实纯采集任务须由 Ubuntu/Linux 节点执行，Windows 仅用于开发与离线测试；未登记远程采集节点，任务转交不可用")
@@ -385,6 +400,8 @@ def execute(db, run):
                 payload={"node_id": remote, "connection_id": run.connection_id}, commit=False)
             db.commit()
             return db.get(models.HarnessRun, run_id)
+        if execution_node["platform"] != "Linux":
+            raise device_access.DeviceOperationError("node_platform_invalid", "本地采集必须在 Linux 上执行；不会回退到远程执行")
         connection, asset, script = validate_plan(db, run)
         if not connection or device_access.connection_signature(connection) != plan["connection_hash"]:
             raise device_access.DeviceOperationError("connection_changed", "连接配置已变化，请创建新的采集任务")

@@ -1,11 +1,12 @@
 import json
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app import models
 from app.database import get_db
 from app.services.device_access import require_control
+from app.services.nvd_package_mapping import QUARANTINED_MAPPING_STATUS
 from app.services.risk_engine import calculate_risk
 from app.services.review_common.governance import explanation
 
@@ -13,15 +14,27 @@ router = APIRouter(prefix="/risk", tags=["Risk"])
 
 
 @router.post("/calculate", dependencies=[Depends(require_control)])
-def calculate(db: Session = Depends(get_db)):
-    count = calculate_risk(db)
-    return {"message": "Risk calculated", "count": count}
+def calculate(asset_id: int = Query(default=0, ge=0), db: Session = Depends(get_db)):
+    """Recalculate candidate risks; ``asset_id`` keeps the mutation scoped.
+
+    Without an explicit asset the historical fleet-wide calculation is
+    retained for operators, but the browser asset flow always passes its own
+    asset_id so one device cannot rewrite another device's statuses/ranking.
+    """
+    if asset_id and db.get(models.LinuxAsset, asset_id) is None:
+        raise HTTPException(404, "资产不存在")
+    count = calculate_risk(db, asset_id=asset_id or None)
+    return {"message": "Risk calculated", "count": count, "asset_id": asset_id or None}
 
 
 @router.get("/ranking")
-def ranking(db: Session = Depends(get_db)):
+def ranking(asset_id: int = Query(default=0, ge=0),
+            db: Session = Depends(get_db)):
     rows = []
-    for item in db.query(models.RiskAssessment).order_by(models.RiskAssessment.priority_rank).all():
+    query = db.query(models.RiskAssessment)
+    if asset_id:
+        query = query.filter(models.RiskAssessment.asset_id == asset_id)
+    for item in query.order_by(models.RiskAssessment.priority_rank, models.RiskAssessment.id).all():
         asset = db.get(models.LinuxAsset, item.asset_id)
         vuln = db.query(models.VulnerabilityInfo).filter_by(cve_id=item.cve_id).first()
         match = db.get(models.VulnerabilityMatch, item.match_id) if item.match_id else None
@@ -34,6 +47,8 @@ def ranking(db: Session = Depends(get_db)):
             "agent_reviewing": "running",
             "conflict_review": "running",
             "coordinator_review": "running",
+            # 隔离状态没有旧的研判语义：显式保留为自身，绝不映射成候选/研判中。
+            "quarantined_mapping": "quarantined_mapping",
         }.get(item.review_status, item.review_status)
         rows.append(
             {
@@ -76,6 +91,10 @@ def ranking(db: Session = Depends(get_db)):
                 # 研判状态：candidate / running / completed / human_review / failed / skipped
                 "review_status": item.review_status,
                 "legacy_review_status": legacy_status,
+                "review_status_reason": (
+                    "NVD 包名无法精确复核，已隔离，不进入正式研判"
+                    if item.review_status == QUARANTINED_MAPPING_STATUS else ""
+                ),
                 "review_verdict": item.review_verdict,
                 "review_confidence": item.review_confidence,
                 "review_adjustment": item.review_adjustment,

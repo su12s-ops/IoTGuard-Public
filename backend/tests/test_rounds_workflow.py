@@ -85,11 +85,14 @@ def test_start_round_runs_matching_and_risk_engine(client, session_factory, cont
 def test_start_round_delegates_to_formal_entry(client, session_factory, control_headers, monkeypatch):
     ids = _seed_round_data(session_factory)
     monkeypatch.setattr("app.config.UNIFIED_PIPELINE_MODE", "on")
+    # The round now blocks before starting a doomed formal batch when the
+    # deployment has no model credential. This test exercises delegation.
+    monkeypatch.setattr("app.config.DEEPSEEK_API_KEY", "isolated-test-key")
 
     captured = {}
 
-    def fake_create_run(retry_failed, risk_id, batch_size, post_repair, investigation_goal, db):
-        captured.update(batch_size=batch_size, risk_id=risk_id, post_repair=post_repair)
+    def fake_create_run(retry_failed, risk_id, batch_size, post_repair, investigation_goal, db, asset_id):
+        captured.update(batch_size=batch_size, risk_id=risk_id, post_repair=post_repair, asset_id=asset_id)
         return {"run_id": "UA-NEW-round-0001", "status": "running"}
 
     from app.routers import analysis as analysis_router
@@ -101,7 +104,7 @@ def test_start_round_delegates_to_formal_entry(client, session_factory, control_
     body = started.json()
     assert body["review"]["run_id"] == "UA-NEW-round-0001"
     assert body["review_unavailable_reason"] is None
-    assert captured == {"batch_size": 2, "risk_id": 0, "post_repair": False}
+    assert captured == {"batch_size": 2, "risk_id": 0, "post_repair": False, "asset_id": ids["asset_id"]}
 
 
 def test_start_round_unknown_asset_rejected(client, session_factory, control_headers):

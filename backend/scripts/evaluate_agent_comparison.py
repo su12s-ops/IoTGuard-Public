@@ -81,14 +81,11 @@ def evaluate(rows: list[dict]) -> dict:
             raise ValueError("facts hash required")
         if row["strategy"] not in ("rules", "single_agent", "four_agents"):
             raise ValueError("unknown strategy")
-        labelled = bool(row.get("expected"))
-        if not labelled:
-            # 未标注观测只能计入成功率/耗时，不能进入准确率或成对比较
-            continue
-        if group and next(iter(group.values()))["expected"] != row["expected"]:
+        if group and next(iter(group.values())).get("expected") != row.get("expected"):
             raise ValueError("ground truth differs within paired case")
         group[row["strategy"]] = row
-    paired = [group for group in groups.values() if set(group) == STRATEGIES]
+    paired = [group for group in groups.values()
+              if set(group) == STRATEGIES and all(r.get("expected") for r in group.values())]
     metrics = {}
     for strategy in sorted(STRATEGIES):
         selected = [group[strategy] for group in paired]

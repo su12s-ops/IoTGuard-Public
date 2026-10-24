@@ -1,7 +1,7 @@
 import axios from "axios";
 import { controlRequest, controlSession } from "./controlSession";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || "http://localhost:8000/api";
+export const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:8000/api");
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -98,9 +98,18 @@ export const archiveDownloadUrl = (filename) =>
 
 // ========== 任务式风险研判接口 ==========
 export const createReviewRun = (retryFailed = false) =>
-  api.post("/analysis/runs", null, { ...controlRequest(), params: { retry_failed: retryFailed, batch_size: 1 } }).then((res) => res.data);
+  api.post("/analysis/runs", null, { ...controlRequest(), params: { retry_failed: retryFailed, batch_size: 0 } }).then((res) => res.data);
 export const fetchReviewRun = (runId) => api.get(`/analysis/runs/${runId}`).then((res) => res.data);
 export const fetchPreflight = () => api.get("/analysis/preflight").then((res) => res.data);
+
+// ========== 资产分析轮次（匹配 → 风险 → 四智能体） ==========
+export const fetchCurrentRound = (assetId) =>
+  api.get("/rounds/current", { params: { asset_id: assetId }, timeout: 25000 }).then((res) => res.data);
+export const fetchRound = (roundId) =>
+  api.get(`/rounds/${encodeURIComponent(roundId)}`, { timeout: 25000 }).then((res) => res.data);
+export const startAssetRound = (assetId, { riskId = 0, batchSize = 0 } = {}) =>
+  api.post("/rounds/start", { asset_id: assetId, risk_id: riskId, batch_size: batchSize, investigation_goal: "" },
+    { ...controlRequest(), timeout: 180000 }).then((res) => res.data);
 export const reviewRiskEvent = (riskId, decision, reason, actor, expected_status) =>
   api.post(`/analysis/risks/${riskId}/human-review`, { decision, reason, actor, expected_status }, controlRequest()).then((res) => res.data);
 

@@ -125,7 +125,36 @@ python backend/scripts/evaluate_agent_comparison.py reports/agent-quality/obs.js
 与已签收方向相反的裁定一律 `pending_human_review`（回归见
 `test_unified_pipeline.py::TestAuditPolicy::test_resolved_human_review_cannot_be_auto_reversed`）。
 
-## 8. 还缺什么（未完成，不得当作已完成）
+## 8. 离线审查后的最小收敛（2026-10-23）
+
+本轮只做离线代码验证，未执行模型调用或设备操作，没有新增真实研判结果。
+
+- 记录器导入历史运行前校验 risk/target/task 身份和角色路由，拒绝错案例或错策略。
+- 新观测从运行自身保存的 `baseline/candidate_context/capability_marks/evidence_prep`
+  计算事实哈希；缺少预取快照时拒绝，不再拿当前风险包替代历史输入。
+  哈希保留时间与新鲜度，跨时间窗可能不配对；旧观测文件不能因新代码而视为已验证。
+- `rules` 同样执行确定性预取；`single_agent` 的实验调用显式设置
+  `follow_up_rounds=0`，不改变生产默认预算。路由角色数不是 LLM 调用次数，重试/工具循环仍可能多次调用。
+- 未标注观测也检查重复 `(case_id, facts_sha256, repeat, strategy)`，但仍不进成对准确率。
+
+当前环境先运行：
+
+```powershell
+python -m pytest backend/tests/test_agent_quality_bench.py backend/tests/test_agent_comparison.py -q
+```
+
+再按以下顺序收敛，不把 fixture/mock 的测试通过当作模型质量证据：
+
+1. 固定一个可复核数据库副本、代码版本、模型配置与事实观察时间；保存不可变预取事实。
+   当前预取会重新计算时间/新鲜度，只有数据库副本还不足以证明三策略完全同事实；
+   在实现固定快照回放前，不强行合并不同哈希。
+2. 先为 2 个已标注案例补独立评审及标注来源凭证；第 3 个仍只测运行指标。
+3. 有真实模型配置及授权后，同一事实快照下按三策略各重复至少 3 次；
+   核对单智能体实际 usage/agent logs 未调用专家，保留失败与降级。
+4. 新建观测和统计文件，不覆盖旧实验；人审分钟数未经计时继续为 null。
+   只有完整配对数据才能讨论准确率差异，样本小不能宣称显著优越。
+
+## 9. 还缺什么（未完成，不得当作已完成）
 
 1. `single_agent` 需要关掉补查后重跑，才是真正的单模型基线；
 2. `four_agents` 需要**同日现场**重复（而非历史导入），才与另两条同时间窗；

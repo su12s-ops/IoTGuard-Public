@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.services.ebpf_event_collector import load_runtime_events
+from app.services.nvd_package_mapping import QUARANTINED_MAPPING_STATUS
 from app.services.reachability import analyze_reachability
 from app.services.runtime_context import package_related_to_service, service_name
 from app.services.runtime_evidence import evaluate_runtime_evidence
@@ -152,9 +153,19 @@ def _build_reason(
     return "; ".join(parts)
 
 
-def _recompute_rank_in_engine(db: Session) -> int:
-    """依据最终分数（无最终结论时按候选/基线分数）重新计算优先级排名。"""
-    rows = db.query(models.RiskAssessment).all()
+def _recompute_rank_in_engine(db: Session, asset_id: int | None = None) -> int:
+    """依据最终分数（无最终结论时按候选/基线分数）重新计算优先级排名。
+
+    Asset-scoped calculation ranks only that asset. Ranking against the whole
+    fleet and writing the resulting positions back into one asset's rows made
+    the same risk appear as rank 32/44/107 because other assets occupied the
+    gaps; the operator-visible order inside an asset must come from that
+    asset's own scope. A fleet calculation (asset_id=None) still ranks all.
+    """
+    query = db.query(models.RiskAssessment)
+    if asset_id:
+        query = query.filter(models.RiskAssessment.asset_id == asset_id)
+    rows = query.all()
     ranked = sorted(
         rows,
         key=lambda item: (
@@ -263,14 +274,14 @@ def _likelihood_level(epss_probability: float) -> str:
     return "low"
 
 
-def calculate_risk(db: Session, cve_ids: list[str] | None = None) -> int:
-    """Upsert one candidate per active VulnerabilityMatch without deleting history."""
-    matches = (
-        db.query(models.VulnerabilityMatch)
-        .filter(models.VulnerabilityMatch.active.is_(True), models.VulnerabilityMatch.affected.is_(True))
-        .order_by(models.VulnerabilityMatch.id)
-        .all()
+def calculate_risk(db: Session, cve_ids: list[str] | None = None, asset_id: int | None = None) -> int:
+    """Upsert candidates within the requested asset/CVE scope, retaining history."""
+    match_query = db.query(models.VulnerabilityMatch).filter(
+        models.VulnerabilityMatch.active.is_(True), models.VulnerabilityMatch.affected.is_(True)
     )
+    if asset_id:
+        match_query = match_query.filter(models.VulnerabilityMatch.asset_id == asset_id)
+    matches = match_query.order_by(models.VulnerabilityMatch.id).all()
     target_cves = {base_cve_id(item) for item in cve_ids or []}
     if target_cves:
         matches = [match for match in matches if base_cve_id(match.cve_id) in target_cves]
@@ -472,17 +483,27 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None) -> int:
                 setattr(risk, name, value)
             if changed:
                 from app.services.review_common.governance import record, snapshot, invalidate_prior_authorizations
-                record(db, risk, "risk_reanalysis_reset", "risk_engine", {
-                    "original": snapshot(risk), "reason": "candidate_facts_changed",
-                    "original_direction_semantics": "legacy_or_previous_contract"})
-                invalidate_prior_authorizations(db, risk, "candidate_facts_changed")
-                _reset_for_reanalysis(risk, "候选关键证据发生变化，需重新研判。")
-                _block_open_remediation_tasks(db, risk, "候选关键证据发生变化。")
+                if risk.review_status == QUARANTINED_MAPPING_STATUS:
+                    # 隔离状态是“包名来源无法精确复核”的治理结论，不因运行时
+                    # 证据变化被重置回可研判状态；保留隔离直至人工重新映射。
+                    record(db, risk, "quarantine_preserved_on_fact_change", "risk_engine", {
+                        "original": snapshot(risk),
+                        "reason": "candidate_facts_changed_but_mapping_quarantine_preserved"})
+                else:
+                    record(db, risk, "risk_reanalysis_reset", "risk_engine", {
+                        "original": snapshot(risk), "reason": "candidate_facts_changed",
+                        "original_direction_semantics": "legacy_or_previous_contract"})
+                    invalidate_prior_authorizations(db, risk, "candidate_facts_changed")
+                    _reset_for_reanalysis(risk, "候选关键证据发生变化，需重新研判。")
+                    _block_open_remediation_tasks(db, risk, "候选关键证据发生变化。")
         processed += 1
 
     # Historical risks are retained. They become inactive/resolved when their
     # exact match is no longer in the affected set.
-    for risk in db.query(models.RiskAssessment).filter(models.RiskAssessment.active.is_(True)).all():
+    risk_query = db.query(models.RiskAssessment).filter(models.RiskAssessment.active.is_(True))
+    if asset_id:
+        risk_query = risk_query.filter(models.RiskAssessment.asset_id == asset_id)
+    for risk in risk_query.all():
         if target_cves and base_cve_id(risk.cve_id) not in target_cves:
             continue
         if risk.match_id in current_match_ids:
@@ -502,5 +523,5 @@ def calculate_risk(db: Session, cve_ids: list[str] | None = None) -> int:
         _block_open_remediation_tasks(db, risk, "候选事件已不再命中。")
 
     db.commit()
-    _recompute_rank_in_engine(db)
+    _recompute_rank_in_engine(db, asset_id=asset_id)
     return processed

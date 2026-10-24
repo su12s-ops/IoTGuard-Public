@@ -32,6 +32,10 @@ from app.services.unified.schemas import (
 from app.services.unified.state import TASK_RISK_REVIEW, UnifiedAnalysisState
 
 UNIFIED_ADAPTER_VERSION = f"{PIPELINE_VERSION}+analysis-compat"
+# A formal batch stays bounded, but "all eligible" is no longer silently
+# truncated to one object. Objects beyond this cap remain explicitly listed as
+# remaining/bounded_queue for a later round.
+MAX_REVIEW_BATCH = 20
 
 
 def _utc_now_iso() -> str:
@@ -224,6 +228,19 @@ def _event_result(run_row: models.UnifiedAnalysisRun, state: UnifiedAnalysisStat
     }
 
 
+def _ordered_selected_risks(db: Session, risk_ids: list[int]) -> list[models.RiskAssessment]:
+    """Fetch selected risks while preserving the priority order chosen by the API.
+
+    SQL ``IN`` does not guarantee row order; the background worker must review
+    the same order the operator saw, otherwise the lowest-priority object can
+    be processed first without any report saying so.
+    """
+    rows = (db.query(models.RiskAssessment)
+            .filter(models.RiskAssessment.id.in_(risk_ids)).all() if risk_ids else [])
+    by_id = {row.id: row for row in rows}
+    return [by_id[risk_id] for risk_id in risk_ids if risk_id in by_id]
+
+
 def _aggregate_agent_executions(rows: list[models.UnifiedAnalysisRun]) -> dict[str, Any]:
     aggregate: dict[str, Any] = {}
     for name in ("asset_investigator", "vulnerability_analyst", "runtime_analyst", "decision_planner"):
@@ -243,7 +260,8 @@ def _aggregate_agent_executions(rows: list[models.UnifiedAnalysisRun]) -> dict[s
 def run_review_analysis_unified(db: Session, run_id: str | None = None,
                                 selected_risks=None, selection_result=None,
                                 progress_callback=None,
-                                client_factory=None, investigation_goal: str = "") -> dict[str, Any]:
+                                client_factory=None, investigation_goal: str = "",
+                                asset_id: int = 0) -> dict[str, Any]:
     """System B run_review_analysis 的统一编排器实现（正式模式）。
 
     逐事件串行执行统一图（每事件一次完整四智能体编排），经 formal_sink
@@ -254,7 +272,12 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     if config.UNIFIED_PIPELINE_MODE != "on":
         raise ValueError("formal_unified_mode_required")
     del selection_result
-    selected = list(select_candidates(db)["_selected_risks"] if selected_risks is None else selected_risks)
+    selected = list(select_candidates(db, asset_id=asset_id)["_selected_risks"]
+                    if selected_risks is None else selected_risks)
+    if asset_id:
+        outside = [risk.id for risk in selected if risk.asset_id != asset_id]
+        if outside:
+            raise ValueError(f"risk_outside_asset_scope:{outside}")
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:
         return {"status": "no_candidates", "review_run_id": run_id, "model_called": False}
@@ -321,6 +344,7 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
         "event_results": event_results,
         "candidate_count": len(selected),
         "selected_object_count": len(selected),
+        "processed_object_count": len(rows),
         "completed_object_count": completed,
         "human_review_object_count": human,
         "agent_executions": _aggregate_agent_executions(rows),
@@ -353,13 +377,14 @@ def _admission(function):
 def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                                      background: bool = False,
                                      client_factory=None, risk_id: int = 0, batch_size: int = 1,
-                                     investigation_goal: str = "", post_repair: bool = False) -> dict[str, Any]:
+                                     investigation_goal: str = "", post_repair: bool = False,
+                                     asset_id: int = 0) -> dict[str, Any]:
     """System B generate_and_save_report 的统一编排器实现（正式模式入口）。"""
     from app.services.review_common import select_candidates
 
     if config.UNIFIED_PIPELINE_MODE != "on":
         raise ValueError("formal_unified_mode_required")
-    selection = select_candidates(db)
+    selection = select_candidates(db, asset_id=asset_id)
     eligible = selection["_selected_risks"]
     if post_repair:
         risk = db.get(models.RiskAssessment, risk_id) if risk_id else None
@@ -367,7 +392,7 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
             models.CollectionEvidence.evidence_id.startswith("INV-")).order_by(
             models.CollectionEvidence.id.desc()).first() if risk else None
         from app.services.review_common.governance import correction
-        if not risk or risk.active or risk.review_status != "resolved" or correction(db, risk) or not evidence:
+        if not risk or (asset_id and risk.asset_id != asset_id) or risk.active or risk.review_status != "resolved" or correction(db, risk) or not evidence:
             raise ValueError("resolved_repaired_risk_with_inventory_required")
         if not evidence.evidence_id.startswith("INV-") or hashlib.sha256(evidence.raw_text.encode()).hexdigest() != evidence.content_sha256:
             raise ValueError("intact_inventory_required")
@@ -376,21 +401,49 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         eligible = [risk for risk in eligible if risk.id == risk_id]
         if not eligible:
             raise ValueError("risk_not_eligible_for_formal_analysis")
-    selected_ids = {r.id for r in eligible[:max(1, min(batch_size, 4))]}
+    if asset_id:
+        outside = [risk.id for risk in eligible if risk.asset_id != asset_id]
+        if outside:
+            raise ValueError(f"risk_outside_asset_scope:{outside}")
+    # Explicit scope: 0 = all eligible up to the bounded cap; positive = an
+    # operator-requested smaller batch. Never a hidden default of one.
+    requested_batch = int(batch_size or 0)
+    limit = (MAX_REVIEW_BATCH if requested_batch == 0
+             else max(1, min(requested_batch, MAX_REVIEW_BATCH)))
+    ordered = sorted(
+        eligible,
+        key=lambda risk: (risk.priority_rank if risk.priority_rank is not None else 10 ** 9, risk.id),
+    )
+    chosen = ordered[:limit]
+    selected_ids = {r.id for r in chosen}
     selection["skipped_objects"] = [item for item in selection["skipped_objects"]
                                     if item.get("object_id") not in {f"risk-{i}" for i in selected_ids}]
-    selection["skipped_objects"] += [{"object_id": f"risk-{r.id}", "reason": "bounded_queue"}
-                                     for r in selection["_selected_risks"] if r.id not in selected_ids]
-    selection["_selected_risks"] = [r for r in eligible if r.id in selected_ids]
-    selection["selected_object_ids"] = [f"risk-{r.id}" for r in selection["_selected_risks"]]
-    selection["selected_object_count"] = len(selected_ids)
+    selection["skipped_objects"] += [
+        {"object_id": f"risk-{r.id}", "reason": "bounded_queue",
+         "detail": f"batch_cap={MAX_REVIEW_BATCH}"}
+        for r in ordered if r.id not in selected_ids
+    ]
+    selection["_selected_risks"] = chosen
+    selection["selected_object_ids"] = [f"risk-{r.id}" for r in chosen]
+    selection["selected_object_count"] = len(chosen)
+    selection["eligible_object_count"] = len(ordered)
+    selection["remaining_object_count"] = max(0, len(ordered) - len(chosen))
+    selection["requested_batch_size"] = requested_batch
+    selection["batch_cap"] = MAX_REVIEW_BATCH
+    selection["selection_mode"] = "single_risk" if risk_id else "all_eligible"
     selected = selection["_selected_risks"]
     run_id = run_id or uuid.uuid4().hex[:12]
     if not selected:
         return {
             "run_id": "", "status": "no_candidates",
             "candidate_count": selection["candidate_count"],
-            "selected_object_count": 0, "total_risks_in_db": selection["total_risks_in_db"],
+            "selected_object_count": 0,
+            "eligible_object_count": selection.get("eligible_object_count", 0),
+            "remaining_object_count": 0,
+            "requested_batch_size": requested_batch,
+            "batch_cap": MAX_REVIEW_BATCH,
+            "selection_mode": selection["selection_mode"],
+            "total_risks_in_db": selection["total_risks_in_db"],
             "skipped_objects": selection["skipped_objects"], "selected_object_ids": [],
             "pipeline_version": UNIFIED_ADAPTER_VERSION, "model_called": False,
             "message": "当前没有可进入智能研判的候选对象",
@@ -437,7 +490,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
             result.get("agent_executions", {}), ensure_ascii=False)
         worker_report.termination_reason = result.get("termination_reason", "")
         worker_report.current_stage = result.get("current_stage", "audit_policy")
-        worker_report.processed_object_count = result.get("selected_object_count", 0)
+        worker_report.processed_object_count = result.get(
+            "processed_object_count", result.get("selected_object_count", 0))
         worker_report.completed_object_count = result.get("completed_object_count", 0)
         worker_report.human_review_object_count = result.get("human_review_object_count", 0)
         worker_report.object_verdict_count = len(result.get("valid_verdicts", []))
@@ -454,12 +508,15 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
             try:
                 worker_report = worker_db.query(models.AnalysisReport).filter_by(
                     review_run_id=run_id).one()
-                worker_selected = worker_db.query(models.RiskAssessment).filter(
-                    models.RiskAssessment.id.in_(risk_ids)).all()
+                # Preserve the operator-visible priority order; an IN query
+                # does not guarantee order and previously caused the lowest
+                # priority object (highest id) to be reviewed first.
+                worker_selected = _ordered_selected_risks(worker_db, risk_ids)
                 result = run_review_analysis_unified(
                     worker_db, run_id, worker_selected,
                     progress_callback=lambda **payload: _progress(worker_db, run_id, **payload),
-                    client_factory=client_factory, investigation_goal=investigation_goal)
+                    client_factory=client_factory, investigation_goal=investigation_goal,
+                    asset_id=asset_id)
                 _finish(worker_db, worker_report, result)
             except Exception as exc:
                 traceback.print_exc()
@@ -490,6 +547,11 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
             "run_id": run_id, "report_id": report.id, "model": report.model,
             "status": "running", "candidate_count": selection["candidate_count"],
             "selected_object_count": len(selected),
+            "eligible_object_count": selection.get("eligible_object_count", len(selected)),
+            "remaining_object_count": selection.get("remaining_object_count", 0),
+            "requested_batch_size": requested_batch,
+            "batch_cap": MAX_REVIEW_BATCH,
+            "selection_mode": selection["selection_mode"],
             "total_risks_in_db": selection["total_risks_in_db"],
             "skipped_objects": selection["skipped_objects"],
             "selected_object_ids": selection["selected_object_ids"],
@@ -502,9 +564,16 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         }
 
     result = run_review_analysis_unified(db, run_id, selected, client_factory=client_factory,
-                                         investigation_goal=investigation_goal)
+                                         investigation_goal=investigation_goal, asset_id=asset_id)
     _finish(db, report, result)
-    result["report_id"] = report.id
+    result.update({
+        "report_id": report.id,
+        "eligible_object_count": selection.get("eligible_object_count", len(selected)),
+        "remaining_object_count": selection.get("remaining_object_count", 0),
+        "requested_batch_size": requested_batch,
+        "batch_cap": MAX_REVIEW_BATCH,
+        "selection_mode": selection["selection_mode"],
+    })
     return result
 
 

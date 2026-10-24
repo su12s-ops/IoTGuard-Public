@@ -32,7 +32,9 @@ COPY backend/scripts ./scripts
 COPY backend/migrations ./migrations
 COPY backend/.env.example ./config.env.example
 # Hash-pinned collector payloads consumed by app/services (see header).
-COPY collector ./collector
+# Services resolve repository-root collector/ via parents[3]; with /app/app
+# package layout that root is /. Keep the same fixed path inside the image.
+COPY collector /collector
 
 # Non-root: the API needs no privileged operations. The data volume inherits
 # this ownership when created as a named volume.

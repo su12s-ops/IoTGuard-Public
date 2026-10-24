@@ -14,6 +14,7 @@ from app.services.review_common.evidence_packet import (
 )
 from app.services.review_common.human_review import DIRECTION_ADJUSTMENTS, apply_human_review
 from app.services.review_common.selection import (
+    QUARANTINED_STATUSES,
     REVIEWABLE_STATUSES,
     explain_candidate_selection,
     object_id_for,
@@ -24,6 +25,7 @@ from app.services.review_common.selection import (
 __all__ = [
     "EvidenceItem", "EvidencePacket", "StrictModel", "build_evidence_packet",
     "DIRECTION_ADJUSTMENTS", "apply_human_review",
-    "REVIEWABLE_STATUSES", "explain_candidate_selection", "object_id_for",
+    "QUARANTINED_STATUSES", "REVIEWABLE_STATUSES",
+    "explain_candidate_selection", "object_id_for",
     "preflight_check", "select_candidates",
 ]

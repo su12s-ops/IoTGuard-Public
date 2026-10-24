@@ -70,6 +70,7 @@ export const statusLabel = (status) =>
     pending_human_review: "待人工审查",
     human_reviewing: "审核中",
     reanalysis_required: "要求再研判",
+    quarantined_mapping: "未映射（待重新映射）",
     human_confirmed: "人工已确认",
     approved: "已审批",
     awaiting_approval: "待审批",
@@ -108,7 +109,7 @@ export const statusLabel = (status) =>
 
 export const statusTone = (status) => {
   if (["failed", "blocked", "interrupted", "rolled_back", "degraded"].includes(status)) return "crit";
-  if (["awaiting_approval", "awaiting_preflight", "preflight_failed", "needs_evidence", "verification_required", "pending_human_review", "human_reviewing", "reanalysis_required"].includes(status)) return "high";
+  if (["awaiting_approval", "awaiting_preflight", "preflight_failed", "needs_evidence", "verification_required", "pending_human_review", "human_reviewing", "reanalysis_required", "quarantined_mapping"].includes(status)) return "high";
   if (["completed", "succeeded", "approved", "verified", "human_confirmed", "ready", "fixed", "not_affected"].includes(status)) return "low";
   if (["running", "queued_remote", "pending"].includes(status)) return "accent";
   return "muted";

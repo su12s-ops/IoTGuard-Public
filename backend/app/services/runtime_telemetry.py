@@ -85,15 +85,20 @@ def coverage(db, asset_id):
         timestamp = sensor.last_heartbeat_at
         timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
         age = max(0, (now - timestamp).total_seconds())
-        status = "stale" if age > 120 else sensor.status
+        capabilities = json.loads(sensor.capabilities_json or "{}")
+        # Pull collectors stop after a bounded snapshot. A recent successful
+        # report is not a stopped sensor, nor a continuously running probe.
+        status = "stale" if age > 120 else ("reporting" if capabilities.get("mode") == "pull" and sensor.status == "stopped" else sensor.status)
         if status == "running" and sensor.dropped_events:
             status = "degraded"
         rows.append({"sensor_id": sensor.sensor_id, "source": sensor.source, "status": status,
                      "age_seconds": round(age), "dropped_events": sensor.dropped_events,
-                     "capabilities": json.loads(sensor.capabilities_json or "{}"), "detail": sensor.detail})
+                     "capabilities": capabilities, "detail": sensor.detail})
     states = {r["status"] for r in rows}
-    status = ("degraded" if "degraded" in states or ("running" in states and len(states) > 1)
-              else "running" if "running" in states else "stale" if "stale" in states else "unknown")
+    healthy_states = {"running", "reporting"}
+    status = ("degraded" if "degraded" in states or (states & healthy_states and states - healthy_states)
+              else "running" if "running" in states else "reporting" if "reporting" in states
+              else "stale" if "stale" in states else "unknown")
     return {"asset_id": asset_id, "status": status, "sensors": rows,
             "basis": "self_reported_collector_heartbeat", "absence_proves_safe": False,
             "note": "心跳仅说明采集器报告的状态；覆盖范围、丢失事件和内核兼容性须分别验证。"}

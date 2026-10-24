@@ -42,6 +42,80 @@ MAX_EVIDENCE_IDS = 30
 MAX_COMPONENTS = 60
 MAX_SOURCE_RECORDS = 12
 
+# ── 官方公告自由文本有界化 ────────────────────────────────────────────────────
+# 实测：单条 OpenWrt/GHSA 官方 description 可达 18,012 字符（含成段 PoC 代码），
+# 整个 evidence_prep 包可达 30k–103k 字符；研判必需的是 scope/official_range/
+# source_url/ghsa_id/content_sha256/fix_statement 等结构化事实，自由文本是冗余。
+# 这里只按**字符上限截断自由文本**，绝不删除/改写任何结构化字段；content_sha256
+# 始终保留官方原文哈希（它是原文完整性凭据，不因展示层截断而重算）。
+MAX_FREE_TEXT_CHARS: dict[str, int] = {
+    "description": 2000,
+    "summary": 500,
+    "official_summary": 500,
+    "note": 2000,
+    "status_comment": 2000,
+    "details": 2000,
+}
+TEXT_TRUNCATION_KEY = "text_truncation"
+
+
+def _truncation_marker(original_chars: int, kept_chars: int) -> str:
+    return (f"\n[TRUNCATED original_chars={original_chars} "
+            f"kept_chars={kept_chars}]")
+
+
+def _truncate_free_text(text: str, limit: int) -> tuple[str, dict[str, int] | None]:
+    """截断单条自由文本并返回（截断后文本，原始计数元数据）。
+
+    截断后的总长度（含标记）不超过 ``limit``；未超限时原样返回且不添加标记，
+    因此重复调用是幂等的。元数据保留原始字符数，供审计与前端提示。
+    """
+    if limit <= 0 or len(text) <= limit:
+        return text, None
+    original = len(text)
+    marker = _truncation_marker(original, 0)
+    keep = max(0, limit - len(marker))
+    marker = _truncation_marker(original, keep)
+    if keep + len(marker) > limit:   # 标记因位数变化而变长时再收一次
+        keep = max(0, limit - len(marker))
+        marker = _truncation_marker(original, keep)
+    return text[:keep] + marker, {
+        "original_chars": original, "kept_chars": keep,
+        "limit": limit, "marker": "[TRUNCATED]"}
+
+
+def _bound_free_text_node(value: Any, limits: dict[str, int]) -> Any:
+    if isinstance(value, dict):
+        bounded: dict[str, Any] = {}
+        truncated: dict[str, dict[str, int]] = {}
+        for key, item in value.items():
+            field = str(key).lower()
+            if isinstance(item, str) and field in limits:
+                text, info = _truncate_free_text(item, limits[field])
+                bounded[key] = text
+                if info is not None:
+                    truncated[key] = info
+            else:
+                bounded[key] = _bound_free_text_node(item, limits)
+        if truncated:
+            existing = bounded.get(TEXT_TRUNCATION_KEY)
+            meta = dict(existing) if isinstance(existing, dict) else {}
+            meta.update(truncated)
+            bounded[TEXT_TRUNCATION_KEY] = meta
+        return bounded
+    if isinstance(value, list):
+        return [_bound_free_text_node(item, limits) for item in value]
+    return value
+
+
+def bound_free_text(value: Any, limits: dict[str, int] | None = None) -> Any:
+    """返回有界副本：只截断官方自由文本，结构化事实与哈希原样保留。
+
+    递归处理嵌套的 records/value 载荷；输入不被原地修改（源 bundle 仍可用于
+    确定性语义提取，如分支声明与厂商补丁语义）。
+    """
+    return _bound_free_text_node(value, dict(limits or MAX_FREE_TEXT_CHARS))
+
 # ── 分支适用性声明提取（通用公告语义，非案例定制） ─────────────────────────────
 
 # 显式「不受影响」否定性短语（句级匹配）
@@ -162,6 +236,11 @@ def _logical_payloads(source_bundle: dict[str, Any]) -> dict[str, dict[str, Any]
         if not isinstance(entry, dict):
             continue
         payload = entry.get("value") if entry.get("value") else entry.get("evidence")
+        if not isinstance(payload, dict) and isinstance(entry.get("records"), list):
+            payload = {"records": entry["records"]}  # 兼容旧版顶层 records
+        elif (not isinstance(payload, dict) and "value" not in entry
+              and "evidence" not in entry and "cpe_status" in entry):
+            payload = entry  # 混合旧 records 与已展平的发行版/NVD 载荷
         if isinstance(payload, dict) and payload:
             logical[str(source_name)] = payload
     return logical
@@ -188,7 +267,7 @@ def collect_stances(source_bundle: dict[str, Any]) -> dict[str, str]:
         other = logical.get(extra_source) or {}
         if str(other.get("cpe_status") or ""):
             stances.setdefault(extra_source, str(other["cpe_status"]))
-    openwrt = source_bundle.get("openwrt_advisory") or {}
+    openwrt = logical.get("openwrt_advisory") or source_bundle.get("openwrt_advisory") or {}
     if openwrt.get("records"):
         stances.setdefault("openwrt_advisory", "operator_supplied_affected")
     return stances
@@ -325,6 +404,9 @@ class CandidateFacts(BaseModel):
     package_name: str = ""
     installed_version: str = ""
     fixed_version: str = ""
+    match_status: str = ""
+    reason_code: str = ""
+    match_reason: str = ""
     version_compare: dict[str, Any] = Field(default_factory=dict)
     branch_check: dict[str, Any] = Field(default_factory=dict)
     vendor_conflict: dict[str, Any] = Field(default_factory=dict)
@@ -379,7 +461,7 @@ class EvidencePrepPacket(BaseModel):
 
 
 def _source_texts(db: Session, cve_id: str, release: str,
-                  package_name: str) -> tuple[list[dict[str, str]], dict[str, Any]]:
+                  package_name: str, os_version: str = "") -> tuple[list[dict[str, str]], dict[str, Any]]:
     """多源情报状态包中适合做分支声明核对的文本字段（含记录级 status 语义）。
 
     一并纳入操作员登记的 OpenWrt 厂商公告（与 Agent 2 专属工具同源）。
@@ -393,10 +475,15 @@ def _source_texts(db: Session, cve_id: str, release: str,
         "status": "snapshot_available" if official else "not_in_snapshot",
         "value": {"records": official},
     }
-    advisories = db.query(models.OpenWrtAdvisory).filter_by(
-        cve_id=cve_id.split(":", 1)[0]).all()
+    from app.services import openwrt_intel
+    # 与 matcher 的源码/二进制包别名一致；绝不混入同 CVE 的其他组件。
+    components = [package_name] + [name for name in openwrt_intel.PACKAGE_ALIASES
+                                  if name != package_name and
+                                  package_name in openwrt_intel.installed_names_for(name)]
+    advisories = [row for component in components if component
+                  for row in openwrt_intel.records_for_match(
+                      db, cve_id, component, os_version or release)]
     if advisories:
-        from app.services import openwrt_intel
 
         def _advisory_note(item):
             note = openwrt_intel.notes_of(item)
@@ -408,12 +495,19 @@ def _source_texts(db: Session, cve_id: str, release: str,
 
         bundle["openwrt_advisory"] = {
             "source": "openwrt_advisory", "status": "operator_supplied_or_normalized",
-            "records": [{
+            "value": {"records": [{
                 "package_name": item.package_name, "release": item.release,
                 "affected_versions": json.loads(item.affected_versions_json or "[]"),
                 "fixed_versions": json.loads(item.fixed_versions_json or "[]"),
+                "source_url": item.source_url,
+                **{key: openwrt_intel.notes_of(item).get(key) for key in
+                   ("scope", "official_range", "ghsa_id", "content_sha256", "fix_statement")},
+                "provenance": openwrt_intel.notes_of(item).get("provenance") or "operator_supplied",
+                "source": ("openwrt_ghsa_normalized" if openwrt_intel.is_normalized_record(item)
+                           else "operator_supplied_openwrt_advisory"),
                 "note": _advisory_note(item),
             } for item in advisories[:MAX_SOURCE_RECORDS]],
+                "records_truncated": len(advisories) > MAX_SOURCE_RECORDS},
         }
     texts: list[dict[str, str]] = []
     for source_name, payload in sorted(_logical_payloads(bundle).items()):
@@ -516,7 +610,15 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
         installed = str(candidate.get("installed_version") or "")
         fixed = str(candidate.get("fixed_version") or "")
         version_compare: dict[str, Any] = {"result": "unknown"}
-        if installed and fixed:
+        official_openwrt = str(candidate.get("reason_code") or "").startswith("openwrt_")
+        if official_openwrt:
+            version_compare = {
+                "result": "unknown", "official_match_status": candidate.get("match_status", ""),
+                "reason_code": candidate.get("reason_code", ""),
+                "note": "OpenWrt 官方版本域结论见 match_status/match_reason 与公告；"
+                        "包版本与固件边界不可作普通版本比较，fixed_version 为空不否定受影响结论。",
+            }
+        elif installed and fixed:
             affected = is_version_less(installed, fixed)
             version_compare = {
                 "result": "affected" if affected else "fixed",
@@ -534,7 +636,8 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
         texts, bundle = ({}, {})
         if cve_id:
             texts, bundle = _source_texts(db, cve_id, release=release,
-                                          package_name=str(candidate.get("package_name") or ""))
+                                          package_name=str(candidate.get("package_name") or ""),
+                                          os_version=asset.os_version if asset else "")
         branch_check = (check_branch_applicability(texts, installed)
                         if (texts and installed) else {"result": "undetermined"})
         intel_summary = _intel_summary(db, cve_id) if cve_id else {}
@@ -542,12 +645,15 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
             models.VulnerabilityMatch.cve_id.like(f"{cve_id}%")).count() if cve_id else 0
         # 有界源状态包：{source: {status, source_updated_at, value}}（value 为
         # release 语义化记录；省略 evidence 全量镜像，Agent 深查时仍有专属工具）
-        source_bundle = {
+        # 官方自由文本有界化：只截断展示层 description/summary/note 等，
+        # scope/official_range/source_url/ghsa_id/content_sha256/fix_statement
+        # 等结构化事实与哈希保持官方原值（截断元数据见 text_truncation）。
+        source_bundle = bound_free_text({
             name: {"status": entry.get("status"),
                    "source_updated_at": entry.get("source_updated_at"),
-                   "value": entry.get("value")}
+                   "value": _logical_payloads({name: entry}).get(name)}
             for name, entry in (bundle or {}).items() if isinstance(entry, dict)
-        }
+        })
         vendor_patch = detect_vendor_patch_semantics(bundle or {}, installed)
         if asset and asset.distribution == "ubuntu" and not vendor_patch.get("release_status"):
             version_compare = {**version_compare, "result": "unknown",
@@ -567,6 +673,9 @@ def build_evidence_prep_packet(db: Session, target_ref: str, target_type: str,
         candidate_facts.append(CandidateFacts(
             cve_id=cve_id, package_name=str(candidate.get("package_name") or ""),
             installed_version=installed, fixed_version=fixed,
+            match_status=str(candidate.get("match_status") or ""),
+            reason_code=str(candidate.get("reason_code") or ""),
+            match_reason=str(candidate.get("match_reason") or ""),
             version_compare=version_compare, branch_check=branch_check,
             vendor_conflict=detect_vendor_conflict(bundle or {}),
             vendor_patch=vendor_patch,

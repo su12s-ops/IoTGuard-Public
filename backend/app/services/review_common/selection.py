@@ -11,16 +11,24 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from app import models
+from app.services.nvd_package_mapping import QUARANTINED_MAPPING_STATUS
 
-REVIEWABLE_STATUSES = {"candidate", "reanalysis_required"}
+# 正式研判白名单：只有这两类可进入四智能体研判。
+REVIEWABLE_STATUSES = frozenset({"candidate", "reanalysis_required"})
+# 隔离状态：NVD 包名来源无法精确复核，保留在风险列表但绝不进入正式研判。
+# 即使未来误把该状态加入白名单，下面的显式分支也会拦截。
+QUARANTINED_STATUSES = frozenset({QUARANTINED_MAPPING_STATUS})
 
 
 def object_id_for(risk: models.RiskAssessment) -> str:
     return f"risk-{risk.id}"
 
 
-def select_candidates(db: Session) -> dict[str, Any]:
-    risks = db.query(models.RiskAssessment).order_by(models.RiskAssessment.priority_rank).all()
+def select_candidates(db: Session, asset_id: int = 0) -> dict[str, Any]:
+    query = db.query(models.RiskAssessment)
+    if asset_id:
+        query = query.filter(models.RiskAssessment.asset_id == asset_id)
+    risks = query.order_by(models.RiskAssessment.priority_rank).all()
     selected: list[models.RiskAssessment] = []
     skipped: list[dict[str, Any]] = []
     for risk in risks:
@@ -28,6 +36,9 @@ def select_candidates(db: Session) -> dict[str, Any]:
         reason = ""
         if not risk.active:
             reason = "inactive"
+        elif risk.review_status in QUARANTINED_STATUSES:
+            # 显式隔离：不进入候选，且与普通“状态不可研判”区分，便于审计。
+            reason = "nvd_package_mapping_quarantined"
         elif risk.review_status not in REVIEWABLE_STATUSES:
             reason = "status_not_reviewable"
         elif not risk.match_id:
@@ -49,6 +60,7 @@ def select_candidates(db: Session) -> dict[str, Any]:
     return {
         "total_risks_in_db": len(risks),
         "candidate_count": sum(r.review_status in REVIEWABLE_STATUSES for r in risks),
+        "quarantined_count": sum(r.review_status in QUARANTINED_STATUSES for r in risks),
         "selected_object_count": len(selected),
         "selected_object_ids": [object_id_for(risk) for risk in selected],
         "unselected_count": len(skipped),
@@ -57,8 +69,8 @@ def select_candidates(db: Session) -> dict[str, Any]:
     }
 
 
-def explain_candidate_selection(db: Session) -> dict[str, Any]:
-    return select_candidates(db)
+def explain_candidate_selection(db: Session, asset_id: int = 0) -> dict[str, Any]:
+    return select_candidates(db, asset_id=asset_id)
 
 
 def preflight_check(db: Session, pipeline_version: str) -> dict[str, Any]:

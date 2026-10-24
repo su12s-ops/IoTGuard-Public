@@ -51,6 +51,22 @@ class ChatClient(Protocol):
         ...
 
 
+class ModelResponseError(ValueError):
+    """A real model response was received but is unusable; retain its actual usage.
+
+    Transport errors/timeouts must not use this exception: no usage is estimated.
+    Staying a ValueError preserves the existing rejection/retry contract.
+    """
+
+    def __init__(self, message: str, *, usage: dict[str, Any] | None,
+                 model: str, stop_reason: str):
+        super().__init__(message)
+        self.response_received = True
+        self.usage = usage
+        self.model = model
+        self.stop_reason = stop_reason
+
+
 class DeepSeekChatClient:
     """真实客户端：openai SDK 直连 DeepSeek 兼容接口。"""
 
@@ -187,8 +203,22 @@ class AnthropicProtocolChatClient:
         if timeout_s is not None:
             client = client.with_options(timeout=max(0.001, min(self._timeout, timeout_s)), max_retries=0)
         response = client.messages.create(**kwargs)
-        if getattr(response, "stop_reason", None) == "max_tokens":
-            raise ValueError("model_output_truncated: increase output budget or simplify report")
+        # Extract real usage before rejecting an unusable response. Truncation
+        # consumes tokens too, but must never expose its content as valid output.
+        usage = None
+        raw_usage = getattr(response, "usage", None)
+        if raw_usage is not None:
+            prompt = getattr(raw_usage, "input_tokens", None)
+            completion = getattr(raw_usage, "output_tokens", None)
+            total = prompt + completion if prompt is not None and completion is not None else None
+            usage = {"prompt_tokens": prompt, "completion_tokens": completion,
+                     "total_tokens": total}
+        stop_reason = getattr(response, "stop_reason", None)
+        if stop_reason == "max_tokens":
+            raise ModelResponseError(
+                "model_output_truncated: increase output budget or simplify report",
+                usage=usage, model=getattr(response, "model", None) or self._model,
+                stop_reason=stop_reason)
         text_parts: list[str] = []
         tool_calls: list[dict[str, Any]] = []
         for block in response.content or []:
@@ -198,14 +228,6 @@ class AnthropicProtocolChatClient:
             elif block_type == "tool_use":
                 tool_calls.append({"id": block.id, "name": block.name,
                                    "arguments": dict(block.input or {})})
-        usage = None
-        raw_usage = getattr(response, "usage", None)
-        if raw_usage is not None:
-            prompt = getattr(raw_usage, "input_tokens", None)
-            completion = getattr(raw_usage, "output_tokens", None)
-            total = prompt + completion if prompt is not None and completion is not None else None
-            usage = {"prompt_tokens": prompt, "completion_tokens": completion,
-                     "total_tokens": total}
         return {"content": "".join(text_parts) or None, "tool_calls": tool_calls,
                 "model": self._model, "usage": usage}
 

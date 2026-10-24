@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
-from app.services.unified.collaboration import merge_immutable
+from app.services.unified.collaboration import evidence_registry_ids, merge_immutable
 
 
 def merge_dict(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
@@ -167,7 +167,7 @@ class UnifiedAnalysisState(BaseModel):
     def known_evidence_ids(self) -> set[str]:
         """状态中真实存在的证据引用全集（程序校验 Agent 引用的依据）。"""
         if self.evidence_snapshot:
-            return set(self.evidence_snapshot.get("evidence_registry") or {})
+            return evidence_registry_ids(self.evidence_snapshot)
         ids: set[str] = set(self.baseline.get("packet_evidence_ids") or [])
         investigation = self.investigation or {}
         inventory = investigation.get("evidence_inventory") or {}

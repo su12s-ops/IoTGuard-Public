@@ -70,9 +70,25 @@ def facts_sha256(case: dict, packet_sha256: str) -> str:
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
 
 
-def _packet_sha256(risk) -> str:
-    raw = (risk.evidence_packet_json if risk is not None else "") or ""
-    return hashlib.sha256(raw.encode()).hexdigest()
+def _state_facts_sha256(state: dict) -> str:
+    """Hash persisted inputs, never substitute today's risk packet for a past run.
+
+    Keep timestamps/freshness in the payload: different time windows are not
+    demonstrably identical facts and must not be silently paired.
+    """
+    if not state.get("evidence_prep"):
+        raise SystemExit("facts_snapshot_missing: 运行缺少确定性预取事实，不能进入对照观测")
+    payload = {key: state.get(key) for key in
+               ("baseline", "candidate_context", "capability_marks", "evidence_prep")}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
+def _assert_case_matches_run(case: dict, run) -> None:
+    expected = {"risk_id": case.get("risk_id"), "target_ref": case["target_ref"],
+                "target_type": case.get("target_type", "linux_host"),
+                "task_type": case.get("task_type", "risk_review")}
+    if any(getattr(run, key, None) != value for key, value in expected.items()):
+        raise SystemExit(f"case_mismatch: 运行 {run.run_id} 不属于案例 {case['case_id']}")
 
 
 def actual_from_run(state: dict) -> dict:
@@ -154,14 +170,15 @@ def import_from_run(case: dict, strategy: str, repeat: int, run_id: str) -> dict
             raise SystemExit(f"运行不存在：{run_id}")
         if run.status != "completed":
             raise SystemExit(f"运行未完成：{run_id} status={run.status}")
+        _assert_case_matches_run(case, run)
         state = json.loads(run.state_json or "{}")
+        _assert_strategy_applied(strategy, state, run_id)
         agents = json.loads(run.agents_json or "{}")
         usage = json.loads(run.usage_json or "{}")
-        risk = db.get(models.RiskAssessment, case["risk_id"]) if case.get("risk_id") else None
         latency = ((run.completed_at - run.created_at).total_seconds()
                    if run.completed_at and run.created_at else 0.0)
         return row(case, strategy, repeat, actual_from_run(state), status_of(state),
-                   _packet_sha256(risk), latency,
+                   _state_facts_sha256(state), latency,
                    (usage.get("usage") or {}).get("total_tokens"),
                    invalid_evidence_refs(agents), "recorded", run_id=run_id)
     finally:
@@ -201,14 +218,13 @@ def execute_case(case: dict, strategy: str, repeat: int) -> dict:
     from app import models
     from app.database import SessionLocal
     from app.services.unified import runner as runner_mod
-    from app.services.unified.graph import RunContext, new_run_id, node_prepare
+    from app.services.unified.graph import RunContext, new_run_id, node_prepare, node_prepare_evidence
     from app.services.unified.agent_base import default_client_factory
     from app.services.unified.state import UnifiedAnalysisState, empty_state
 
     db = SessionLocal()
     try:
         risk = db.get(models.RiskAssessment, case["risk_id"]) if case.get("risk_id") else None
-        packet_sha = _packet_sha256(risk)
         started = time.monotonic()
         if strategy == "rules":
             state = empty_state(new_run_id(), case.get("task_type", "risk_review"),
@@ -218,6 +234,8 @@ def execute_case(case: dict, strategy: str, repeat: int) -> dict:
             ctx = RunContext(db_factory=SessionLocal, trace_id="", risk=risk)
             update = node_prepare(ctx)(state)
             state = state.model_copy(update=update)
+            state = state.model_copy(update=node_prepare_evidence(ctx)(state))
+            packet_sha = _state_facts_sha256(state.model_dump())
             state = runner_mod._simple_tier_state(state)
             latency = time.monotonic() - started
             return row(case, strategy, repeat, actual_from_baseline(state.baseline, state.decision),
@@ -230,7 +248,8 @@ def execute_case(case: dict, strategy: str, repeat: int) -> dict:
         db.add(run_row)
         db.commit()
         runner_mod.run_unified_sync(db, run_row, client_factory=default_client_factory,
-                                   strategy=strategy, force_full_review=True)
+                                   strategy=strategy, force_full_review=True,
+                                   budgets={"follow_up_rounds": 0} if strategy == "single_agent" else None)
         db.refresh(run_row)
         latency = ((run_row.completed_at - run_row.created_at).total_seconds()
                    if run_row.completed_at and run_row.created_at else time.monotonic() - started)
@@ -238,7 +257,9 @@ def execute_case(case: dict, strategy: str, repeat: int) -> dict:
         agents = json.loads(run_row.agents_json or "{}")
         usage = json.loads(run_row.usage_json or "{}")
         _assert_strategy_applied(strategy, state, run_row.run_id)
-        return row(case, strategy, repeat, actual_from_run(state), status_of(state), packet_sha,
+        packet_sha = _state_facts_sha256(state)
+        return row(case, strategy, repeat, actual_from_run(state),
+                   "failed" if run_row.status == "failed" else status_of(state), packet_sha,
                    latency, (usage.get("usage") or {}).get("total_tokens"),
                    invalid_evidence_refs(agents), "live", run_id=run_row.run_id,
                    error=run_row.error or "")

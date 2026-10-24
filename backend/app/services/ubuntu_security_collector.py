@@ -252,36 +252,59 @@ def _restore_cached_canonical_package(db: Session, package_name: str, codename: 
     return restored
 
 
-def _enrich_intel(db: Session, cve_ids: list[str], force: bool = False) -> tuple[int, int]:
+def _enrich_intel(db: Session, cve_ids: list[str], force: bool = False, progress=None) -> tuple[int, int]:
     base_ids = sorted({cve_id.split(":", 1)[0] for cve_id in cve_ids})
     kev_count = epss_count = 0
+
+    def report(message, current=0, total=0):
+        # Observability must not change provider requests if a UI callback fails.
+        try:
+            _report_progress(progress, message, current, total)
+        except Exception:
+            pass
 
     nvd_ids = base_ids if force else cves_needing_refresh(db, base_ids, "nvd")
     # NVD API 限流：无 Key 时 5 请求/30s，有 Key 时 50 请求/30s。逐条请求必须主动节流，
     # 否则连续快速请求会触发 Cloudflare 429 (error 1015) 导致出口 IP 被临时封禁。
     nvd_sleep = 0.7 if os.getenv("NVD_API_KEY", "").strip() else 6.0
+    nvd_completed = 0
+    report(f"NVD enrichment: starting {len(nvd_ids)} CVEs (throttle {nvd_sleep:g}s)", 0, len(nvd_ids))
     try:
         nvd_items: list[dict[str, Any]] = []
         for index, cve_id in enumerate(nvd_ids):
+            report(f"NVD enrichment: fetching {cve_id} ({index + 1}/{len(nvd_ids)})", index, len(nvd_ids))
             nvd_items.extend(fetch_nvd_by_cve(cve_id))
+            nvd_completed = index + 1
+            report(f"NVD enrichment: fetched {index + 1}/{len(nvd_ids)} CVEs", index + 1, len(nvd_ids))
             if index < len(nvd_ids) - 1:
                 time.sleep(nvd_sleep)
+        report("NVD enrichment: storing provider results", len(nvd_ids), len(nvd_ids))
         NvdProvider().store_items(db, nvd_items)
+        report("NVD enrichment: completed", len(nvd_ids), len(nvd_ids))
     except Exception as exc:
         mark_provider_failure(db, nvd_ids, "nvd", classify_error(exc), str(exc))
+        report("NVD enrichment: failed; provider failure recorded", nvd_completed, len(nvd_ids))
 
     kev_ids = base_ids if force else cves_needing_refresh(db, base_ids, "cisa_kev")
+    report(f"KEV enrichment: starting {len(kev_ids)} CVEs", 0, len(kev_ids))
     try:
         if kev_ids:
+            report("KEV enrichment: fetching CISA catalog", 0, len(kev_ids))
             kev_map = fetch_cisa_kev()
+            report(f"KEV enrichment: storing {len(kev_map)} catalog entries", len(kev_ids), len(kev_ids))
             CisaKevProvider().store_catalog(db, kev_ids, {"vulnerabilities": list(kev_map.values())})
+        report("KEV enrichment: completed", len(kev_ids), len(kev_ids))
     except Exception as exc:
         mark_provider_failure(db, kev_ids, "cisa_kev", classify_error(exc), str(exc))
+        report("KEV enrichment: failed; provider failure recorded", 0, len(kev_ids))
 
     epss_ids = base_ids if force else cves_needing_refresh(db, base_ids, "epss")
+    report(f"EPSS enrichment: starting {len(epss_ids)} CVEs", 0, len(epss_ids))
     try:
         if epss_ids:
+            report("EPSS enrichment: fetching scores", 0, len(epss_ids))
             epss_map = fetch_epss(epss_ids)
+            report(f"EPSS enrichment: storing {len(epss_map)} scores", len(epss_ids), len(epss_ids))
             EpssProvider().store_rows(
                 db,
                 epss_ids,
@@ -290,9 +313,11 @@ def _enrich_intel(db: Session, cve_ids: list[str], force: bool = False) -> tuple
                     for cve_id, row in epss_map.items()
                 ]},
             )
+        report("EPSS enrichment: completed", len(epss_ids), len(epss_ids))
     except Exception as exc:
         mark_provider_failure(db, epss_ids, "epss", classify_error(exc), str(exc))
-
+        report("EPSS enrichment: failed; provider failure recorded", 0, len(epss_ids))
+    report("Intelligence enrichment: fusing provider results", 0, len(base_ids))
     apply_fused_intelligence(db, base_ids)
     for cve_id in base_ids:
         sources = source_rows(db, cve_id)
@@ -306,6 +331,7 @@ def _enrich_intel(db: Session, cve_ids: list[str], force: bool = False) -> tuple
                 epss_count += 1 if json.loads(sources["epss"].normalized_data).get("score") is not None else 0
             except (TypeError, ValueError):
                 pass
+    report("Intelligence enrichment: completed", len(base_ids), len(base_ids))
     return kev_count, epss_count
 
 
@@ -378,8 +404,10 @@ def sync_ubuntu_asset_intelligence(
     result.changed_cve_ids = sorted({item.split(":", 1)[0] for item in saved_cves} | changed_cves)
     if saved_cves:
         try:
-            _report_progress(progress, "Fetching KEV and EPSS enrichment")
-            result.kev_marked, result.epss_enriched = _enrich_intel(db, sorted(saved_cves), force=replace)
+            _report_progress(progress, "Fetching NVD, KEV and EPSS enrichment")
+            result.kev_marked, result.epss_enriched = _enrich_intel(
+                db, sorted(saved_cves), force=replace, progress=progress
+            )
             db.commit()
         except Exception as exc:
             warning = f"Ubuntu KEV/EPSS enrichment skipped: {exc}"

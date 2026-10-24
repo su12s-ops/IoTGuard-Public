@@ -8,12 +8,15 @@
 同一批运行校准出的字符/token 比（1 次真实模型调用 = 1 个样本）：
 7.04、6.65、3.57 字符/token。中英混排 JSON 取保守下界，见 `CHARS_PER_TOKEN`。
 
-本模块只做两件确定性的事情，不做任何语义裁剪：
+本模块只做三件确定性的事情，不做任何语义裁剪：
 
 1. `bounded_ids`：把「可引用 ID 全集」渲染成有界样本 + 总数 + 截断标记，
    避免把十万级 ID 塞进提示词；
 2. `enforce_context_budget`：请求前估算 token，超过角色额度时**显式失败**
-   （降级原因写明实测值与上限），而不是把 7MB 提示词发给模型换一个 400。
+   （降级原因写明实测值与上限），而不是把 7MB 提示词发给模型换一个 400；
+3. `enforce_conversation_budget`：工具循环每次请求前对**完整 messages**
+   估算 token。首轮提示词通过闸门不代表后续轮次有界——实测首轮 21,701
+   字符在工具结果累积后膨胀到 400,331 字符并超时 800s。
 """
 from __future__ import annotations
 
@@ -44,16 +47,18 @@ DEFAULT_ID_RENDER_LIMIT = 80
 class ContextBudgetExceeded(RuntimeError):
     """提示词超过角色额度：调用方应把该角色显式降级，而不是发送后等模型侧拒绝。"""
 
-    def __init__(self, role: str, tokens: int, limit: int, chars: int):
+    def __init__(self, role: str, tokens: int, limit: int, chars: int, *, stage: str = ""):
         self.role = role
         self.tokens = tokens
         self.limit = limit
         self.chars = chars
+        self.stage = stage
         super().__init__(
             f"role={role} 估算 {tokens} tokens（{chars} 字符）超过角色额度 {limit} tokens")
 
     def as_reason(self) -> str:
-        return (f"context_budget_exceeded: role={self.role} estimated_tokens={self.tokens} "
+        stage = f" stage={self.stage}" if self.stage else ""
+        return (f"context_budget_exceeded:{stage} role={self.role} estimated_tokens={self.tokens} "
                 f"limit={self.limit} chars={self.chars}")
 
 
@@ -80,6 +85,33 @@ def enforce_context_budget(text: str, role: str,
     if tokens > limit:
         raise ContextBudgetExceeded(role, tokens, limit, len(text))
     return {"role": role, "estimated_tokens": tokens, "chars": len(text), "limit_tokens": limit}
+
+
+def messages_chars(messages: Iterable[Any]) -> int:
+    """完整 messages 的字符数（与 agent_base 请求日志的 input_chars 同口径）。"""
+    return sum(len(json.dumps(message, ensure_ascii=False, default=str)) for message in messages)
+
+
+def enforce_conversation_budget(messages: Iterable[Any], role: str,
+                                overrides: dict[str, int] | None = None,
+                                *, stage: str = "conversation") -> dict[str, Any]:
+    """累计对话预算：每次发起请求前对**完整 messages**估算 token。
+
+    工具循环里 messages 会持续累积；只有首轮经过 ``enforce_context_budget``
+    不足以保证后续轮次有界（实测 21,701 字符的首轮提示词在工具循环中膨胀到
+    400,331 字符并超时 800s）。这里使用与单次提示词相同的角色额度，不新增/
+    不修改任何预算数值；超限时抛 ``ContextBudgetExceeded``，调用方必须在
+    发送前停止工具循环并显式降级。
+    """
+    materialized = list(messages)
+    chars = messages_chars(materialized)
+    # 直接复用同一 CHARS_PER_TOKEN 口径，避免为 400k 长度构造字符串。
+    tokens = max(1, math.ceil(chars / CHARS_PER_TOKEN)) if chars else 0
+    limit = role_token_budget(role, overrides)
+    if tokens > limit:
+        raise ContextBudgetExceeded(role, tokens, limit, chars, stage=stage)
+    return {"role": role, "estimated_tokens": tokens, "chars": chars, "limit_tokens": limit,
+            "message_count": len(materialized), "stage": stage}
 
 
 def bounded_ids(values: Iterable[Any], *, limit: int = DEFAULT_ID_RENDER_LIMIT,

@@ -221,6 +221,7 @@ function reviewLabel(row) {
 function reviewTone(row) {
   if (row.active === false) return "muted";
   if (row.humanReviewRequired || row.reviewStatus === "pending_human_review") return "high";
+  if (row.reviewStatus === "quarantined_mapping") return "high";
   if (row.reviewStatus === "human_confirmed") return "low";
   return "info";
 }

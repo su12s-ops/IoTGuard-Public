@@ -24,6 +24,7 @@ from app.services.unified.schemas import ALL_AGENT_IDS
 from app.services.unified.state import TASK_TYPES
 from app.services.device_access import require_control
 from app.services.unified import investigation
+from app.services.unified.read_model import project_live_roles
 
 router = APIRouter(prefix="/unified", tags=["Unified four-agent orchestration"])
 
@@ -242,7 +243,7 @@ def get_run(run_id: str, db: Session = Depends(get_db)):
     row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id).one_or_none()
     if row is None:
         raise HTTPException(404, "运行不存在")
-    result = _serialize_run(row)
+    result = project_live_roles(db, row, _serialize_run(row))
     linked = []
     if row.risk_id:
         for run in db.query(models.HarnessRun).filter_by(risk_id=row.risk_id).order_by(models.HarnessRun.created_at.desc()).limit(100):

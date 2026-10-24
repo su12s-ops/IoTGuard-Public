@@ -31,6 +31,12 @@ def _review_entrypoint(db: Session, run_id: str, background: bool = True, **kwar
 
 router = APIRouter(prefix="/analysis", tags=["Multi-Agent Review"])
 
+# A container restart can leave risks in these statuses with no live report;
+# they block every new batch until an operator explicitly recovers them.
+IN_PROGRESS_REVIEW_STATUSES = (
+    "running", "evidence_preparing", "agent_reviewing", "conflict_review", "coordinator_review",
+)
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # 共享序列化器
@@ -135,13 +141,17 @@ def preflight(db: Session = Depends(get_db)):
 # ═══════════════════════════════════════════════════════════════════════════
 
 @router.post("/runs", dependencies=[Depends(require_control)])
-def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1,
+def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 0,
                post_repair: bool = False,
-               investigation_goal: str = Query(default="", max_length=2000), db: Session = Depends(get_db)):
+               investigation_goal: str = Query(default="", max_length=2000), db: Session = Depends(get_db),
+               asset_id: int = 0):
     """启动一次四智能体联合研判任务（后台执行）。
 
-    返回 run_id 和当前状态，前端应轮询 GET /runs/{run_id} 获取进度。
-    若候选为 0，快速返回 no_candidates 状态（不调用模型）。
+    ``batch_size=0`` 表示范围内全部符合条件对象（受统一编排器批次上限约束，
+    未进入本批的对象会在 skipped_objects 中给出 bounded_queue 原因）；
+    正数表示显式较小批次。返回 run_id 和当前状态，前端应轮询
+    GET /runs/{run_id} 获取进度。若候选为 0，快速返回 no_candidates 状态
+    （不调用模型）。
     """
     if config.UNIFIED_PIPELINE_MODE != "on":
         raise HTTPException(503, "formal_unified_mode_required; legacy LLM retired")
@@ -149,13 +159,24 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
     # not a crashed worker and must not be reset by another HTTP request.
     recovered = 0
 
+    if risk_id:
+        risk = db.get(models.RiskAssessment, risk_id)
+        if risk is None:
+            raise HTTPException(409, "risk_not_eligible_for_formal_analysis")
+        if asset_id and risk.asset_id != asset_id:
+            raise HTTPException(409, "risk_not_in_asset_scope")
+
     retry_reset_count = 0
     if retry_failed:
-        retry_reset_count = _reset_latest_failed_objects(db)
+        retry_reset_count = _reset_latest_failed_objects(db, asset_id=asset_id)
 
     # 候选选择
-    selection = _explain_candidate_selection(db)
-    candidate_raw = db.query(models.RiskAssessment).filter_by(review_status="candidate").count()
+    selection = _explain_candidate_selection(db, asset_id=asset_id)
+    candidate_query = db.query(models.RiskAssessment).filter(
+        models.RiskAssessment.review_status.in_(("candidate", "reanalysis_required")))
+    if asset_id:
+        candidate_query = candidate_query.filter_by(asset_id=asset_id)
+    candidate_raw = candidate_query.count()
 
     running_count = db.query(models.RiskAssessment).filter(
         models.RiskAssessment.review_status.in_([
@@ -178,6 +199,10 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
             "status": "no_candidates",
             "candidate_count": candidate_raw,
             "selected_object_count": 0,
+            "eligible_object_count": 0,
+            "remaining_object_count": 0,
+            "requested_batch_size": batch_size,
+            "batch_cap": 0,
             "total_risks_in_db": selection["total_risks_in_db"],
             "skipped_objects": selection["skipped_objects"],
             "selected_object_ids": [],
@@ -192,7 +217,7 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
     import uuid as _uuid
     run_id = _uuid.uuid4().hex[:12]
     result = _review_entrypoint(db, run_id, background=True, risk_id=risk_id, batch_size=batch_size,
-                               investigation_goal=investigation_goal, post_repair=post_repair)
+                               investigation_goal=investigation_goal, post_repair=post_repair, asset_id=asset_id)
 
     return {
         "run_id": result.get("run_id", run_id),
@@ -200,6 +225,13 @@ def create_run(retry_failed: bool = False, risk_id: int = 0, batch_size: int = 1
         "status": result.get("status", "running"),
         "candidate_count": result.get("candidate_count", 0),
         "selected_object_count": result.get("selected_object_count", 0),
+        "eligible_object_count": result.get("eligible_object_count",
+                                            selection["selected_object_count"]),
+        "remaining_object_count": result.get("remaining_object_count", 0),
+        "requested_batch_size": result.get("requested_batch_size", batch_size),
+        "batch_cap": result.get("batch_cap", 0),
+        "selection_mode": result.get("selection_mode",
+                                     "single_risk" if risk_id else "all_eligible"),
         "total_risks_in_db": result.get("total_risks_in_db", 0),
         "skipped_objects": result.get("skipped_objects", []),
         "selected_object_ids": result.get("selected_object_ids", []),
@@ -285,6 +317,89 @@ def human_review(risk_id: int, payload: schemas.HumanReviewRequest, db: Session 
     }
 
 
+@router.post("/recover-interrupted", dependencies=[Depends(require_control)])
+def recover_interrupted(db: Session = Depends(get_db)):
+    """显式维护操作：回收被基础设施中断遗留的「研判中」风险与子运行。
+
+    容器停机等中断会把风险留在 running/agent_reviewing 等状态，且已没有
+    存活报告引用它们；这些对象会一直阻塞新批次（create_run 对「研判中」
+    直接 409，human-review 也不接受该状态）。本端点只重置未被任何
+    running 报告引用的对象，置回 reanalysis_required；正在运行的真实
+    模型调用不会被重置。原报告、治理事件与失败原因全部保留，重置仅在
+    review_reason 追加标记。同一中断遗留的 UnifiedAnalysisRun 子运行
+    （父批次已终止但子运行未达终态）标记为 interrupted，避免工作台
+    永远显示幻影「执行中」。
+    """
+    live_reports = db.query(models.AnalysisReport).filter_by(status="running").all()
+    live_run_ids = {report.review_run_id for report in live_reports}
+    referenced: dict[str, int] = {}
+    for report in live_reports:
+        for object_id in _safe_json_list(report.selected_object_ids_json):
+            referenced.setdefault(str(object_id), report.id)
+        if report.current_object_id:
+            referenced.setdefault(report.current_object_id, report.id)
+
+    stuck = db.query(models.RiskAssessment).filter(
+        models.RiskAssessment.review_status.in_(IN_PROGRESS_REVIEW_STATUSES)).all()
+
+    reset_ids: list[str] = []
+    skipped: list[dict] = []
+    for risk in stuck:
+        object_id = f"risk-{risk.id}"
+        if object_id in referenced:
+            skipped.append({"object_id": object_id, "risk_id": risk.id,
+                            "reason": "referenced_by_running_report",
+                            "report_id": referenced[object_id]})
+            continue
+        previous_status = risk.review_status
+        risk.review_status = "reanalysis_required"
+        risk.human_review_required = False
+        risk.review_verdict = ""
+        risk.review_confidence = 0
+        risk.review_adjustment = 0
+        risk.review_evidence_ids = "[]"
+        risk.review_conflicts = "[]"
+        risk.review_missing_evidence = "[]"
+        risk.review_completed_at = None
+        risk.review_reason = (f"{risk.review_reason or ''}\n"
+                              f"[interrupted_run_recovered] control-api maintenance: "
+                              f"{previous_status} -> reanalysis_required; "
+                              f"no running report references this object").strip()
+        reset_ids.append(object_id)
+
+    # Orphaned child runs: "UA-<batch_run_id>-<risk_id>" whose parent batch is
+    # no longer running. Runs without a resolvable parent batch are left
+    # untouched (they may belong to a live unified/analyze call).
+    interrupted_runs: list[str] = []
+    for row in db.query(models.UnifiedAnalysisRun).filter(
+            models.UnifiedAnalysisRun.status.in_(("running", "queued", "queued_remote", "pending"))).all():
+        prefix = "UA-"
+        if not row.run_id.startswith(prefix):
+            continue
+        batch_id = row.run_id[len(prefix):].rsplit("-", 1)[0]
+        if not batch_id or batch_id in live_run_ids:
+            continue
+        parent = db.query(models.AnalysisReport).filter_by(
+            review_run_id=batch_id).order_by(models.AnalysisReport.id.desc()).first()
+        if parent is None:
+            continue
+        row.status = "interrupted"
+        row.error = (f"{row.error or ''}\n[interrupted_run_recovered] parent batch "
+                     f"{batch_id} is {parent.status}; child run never reached a "
+                     "terminal state").strip()
+        interrupted_runs.append(row.run_id)
+
+    if reset_ids or interrupted_runs:
+        db.commit()
+    return {
+        "recovered": len(reset_ids),
+        "reset_object_ids": reset_ids,
+        "interrupted_run_ids": interrupted_runs,
+        "skipped": skipped,
+        "running_report_count": len(live_reports),
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # 同步接口（向后兼容）
 # ═══════════════════════════════════════════════════════════════════════════
@@ -328,7 +443,7 @@ def _safe_int(value: str) -> int | None:
         return None
 
 
-def _reset_latest_failed_objects(db: Session) -> int:
+def _reset_latest_failed_objects(db: Session, asset_id: int = 0) -> int:
     """Reset retryable objects from the latest unsuccessful run to candidate."""
     report = (
         db.query(models.AnalysisReport)
@@ -354,12 +469,12 @@ def _reset_latest_failed_objects(db: Session) -> int:
             if len(parts) != 2:
                 continue
             try:
-                asset_id = int(parts[0])
+                object_asset_id = int(parts[0])
             except ValueError:
                 continue
-            candidates = db.query(models.RiskAssessment).filter_by(asset_id=asset_id, cve_id=parts[1]).all()
+            candidates = db.query(models.RiskAssessment).filter_by(asset_id=object_asset_id, cve_id=parts[1]).all()
             risk = candidates[0] if len(candidates) == 1 else None
-        if risk is None:
+        if risk is None or (asset_id and risk.asset_id != asset_id):
             continue
         has_task = db.query(models.RemediationTask).filter_by(risk_id=risk.id).one_or_none()
         if has_task:

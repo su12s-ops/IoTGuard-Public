@@ -1239,7 +1239,7 @@ def test_identical_evidence_followup_does_not_repeat_decision(session_factory):
 
 
 def test_rereview_inherits_full_context_and_failure_keeps_original(session_factory):
-    """定向复议必须继承角色首次运行上下文；复议失败时保留原结论且不降级该角色。"""
+    """定向复议继承首次上下文；失败保留原结论并记录角色降级。"""
     db = session_factory()
     make_asset(db)
     make_evidence(db)
@@ -1272,8 +1272,10 @@ def test_rereview_inherits_full_context_and_failure_keeps_original(session_facto
     # 复议上下文继承首次运行上下文（不是从零开始的裸冲突描述）
     assert "定向复议" in seen_contexts["rereview"]
     assert seen_contexts["original"] and seen_contexts["original"] in seen_contexts["rereview"]
-    # 复议失败：保留原结论，原角色不被追加降级
-    assert "vulnerability_analyst" not in (final.degraded_roles or [])
+    # 复议失败：保留原结论，同时记录本轮实际失败。
+    assert "vulnerability_analyst" in final.degraded_roles
+    assert final.final["policy"]["status"] == "pending_human_review"
+    assert final.final["policy"]["final_score"] is None
     assert final.vulnerability and final.vulnerability.get("findings")
     assert final.conflict_result.rereview_count == 1
     assert final.conflict_result.unresolved, "未消解冲突仍走人工复核"

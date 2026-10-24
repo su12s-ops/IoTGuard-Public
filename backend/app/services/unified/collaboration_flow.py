@@ -32,7 +32,7 @@ def prepare(ctx, state, db, packet):
         risk_id=ctx.risk.id if ctx.risk else None, previous=previous, harness=caps,
         asset_ref=state.target_ref, target_type=state.target_type)
     ctx.snapshot_id = snapshot["snapshot_id"]
-    ctx.packet_evidence_ids = set(snapshot.get("evidence_registry") or {})
+    ctx.packet_evidence_ids = protocol.evidence_registry_ids(snapshot)
     active, reuse, reason = select_roles(parent, snapshot, force_full=ctx.force_full_review,
                                         ttl_seconds=state.budgets.reuse_ttl_seconds)
     update = {"evidence_snapshot": snapshot, "evidence_snapshot_id": snapshot["snapshot_id"],
@@ -149,6 +149,7 @@ def node_exchange(ctx):
                 update.setdefault("role_provenance", {}).update(published["role_provenance"])
                 update["message_receipts"].update(published["message_receipts"])
             else:
+                update.setdefault("degraded_roles", []).append(role)
                 update["collaboration_stop_reason"] = "evidence_partial"
         from app.services.unified.conflicts import detect_conflicts
         update["conflict_result"] = detect_conflicts({**state.model_dump(), **update})

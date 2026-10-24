@@ -26,13 +26,26 @@ from app.services.agent_infra import (
     AgentTool,
     ChatClient,
     DeepSeekChatClient,  # noqa: F401  (re-export: 统一编排器的真实客户端)
+    ModelResponseError,
     build_llm_client,
     parse_structured_output,
 )
+from app.services.unified import context_budget
 
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL)
 
 _RETRY_BACKOFF_S = 1.0   # 异常重试间的固定退避（连接错误/限流；短且有界）
+
+# 工具结果进入 messages 前的单条硬上限（A2）。原始结果仍保留在 Agent
+# 审计/工具缓存中；这里只约束模型上下文，并显式标注截断与原始长度。
+TOOL_RESULT_MAX_CHARS = 8000
+
+_FINAL_ANSWER_INSTRUCTION = (
+    "累计对话已达到本角色的上下文预算上限，不能再调用任何工具。"
+    "请仅基于上面已经取得的工具结果与预取事实，立即输出一个完整的最终 JSON 对象；"
+    "不要输出多余文字。已有数据不足时按现有字段如实标注证据不足/data_gaps，"
+    "不得编造 evidence_id、CVE、端口、版本等事实。"
+)
 
 # Stage-10 效率契约（请求内缓存）：这些工具读取的事实在一次编排运行内不变——
 # 版本比较是纯函数；情报源/命中清单/设备画像只被操作员动作（官方重取、匹配重算、
@@ -156,6 +169,9 @@ class UsageMeter:
             "usage": dict(self.usage) or None,
             "role_usage": dict(self.role_usage) or None,
             "role_token_limits": dict(self.role_token_limits) or None,
+            # A role can exhaust its quota while the shared run still has room.
+            # Expose both facts rather than presenting role failures as no limit hit.
+            "role_budgets_exhausted": sorted(role for role in self.role_token_limits if self.role_exhausted(role)),
             "budget_exceeded": self.exceeded,
             "budget_exhausted_kind": self.exhausted_kind or None,
             "budget_exhausted_role": self.exhausted_role or None,
@@ -190,6 +206,90 @@ def validation_error_summary(exc: Exception) -> str:
     return f"{type(exc).__name__}: {exc}"
 
 
+def _truncate_structure(value: Any, *, max_string: int, max_items: int, max_keys: int,
+                        depth: int = 0) -> Any:
+    """结构化截断：保留容器形状，长字符串/超量列表显式标注原始长度。"""
+    if isinstance(value, str):
+        if len(value) > max_string:
+            return value[:max_string] + f"…（字段已截断，原始 {len(value)} 字符）"
+        return value
+    if isinstance(value, dict):
+        if depth >= 6:
+            return {"_truncated_depth": True, "original_keys": sorted(map(str, value))[:20],
+                    "original_key_count": len(value)}
+        kept: dict[str, Any] = {}
+        for index, (key, item) in enumerate(value.items()):
+            if index >= max_keys:
+                kept["_truncated_keys"] = {
+                    "dropped_count": len(value) - max_keys,
+                    "sample": [str(k) for k in list(value)[max_keys:max_keys + 10]],
+                    "note": "对象字段过多，已显式标注丢弃；原始数据仍在工具审计/缓存中",
+                }
+                break
+            kept[str(key)] = _truncate_structure(item, max_string=max_string,
+                                                 max_items=max_items, max_keys=max_keys,
+                                                 depth=depth + 1)
+        return kept
+    if isinstance(value, (list, tuple)):
+        if depth >= 6:
+            return {"_truncated_depth": True, "original_items": len(value)}
+        kept = [_truncate_structure(item, max_string=max_string, max_items=max_items,
+                                    max_keys=max_keys, depth=depth + 1)
+                for item in value[:max_items]]
+        if len(value) > max_items:
+            kept.append({"_truncated_items": len(value) - max_items,
+                         "original_items": len(value),
+                         "note": "列表过长，已显式标注未展开项；原始数据仍在工具审计/缓存中"})
+        return kept
+    return value
+
+
+def bounded_tool_result(output: Any, *, max_chars: int = TOOL_RESULT_MAX_CHARS) -> str:
+    """把单条工具结果渲染成 ≤ max_chars 的 JSON 文本。
+
+    小结果原样序列化；超限时用 ``{truncated, original_chars, note, data}``
+    包装并递归保留结构/字段名，长字符串与超量列表带显式截断标记和原始长度。
+    绝不静默丢字段：被丢弃的键/项都以 ``_truncated_*`` 计数与样例标注。
+    """
+    text = json.dumps(output, ensure_ascii=False, default=str)
+    if len(text) <= max_chars:
+        return text
+    envelope = {"truncated": True, "original_chars": len(text),
+                "note": (f"工具结果原始 {len(text)} 字符，超过单条 {max_chars} 字符上限；"
+                         "以下为保留结构的有界视图，未展开内容已在原始审计/缓存中保留。"),
+                "data": None}
+    for max_string, max_items, max_keys in ((2000, 50, 120), (800, 20, 60),
+                                            (200, 8, 30), (60, 2, 10)):
+        envelope["data"] = _truncate_structure(output, max_string=max_string,
+                                               max_items=max_items, max_keys=max_keys)
+        body = json.dumps(envelope, ensure_ascii=False, default=str)
+        if len(body) <= max_chars:
+            return body
+    # 极端情况（含大量需转义字符）：保留显式标记 + 有界预览，仍然不是静默截断。
+    preview_budget = max(0, max_chars - 500)
+    preview = text[:preview_budget]
+    while True:
+        body = json.dumps({"truncated": True, "original_chars": len(text),
+                           "note": envelope["note"], "preview": preview},
+                          ensure_ascii=False, default=str)
+        if len(body) <= max_chars:
+            return body
+        if not preview:
+            break
+        preview = preview[:max(0, len(preview) - 200)]
+    minimal = json.dumps({"truncated": True, "original_chars": len(text)})
+    if len(minimal) <= max_chars:
+        return minimal
+    # 仅当调用方给出极小的 max_chars 时发生：返回合法 JSON，绝不返回半截 JSON。
+    return "{}"
+
+
+def _usage_delta(current: dict[str, int], baseline: dict[str, int]) -> dict[str, int]:
+    keys = set(current) | set(baseline)
+    return {key: current.get(key, 0) - baseline.get(key, 0)
+            for key in sorted(keys) if current.get(key, 0) - baseline.get(key, 0)}
+
+
 @dataclass
 class UnifiedAgentResult:
     agent: str
@@ -203,19 +303,27 @@ class UnifiedAgentResult:
     triaged_fields: list[str] = field(default_factory=list)
     llm_calls: int = 0
     llm_usage: dict[str, Any] | None = None
+    # A3：每次 _run_once 尝试的独立记录（attempt 序号/status/llm_calls/usage/
+    # latency/error）。最终 agents[role] 仍以最后一次为主，历史尝试只用于审计。
+    attempts_history: list[dict[str, Any]] = field(default_factory=list)
+    # 累积上下文预算触发最终收敛时记录原因；成功输出仍按原成功语义判定。
+    stop_reason: str = ""
 
 
 class UnifiedToolLoopAgent:
     """统一四智能体的通用执行器（System A 工具循环的增强版）。"""
 
     def __init__(self, spec: AgentSpec, client: ChatClient, meter: UsageMeter | None = None,
-                 tool_cache: dict | None = None, snapshot_id: str = "", role: str = ""):
+                 tool_cache: dict | None = None, snapshot_id: str = "", role: str = "",
+                 context_token_budgets: dict[str, int] | None = None):
         self.spec = spec
         self.client = client
         self.role = role or getattr(spec, "name", "")
         self.meter = meter
         self.tool_cache = tool_cache   # 请求内缓存（仅 CACHEABLE_TOOLS；None=不缓存）
         self.snapshot_id = snapshot_id
+        # 与 graph 的单次提示词闸门共用同一角色额度（不新增/不修改数值）。
+        self.context_token_budgets = context_token_budgets
         # 逐 Agent 计量（M4.1 校准：修改前后逐 Agent 的 LLM 调用数/token 可比）
         self._calls = 0
         self._usage: dict[str, int] = {}
@@ -258,11 +366,24 @@ class UnifiedToolLoopAgent:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             raise AgentDeadlineExceeded("智能体总时限已耗尽")
+        # A2：每次请求前对完整 messages 做累计预算估算。超限的提示词绝不发送。
+        try:
+            budget = context_budget.enforce_conversation_budget(
+                messages, self.role, self.context_token_budgets)
+        except context_budget.ContextBudgetExceeded as exc:
+            self.request_log.append({
+                "request": len(self.request_log) + 1, "status": "budget_rejected",
+                "input_chars": context_budget.messages_chars(messages),
+                "estimated_tokens": exc.tokens, "limit_tokens": exc.limit,
+                "error": exc.as_reason()})
+            raise
         if self.meter:
             self.meter.ensure_budget(self.role)
             self.meter.reserve_request(self.role)
         record = {"request": len(self.request_log) + 1, "status": "running",
-                  "input_chars": sum(len(json.dumps(m, ensure_ascii=False, default=str)) for m in messages),
+                  "input_chars": budget["chars"],
+                  "estimated_tokens": budget["estimated_tokens"],
+                  "limit_tokens": budget["limit_tokens"],
                   "budget_seconds": remaining}
         self.request_log.append(record)
         started = time.monotonic()
@@ -287,9 +408,19 @@ class UnifiedToolLoopAgent:
             record.update(status="timeout", latency_ms=int((time.monotonic() - started) * 1000))
             raise AgentDeadlineExceeded("LLM 等待超过智能体总时限；迟到响应不再消费")
         if "error" in outcome:
-            record.update(status="failed", error=type(outcome["error"]).__name__,
+            error = outcome["error"]
+            record.update(status="failed", error=type(error).__name__,
                           latency_ms=int((time.monotonic() - started) * 1000))
-            raise outcome["error"]
+            # Only an explicit real-response rejection carries billable usage.
+            # Keep the request failed and re-raise: no partial output is usable.
+            # Transport failures and timeouts without a response remain uncounted.
+            if isinstance(error, ModelResponseError) and error.response_received:
+                record.update(response_received=True, usage=error.usage,
+                              model=error.model, stop_reason=error.stop_reason)
+                self._count_response({"usage": error.usage})
+                if self.meter:
+                    self.meter.register_call(error.usage, self.role)
+            raise error
         response = outcome["response"]
         record.update(status="succeeded", latency_ms=int((time.monotonic() - started) * 1000),
                       usage=response.get("usage"))
@@ -304,24 +435,44 @@ class UnifiedToolLoopAgent:
         last_error = ""
         feedback_history: list[str] = []
         triaged: list[str] = []
+        attempts_history: list[dict[str, Any]] = []
+
+        def record_attempt(attempt_no: int, attempt_started: float, calls_before: int,
+                           usage_before: dict[str, int], status: str, error: str = "") -> None:
+            attempts_history.append({
+                "attempt": attempt_no,
+                "status": status,
+                "llm_calls": self._calls - calls_before,
+                "usage": _usage_delta(self._usage, usage_before),
+                "latency_ms": int((time.monotonic() - attempt_started) * 1000),
+                "error": (error or "")[:800],
+            })
+
+        def result_for(status: str, output, attempt_no: int, error: str = "") -> UnifiedAgentResult:
+            return UnifiedAgentResult(self.spec.name, status, output,
+                                      attempts=attempt_no,
+                                      latency_ms=int((time.monotonic() - started) * 1000),
+                                      error=error, feedback_history=feedback_history,
+                                      triaged_fields=triaged, llm_calls=self._calls,
+                                      llm_usage=dict(self._usage),
+                                      attempts_history=list(attempts_history))
+
         for attempt in range(1 + self.spec.llm_retries):
+            attempt_no = attempt + 1
+            attempt_started = time.monotonic()
+            calls_before = self._calls
+            usage_before = dict(self._usage)
             if time.monotonic() > deadline:
-                return UnifiedAgentResult(self.spec.name, "timeout", None,
-                                          attempts=attempt + 1,
-                                          latency_ms=int((time.monotonic() - started) * 1000),
-                                          error=f"超过总时限 {deadline_s}s",
-                                          feedback_history=feedback_history, triaged_fields=triaged,
-                                          llm_calls=self._calls, llm_usage=dict(self._usage))
+                error = f"超过总时限 {deadline_s}s"
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before, "timeout", error)
+                return result_for("timeout", None, attempt_no, error)
             if self.meter:
                 try:
                     self.meter.ensure_budget(self.role)
                 except BudgetExceeded as exc:
-                    return UnifiedAgentResult(self.spec.name, "degraded", None,
-                                              attempts=attempt + 1,
-                                              latency_ms=int((time.monotonic() - started) * 1000),
-                                              error=str(exc),
-                                              feedback_history=feedback_history, triaged_fields=triaged,
-                                              llm_calls=self._calls, llm_usage=dict(self._usage))
+                    record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                                   "degraded", str(exc))
+                    return result_for("degraded", None, attempt_no, str(exc))
             # F3：重试时把上一轮校验错误反馈注入上下文
             attempt_context = context
             if feedback_history:
@@ -331,45 +482,54 @@ class UnifiedToolLoopAgent:
                 )
             try:
                 result = self._run_once(db, attempt_context, deadline, feedback_history, triaged)
+            except context_budget.ContextBudgetExceeded as exc:
+                # 累积对话预算连最终收敛请求都无法容纳：显式降级，绝不发送。
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                               "degraded", exc.as_reason())
+                return result_for("degraded", None, attempt_no, exc.as_reason())
             except BudgetExceeded as exc:
-                return UnifiedAgentResult(self.spec.name, "degraded", None,
-                                          attempts=attempt + 1, error=str(exc),
-                                          latency_ms=int((time.monotonic() - started) * 1000),
-                                          llm_calls=self._calls, llm_usage=dict(self._usage))
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                               "degraded", str(exc))
+                return result_for("degraded", None, attempt_no, str(exc))
             except AgentDeadlineExceeded as exc:
-                return UnifiedAgentResult(self.spec.name, "timeout", None,
-                                          attempts=attempt + 1,
-                                          latency_ms=int((time.monotonic() - started) * 1000),
-                                          error=str(exc), feedback_history=feedback_history,
-                                          triaged_fields=triaged, llm_calls=self._calls,
-                                          llm_usage=dict(self._usage))
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                               "timeout", str(exc))
+                return result_for("timeout", None, attempt_no, str(exc))
             except TimeoutError as exc:
-                last_error = str(exc) or "timeout"
+                error = str(exc) or "timeout"
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                               "timeout", error)
+                last_error = error
                 time.sleep(min(_RETRY_BACKOFF_S, max(0, deadline - time.monotonic())))
                 continue
             except Exception as exc:   # LLM 网络错误、解析失败等 → 重试/降级，绝不击穿图节点
-                last_error = f"{type(exc).__name__}: {exc}"
+                error = f"{type(exc).__name__}: {exc}"
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                               "failed", error)
+                last_error = error
                 time.sleep(min(_RETRY_BACKOFF_S, max(0, deadline - time.monotonic())))
                 continue
-            result.attempts = attempt + 1
+            record_attempt(attempt_no, attempt_started, calls_before, usage_before,
+                           result.status, result.error)
+            result.attempts = attempt_no
             result.latency_ms = int((time.monotonic() - started) * 1000)
             result.feedback_history = feedback_history
             result.triaged_fields = triaged
             result.llm_calls = self._calls
             result.llm_usage = dict(self._usage)
+            result.attempts_history = list(attempts_history)
             if result.status == "succeeded":
+                return result
+            # 累积预算已触发收敛且最终请求仍失败：显式降级，不再重开一轮
+            # （否则会用同一超限对话重复尝试，既浪费预算又掩盖首轮原因）。
+            if result.status == "degraded" and result.stop_reason:
                 return result
             # Schema feedback has already used its correction allowance. Do not
             # restart the entire investigation on the same deterministic error.
             if result.error.startswith("结构化校验失败"):
                 return result
             last_error = result.error
-        return UnifiedAgentResult(self.spec.name, "failed", None,
-                                  attempts=1 + self.spec.llm_retries,
-                                  latency_ms=int((time.monotonic() - started) * 1000),
-                                  error=last_error,
-                                  feedback_history=feedback_history, triaged_fields=triaged,
-                                  llm_calls=self._calls, llm_usage=dict(self._usage))
+        return result_for("failed", None, 1 + self.spec.llm_retries, last_error)
 
     def _run_once(self, db: Session, context: str, deadline: float,
                   feedback_history: list[str], triaged: list[str]) -> UnifiedAgentResult:
@@ -391,14 +551,28 @@ class UnifiedToolLoopAgent:
                 except BudgetExceeded as exc:
                     return UnifiedAgentResult(self.spec.name, "degraded", None,
                                               error=str(exc), tool_calls=tool_calls_log)
-            response = self._complete(messages, self._tool_schemas() or None, deadline)
+            try:
+                response = self._complete(messages, self._tool_schemas() or None, deadline)
+            except context_budget.ContextBudgetExceeded as exc:
+                # A2：累计对话超限 → 停止工具循环，用已取得的数据请求一次
+                # 最终结构化输出（不带 tools）；最终请求仍超限则在下方显式降级。
+                return self._finalize_without_tools(messages, deadline, exc.as_reason(),
+                                                    tool_calls_log, triaged)
             calls = response.get("tool_calls") or []
             if not calls:
                 parsed, moved = triage_extra_fields(
                     parse_structured_output(response.get("content") or ""),
                     self.spec.output_model)
                 triaged.extend(moved)
-                validated, error = self._validate_with_feedback(parsed, messages, max_validation_attempts, deadline)
+                try:
+                    validated, error = self._validate_with_feedback(
+                        parsed, messages, max_validation_attempts, deadline)
+                except context_budget.ContextBudgetExceeded as exc:
+                    # 校验反馈重试会把原报告再塞回 messages：同样先过预算闸门，
+                    # 超限则显式降级并保留实测原因，不发超限请求。
+                    return UnifiedAgentResult(self.spec.name, "degraded", None,
+                                              error=exc.as_reason(), tool_calls=tool_calls_log,
+                                              stop_reason=exc.as_reason())
                 if error is not None:
                     feedback_history.append(error)
                     return UnifiedAgentResult(self.spec.name, "failed", None,
@@ -429,13 +603,13 @@ class UnifiedToolLoopAgent:
                         entry["cached"] = True
                         entry["summary"] = _brief(cached)
                         messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": json.dumps(cached, ensure_ascii=False, default=str)[:12000]})
+                                         "content": bounded_tool_result(cached)})
                         tool_calls_log.append(entry)
                         continue
                 if tool is None:
                     entry["error"] = "未注册到当前智能体的工具被拒绝"
                     messages.append({"role": "tool", "tool_call_id": call["id"],
-                                     "content": json.dumps({"error": entry["error"]}, ensure_ascii=False)})
+                                     "content": bounded_tool_result({"error": entry["error"]})})
                 else:
                     try:
                         output = tool.invoke(db, call["arguments"])
@@ -444,15 +618,51 @@ class UnifiedToolLoopAgent:
                         if cache_key:
                             self.tool_cache[cache_key] = output
                         messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": json.dumps(output, ensure_ascii=False, default=str)[:12000]})
+                                         "content": bounded_tool_result(output)})
                     except Exception as exc:
                         entry["error"] = f"{type(exc).__name__}: {exc}"
                         messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": json.dumps({"error": entry["error"]}, ensure_ascii=False)})
+                                         "content": bounded_tool_result({"error": entry["error"]})})
                 tool_calls_log.append(entry)
         return UnifiedAgentResult(self.spec.name, "failed", None,
                                   error=f"工具调用轮次超过上限 {self.spec.max_tool_rounds}",
                                   tool_calls=tool_calls_log)
+
+    def _finalize_without_tools(self, messages: list[dict[str, Any]], deadline: float,
+                                budget_reason: str, tool_calls_log: list[dict[str, Any]],
+                                triaged: list[str]) -> UnifiedAgentResult:
+        """累计对话超限后的唯一一次收敛请求（不带 tools）。
+
+        不再执行任何工具；最终请求同样先过预算闸门（_complete 内），超限则
+        显式降级并把实测原因写进 error。最终输出仍走与正常路径完全相同的
+        结构化校验，不降低任何成功判定标准。
+        """
+        final_messages = list(messages) + [{"role": "user", "content": _FINAL_ANSWER_INSTRUCTION}]
+        try:
+            response = self._complete(final_messages, None, deadline)
+        except context_budget.ContextBudgetExceeded as exc:
+            return UnifiedAgentResult(self.spec.name, "degraded", None,
+                                      error=(f"{budget_reason}; final_answer_over_budget: "
+                                             f"{exc.as_reason()}"),
+                                      tool_calls=tool_calls_log, stop_reason=budget_reason)
+        calls = response.get("tool_calls") or []
+        if calls:
+            # 收敛请求不带 tools；即使模型仍返回 tool_calls，也绝不执行。
+            return UnifiedAgentResult(self.spec.name, "degraded", None,
+                                      error=(f"{budget_reason}; final_answer_requested_tools: "
+                                             f"{[call.get('name') for call in calls][:5]}"),
+                                      tool_calls=tool_calls_log, stop_reason=budget_reason)
+        parsed, moved = triage_extra_fields(
+            parse_structured_output(response.get("content") or ""),
+            self.spec.output_model)
+        triaged.extend(moved)
+        validated, error = self._validate_with_feedback(parsed, final_messages, 1, deadline)
+        if error is not None:
+            return UnifiedAgentResult(self.spec.name, "failed", None,
+                                      error=f"结构化校验失败: {error}",
+                                      tool_calls=tool_calls_log, stop_reason=budget_reason)
+        return UnifiedAgentResult(self.spec.name, "succeeded", validated,
+                                  tool_calls=tool_calls_log, stop_reason=budget_reason)
 
     def _validate_with_feedback(self, parsed: dict[str, Any], messages: list[dict[str, Any]],
                                 max_attempts: int, deadline: float) -> tuple[dict[str, Any] | None, str | None]:

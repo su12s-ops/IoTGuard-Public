@@ -361,6 +361,56 @@ class AnalysisReport(Base):
     completed_at = Column(DateTime, nullable=True)
 
 
+class AnalysisRound(Base):
+    """Operator-visible state for one continuous asset analysis round.
+
+    Matching, deterministic risk calculation, candidate selection and the
+    formal four-agent batch are one operation. This row lets the console resume
+    that operation after a refresh and prevents a second click from creating a
+    duplicate batch. It stores identifiers and counters only; risk facts and
+    reports remain in their own tables.
+    """
+
+    __tablename__ = "analysis_round"
+
+    id = Column(Integer, primary_key=True, index=True)
+    round_id = Column(String(48), unique=True, index=True, nullable=False)
+    asset_id = Column(Integer, ForeignKey("linux_asset.id"), index=True, nullable=True)
+    scope = Column(String(24), default="asset")            # asset / fleet
+    status = Column(String(32), default="running")          # running/completed/partial/failed/blocked/no_candidates/interrupted
+    stage = Column(String(32), default="matching")          # matching/risk_calculation/candidate_selection/reviewing/completed/blocked/failed
+    match_count = Column(Integer, default=0)
+    risk_count = Column(Integer, default=0)
+    candidate_count = Column(Integer, default=0)
+    eligible_count = Column(Integer, default=0)
+    selected_object_count = Column(Integer, default=0)
+    processed_object_count = Column(Integer, default=0)
+    failed_object_count = Column(Integer, default=0)
+    remaining_object_count = Column(Integer, default=0)
+    auto_confirmed_count = Column(Integer, default=0)
+    human_review_count = Column(Integer, default=0)
+    requested_batch_size = Column(Integer, default=0)       # 0 means all eligible, bounded by batch_cap
+    requested_risk_id = Column(Integer, default=0)          # 0 means all eligible; otherwise one explicit risk
+    selection_mode = Column(String(32), default="all_eligible")  # all_eligible/single_risk
+    batch_cap = Column(Integer, default=0)
+    selected_object_ids_json = Column(Text, default="[]")
+    skipped_objects_json = Column(Text, default="[]")
+    blocked_reason = Column(Text, default="")
+    error = Column(Text, default="")
+    review_run_id = Column(String(48), default="", index=True)
+    inventory_collected_at = Column(DateTime, nullable=True)
+    inventory_sha256 = Column(String(64), default="")
+    inventory_evidence_id = Column(String(64), default="")
+    intel_updated_at = Column(DateTime, nullable=True)
+    intel_scope = Column(String(64), default="")
+    pipeline_mode = Column(String(16), default="")
+    model = Column(String(128), default="")
+    api_protocol = Column(String(24), default="")
+    started_at = Column(DateTime, default=utcnow)
+    completed_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class AgentAuditRecord(Base):
     """One structured, auditable LLM invocation bound to one risk event."""
 

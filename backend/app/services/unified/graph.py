@@ -185,6 +185,7 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
             ctx.log_agent(spec.name, {
                 "status": "degraded", "attempts": 0, "latency_ms": 0,
                 "error": exc.as_reason(), "llm_calls": 0, "llm_usage": {},
+                "attempts_history": [], "stop_reason": exc.as_reason(),
                 "requests": [], "output": None, "tool_calls": [],
                 "feedback_history": [], "triaged_fields": [],
             })
@@ -197,7 +198,8 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
         role_deadline = agent_started + _agent_deadline(ctx, spec.name)
         agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter,
                                      tool_cache=ctx.tool_cache, snapshot_id=ctx.snapshot_id,
-                                     role=spec.name)
+                                     role=spec.name,
+                                     context_token_budgets=ctx.context_token_budgets)
         with ctx._lock:
             ctx.first_contexts.setdefault(spec.name, context_text)
         result = agent.run(db, context=context_text, deadline_s=max(0.0, role_deadline - time.monotonic()))
@@ -283,6 +285,10 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
             "error": (degraded_reason or result.error or "")[:800],
             "llm_calls": result.llm_calls,
             "llm_usage": result.llm_usage,
+            # A3：同一角色每次 run 内的 _run_once attempt 明细（首轮 usage 不再
+            # 被最后一次「预算已用尽、0 调用」覆盖）；最终字段仍以最后一次为主。
+            "attempts_history": list(result.attempts_history),
+            "stop_reason": result.stop_reason,
             "prompt_estimated_tokens": prompt_budget["estimated_tokens"],
             "prompt_chars": prompt_budget["chars"],
             "requests": list(agent.request_log),
@@ -342,8 +348,7 @@ def _bounded_registry_ids(state, ctx=None, preferred=()) -> dict[str, Any]:
     实测 run UA-20261020153207-617da0 的注册表有 284,748 条证据：把全集
     `json.dumps(sorted(...))` 进提示词会渲染成 7.2M 字符，模型侧必然 400。
     """
-    registry = (state.evidence_snapshot or {}).get("evidence_registry") or {}
-    values = set(registry)
+    values = collaboration_mod.evidence_registry_ids(state.evidence_snapshot)
     if ctx is not None:
         values |= set(getattr(ctx, "packet_evidence_ids", ()) or ())
     candidates = list(preferred) or list(state.baseline.get("packet_evidence_ids") or [])
@@ -497,6 +502,9 @@ def _vulnerability_prep_context(state: UnifiedAnalysisState) -> str:
             "package_name": item.get("package_name"),
             "installed_version": item.get("installed_version"),
             "fixed_version": item.get("fixed_version"),
+            "match_status": item.get("match_status"),
+            "reason_code": item.get("reason_code"),
+            "match_reason": item.get("match_reason"),
             "version_compare": item.get("version_compare"),
             "branch_check": item.get("branch_check"),
             "vendor_conflict": item.get("vendor_conflict"),
@@ -513,6 +521,9 @@ def _vulnerability_prep_context(state: UnifiedAnalysisState) -> str:
         "厂商适用性冲突（vendor_conflict.unresolved）在消解前不得判 confirmed_affected。"
         "version_compare 出现 caveat 时表示上游口径与厂商 release 口径相左——"
         "以厂商口径优先，并在 rationale 说明 backport 语义。"
+        "OpenWrt 官方范围必须按 scope 对应的固件/release、branch 或 commit 域解释，"
+        "不可用普通包版本比较覆盖官方结论；main 分支无 fix 且有 ~commit 时 affected、"
+        "fixed_version 为空是合法结论，不得捏造修复版本，须保留 match_reason 中的原因。"
         "只有对上述事实存在疑问或需要补齐缺口时才调用专属工具深查。"
     )
     return "\n".join(lines)
@@ -563,6 +574,8 @@ def _candidate_context(db: Session, state: UnifiedAnalysisState,
             "historical_installed_version": match.installed_version if match else "",
             "fixed_version": match.fixed_version if match else "",
             "match_status": match.match_status if match else risk.affected_status,
+            "reason_code": match.reason_code if match else "",
+            "match_reason": match.match_reason if match else "",
         }]
     return [dict(item) for item in state.candidate_context]
 
@@ -944,12 +957,9 @@ def node_directed_rereview(ctx: RunContext):
                    AGENT_RUNTIME: "runtime",
                    AGENT_ASSET: "investigation"}[name]
             if output is None:
-                # Stage-10 效率契约：复议失败不降级原结论——原报告有效时保留，
-                # 未消解冲突已由 merge_rereview 确定性转人工，角色本身不应被
-                # 标记降级（基线运行中复议失败曾把成功角色误标为 degraded）。
-                if _is_empty_default(previous):
-                    degraded.append(name)
-                else:
+                # 复议执行失败必须记录降级；保留原有效报告，不伪造本轮成功。
+                degraded.append(name)
+                if not _is_empty_default(previous):
                     ctx.log_agent(spec.name + "_rereview", {
                         "status": "failed_kept_original",
                         "note": "复议失败：保留原结论；未消解冲突走人工复核",
@@ -1325,9 +1335,9 @@ def _decision_semantic_errors(verdict: dict[str, Any], facts: dict[str, Any],
 
 def _decision_known_ids(state: UnifiedAnalysisState) -> set[str]:
     """决策者可引用的证据全集：事件证据包 + 运行时证据 + 预取证据清单 +
-    各专家报告已引用项。"""
+    各专家报告已引用项。摘要标记 RUNTIME-SUMMARY 不是证据 ID，必须排除。"""
     if state.evidence_snapshot:
-        return set(state.evidence_snapshot.get("evidence_registry") or {})
+        return collaboration_mod.evidence_registry_ids(state.evidence_snapshot)
     known: set[str] = set(state.baseline.get("packet_evidence_ids") or [])
     inventory_id = ((_prep(state).get("asset_facts") or {}).get("inventory_provenance") or {}).get("inventory_evidence_id")
     if inventory_id:
@@ -1370,7 +1380,14 @@ def _decision_evidence_validator(ctx: RunContext, state: UnifiedAnalysisState):
         for check in output.get("key_evidence_checks") or []:
             cited.add(check.get("evidence_id", "") or "")
         cited.discard("")
-        unknown = sorted(cited - known)
+        if state.evidence_snapshot:
+            # 摘要掉的历史 runtime ID 仍是真实证据（known_but_summarized），
+            # 不能判成捏造；但它也不会被 _fresh_related 当作新鲜证据。
+            unknown = sorted(ref for ref in cited
+                             if collaboration_mod.classify_evidence_id(
+                                 ref, state.evidence_snapshot) in {"unknown", "wrong_kind"})
+        else:
+            unknown = sorted(cited - known)
         if unknown:
             # 反馈必须附带合法 ID 清单（实验发现：不附清单时模型会用 CVE/版本号填充）
             errors.append(

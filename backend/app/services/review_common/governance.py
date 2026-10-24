@@ -36,7 +36,9 @@ def correction(db, risk):
 
 
 def execution_allowed(db, risk):
-    return bool(risk and risk.active and not correction(db, risk))
+    from app.services.nvd_package_mapping import QUARANTINED_MAPPING_STATUS
+    return bool(risk and risk.active and risk.review_status != QUARANTINED_MAPPING_STATUS
+                and not correction(db, risk))
 
 
 def assert_execution_allowed(db, risk):

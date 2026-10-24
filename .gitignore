@@ -40,6 +40,8 @@ frontend/dist/
 frontend/node_modules/
 node_modules/
 backend/package-lock.json
+# 本地构建/测试临时目录（docker 构建日志、隔离测试库）
+.dsh-tmp/
 
 # ── 其他运行产物 ──────────────────────────────────────────────────
 collector/sample_asset_outputs/

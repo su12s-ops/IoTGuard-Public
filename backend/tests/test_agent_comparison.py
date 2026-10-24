@@ -31,3 +31,17 @@ def test_ground_truth_cannot_change_between_strategies():
     rows[0]["expected"] = {"impact": "affected"}
     with pytest.raises(ValueError, match="ground truth"):
         module.evaluate(rows)
+
+
+@pytest.mark.parametrize("expected", [None, {}])
+def test_duplicate_unlabelled_observations_are_rejected(expected):
+    item = {**samples()[0], "expected": expected}
+    with pytest.raises(ValueError, match="duplicate"):
+        module.evaluate([item, item.copy()])
+
+
+def test_unlabelled_triples_never_become_paired_accuracy():
+    result = module.evaluate([{**item, "expected": None} for item in samples()])
+    assert result["paired_cases"] == 0
+    assert all(metric["accuracy_including_failures"] is None
+               for metric in result["metrics"].values())

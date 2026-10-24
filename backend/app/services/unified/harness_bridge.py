@@ -45,9 +45,11 @@ def _id(value, prefix=""):
 def _refs(state):
     snapshot = state.get("evidence_snapshot") or {}
     registry = snapshot.get("evidence_registry")
-    values = set(registry) if isinstance(registry, dict) else set(
-        (state.get("baseline") or {}).get("packet_evidence_ids") or [])
-    return {str(value) for value in values if value}
+    if isinstance(registry, dict):
+        from app.services.unified.collaboration import evidence_registry_ids
+        return evidence_registry_ids(snapshot)
+    return {str(value) for value in
+            ((state.get("baseline") or {}).get("packet_evidence_ids") or []) if value}
 
 
 def _issue(issues, status, reason):
@@ -272,6 +274,13 @@ def build_candidate_intents(state, plan) -> list[dict]:
     cited = set(plan.get("original_evidence_ids") or [])
     for verdict in (state.get("decision") or {}).get("verdicts") or []:
         cited.update(verdict.get("supporting_evidence_ids") or [])
+    snapshot = state.get("evidence_snapshot") or {}
+    if snapshot:
+        from app.services.unified.collaboration import classify_evidence_id
+        unexplained = {ref for ref in cited - known
+                       if classify_evidence_id(ref, snapshot) != "known_but_summarized"}
+    else:
+        unexplained = cited - known
     intents = []
     for index, action in enumerate(plan.get("actions") or []):
         action = _mapping(action)
@@ -283,7 +292,7 @@ def build_candidate_intents(state, plan) -> list[dict]:
             missing.append("deterministic_asset_identity_required")
         if not cited.intersection(known):
             missing.append("validated_evidence_references_required")
-        if cited - known:
+        if unexplained:
             missing.append("unknown_evidence_references_rejected")
         if kind == "update_package" and any(params.get(k) and params[k] != identity.get("fixed_version")
                 for k in ("version", "target_version", "fixed_version")):

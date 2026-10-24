@@ -17,6 +17,13 @@
 
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
     <div v-if="pipelineNote" class="error-banner soft" role="status"><Icon name="alert" :size="15" />{{ pipelineNote }}</div>
+    <div v-if="reviewRunId" class="card" role="status" aria-live="polite">
+      <div class="card-head">
+        <div><div class="card-title">正式研判任务 <span class="mono">{{ reviewRunId }}</span></div><div class="card-desc">{{ reviewRun?.progress_message || reviewRun?.current_stage || "等待任务进度记录" }}</div></div>
+        <span class="chip" :class="statusTone(reviewRun?.status)">{{ reviewRun ? statusLabel(reviewRun.status) : "状态未读取" }}</span>
+      </div>
+      <div class="card-foot"><span>{{ reviewError || reviewRun?.error || reviewRun?.termination_reason || "任务完成仅表示流程结束，不代表自动研判成功；修复仍需人工审批。" }}</span><span>已处理 {{ reviewRun?.processed_object_count ?? "—" }} / {{ reviewRun?.selected_object_count ?? "—" }} · 待人工 {{ reviewRun?.human_review_object_count ?? "—" }}</span></div>
+    </div>
 
     <section v-if="!hasActiveResults" class="card round-start">
       <div class="card-head">
@@ -75,7 +82,7 @@
               </div>
               <span class="fs-state">
                 <Icon v-if="step.state === 'done'" name="check-circle" :size="17" />
-                <span v-else class="chip" :class="step.state === 'active' ? 'info' : 'muted'">{{ step.state === "active" ? "进行中" : "等待" }}</span>
+                <span v-else class="chip" :class="step.state === 'active' ? 'info' : 'muted'">{{ step.statusLabel }}</span>
               </span>
             </div>
           </div>
@@ -152,7 +159,7 @@
               <p>{{ event.action }}</p>
             </div>
           </div>
-          <div v-if="!timeline.length" class="empty-note" style="padding: 26px 18px">暂无运行消息，选择一条运行后读取。</div>
+          <div v-if="!timeline.length" class="empty-note" style="padding: 26px 18px">{{ detailError ? `详情读取失败：${detailError}` : selectedRun ? "该运行未记录消息日志；不能据此确认角色执行或结论成功。" : "暂无运行消息，选择一条运行后读取。" }}</div>
         </div>
         <div class="card-foot"><span>消息只读；写操作需人工审批。</span><span class="link" @click="refreshAll">刷新 <Icon name="refresh" :size="12" /></span></div>
       </section>
@@ -215,9 +222,16 @@ const devices = ref([]);
 const selectedAssetId = ref(0);
 const starting = ref(false);
 
+const reviewRunId = ref("");
+const reviewRun = ref(null);
+const reviewError = ref("");
+const terminalReviewStatuses = new Set(["completed", "succeeded", "partial", "human_review", "pending_human_review", "failed", "interrupted", "cancelled", "skipped", "no_candidates", "blocked"]);
 let pollTimer = null;
+let refreshing = false;
+let disposed = false;
 
-const runningActive = computed(() => Boolean(round.value?.active?.running));
+const reviewPending = computed(() => Boolean(reviewRunId.value) && !terminalReviewStatuses.has(reviewRun.value?.status));
+const runningActive = computed(() => reviewPending.value || Boolean(round.value?.active?.running));
 const hasActiveResults = computed(() => runs.value.length > 0 || runningActive.value);
 
 const archiveDesc = computed(() => {
@@ -246,7 +260,6 @@ const pipelineNote = computed(() => {
 });
 
 const agents = computed(() => {
-  const status = selectedRun.value?.status;
   const detailAgents = detail.value?.agents || null;
   const definitions = [
     { key: "asset_investigator", code: "ASSET", label: "资产建模", note: "设备识别 / 拓扑建模", output: "身份与清单", icon: "user", color: "#0e9fbf", soft: "#e9faff" },
@@ -254,25 +267,14 @@ const agents = computed(() => {
     { key: "runtime_analyst", code: "RUNTIME", label: "运行时分析", note: "行为建模 / 证据聚合", output: "上下文关联", icon: "activity", color: "#2f6fed", soft: "#eef4ff" },
     { key: "decision_planner", code: "DECISION", label: "决策规划", note: "风险评级 / 处置建议", output: "决策建议", icon: "target", color: "#7c3aed", soft: "#f3eeff" }
   ];
-  return definitions.map((agent, index) => {
-    const rawStatus = detailAgents?.[agent.key]?.status || (status === "completed" ? "completed" : status === "running" ? (index < 2 ? "completed" : index === 2 ? "running" : "pending") : "pending");
-    const mapped = rawStatus === "completed" || rawStatus === "succeeded" ? "done" : rawStatus === "running" ? "active" : "idle";
-    const tone = rawStatus === "completed" || rawStatus === "succeeded" ? "low" : rawStatus === "running" ? "info" : "muted";
-    return { ...agent, state: mapped, tone, statusLabel: statusLabel(rawStatus) };
+  return definitions.map((agent) => {
+    const rawStatus = detailAgents?.[agent.key]?.status;
+    const mapped = ["completed", "succeeded"].includes(rawStatus) ? "done" : rawStatus === "running" ? "active" : "idle";
+    return { ...agent, state: mapped, tone: rawStatus ? statusTone(rawStatus) : "muted", statusLabel: rawStatus ? statusLabel(rawStatus) : "未记录" };
   });
 });
 
-const agentSteps = computed(() => {
-  const status = selectedRun.value?.status;
-  const done = ["completed", "succeeded"].includes(status);
-  const active = ["running", "queued_remote", "pending"].includes(status);
-  return [
-    { key: "build", label: "资产建模", note: "设备识别 / 拓扑建模", state: done || active ? "done" : "idle" },
-    { key: "analyze", label: "漏洞分析", note: "CVE 分析 / 影响面", state: done ? "done" : active ? "active" : "idle" },
-    { key: "impact", label: "影响面分析", note: "版本比对 / 暴露面", state: done ? "done" : active ? "active" : "idle" },
-    { key: "decide", label: "决策规划", note: "风险评级 / 处置建议", state: done ? "done" : "idle" }
-  ];
-});
+const agentSteps = computed(() => agents.value);
 
 const timeline = computed(() => {
   if (!selectedRun.value) return [];
@@ -282,19 +284,12 @@ const timeline = computed(() => {
       time: shortTime(event.created_at || event.timestamp),
       actor: event.actor || event.agent || "系统",
       action: event.action || event.event_type || event.message || "事件",
-      status: statusLabel(event.status || "completed"),
-      tone: statusTone(event.status || "completed"),
+      status: event.status ? statusLabel(event.status) : "未记录",
+      tone: event.status ? statusTone(event.status) : "muted",
       icon: iconFor(event.actor || event.agent)
     }));
   }
-  const run = selectedRun.value;
-  return [
-    { time: shortTime(run.created_at), actor: "编排器", action: `创建 ${run.mode || "统一"} 运行`, tone: "info", icon: "layers" },
-    { time: shortTime(run.created_at), actor: "资产建模 Agent", action: `读取目标 ${run.target_ref || "未记录"} 的设备身份与清单`, tone: "low", icon: "user" },
-    { time: "—", actor: "漏洞分析 Agent", action: "公告适用性与版本比对完成，输出候选命中", tone: "high", icon: "bug" },
-    { time: "—", actor: "运行时分析 Agent", action: "汇总运行时证据，标注上下文关联", tone: "info", icon: "activity" },
-    { time: shortTime(run.completed_at), actor: "决策规划 Agent", action: "生成风险评级与处置建议", tone: "muted", icon: "target" }
-  ];
+  return [];
 });
 
 const policy = computed(() => detail.value?.final?.policy || null);
@@ -302,10 +297,11 @@ const reviewCount = computed(() => (detail.value?.harness_checks || []).filter((
 const gateChecks = computed(() => {
   const checks = detail.value?.harness_checks || [];
   return [
-    { label: "证据引用", value: `${checks.length || 0} 项检查`, tone: checks.length ? "ok" : "muted" },
-    { label: "对象级人工审查", value: reviewCount.value ? "待签收" : "无待签", tone: reviewCount.value ? "warn" : "ok" },
+    { label: "证据引用", value: Array.isArray(detail.value?.harness_checks) ? `${checks.length} 项检查` : "未记录", tone: checks.length ? "ok" : "muted" },
+    { label: "对象级人工审查", value: reviewCount.value ? "待签收" : "未记录待签信息", tone: reviewCount.value ? "warn" : "muted" },
     { label: "策略版本", value: policy.value?.policy_version || "未记录", tone: policy.value ? "ok" : "muted" },
-    { label: "执行授权", value: policy.value?.status === "auto_confirmed" ? "自动" : "需人工", tone: policy.value?.status === "auto_confirmed" ? "ok" : "warn" }
+    { label: "研判策略", value: policy.value?.status === "auto_confirmed" ? "研判自动确认" : policy.value?.status ? statusLabel(policy.value.status) : "未记录", tone: "muted" },
+    { label: "修复执行授权", value: "仍需人工审批", tone: "warn" }
   ];
 });
 
@@ -339,9 +335,9 @@ async function select(run) {
   detailError.value = "";
   try {
     const result = await api.get(`/unified/runs/${encodeURIComponent(run.run_id)}`, { timeout: 20000 });
-    detail.value = result.data || null;
+    if (selectedRun.value?.run_id === run.run_id) detail.value = result.data || null;
   } catch (cause) {
-    detailError.value = cause?.response?.data?.detail || "详情接口未返回";
+    if (selectedRun.value?.run_id === run.run_id) detailError.value = cause?.response?.data?.detail || "详情接口未返回";
   }
 }
 
@@ -359,7 +355,7 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const result = await api.get("/unified/runs", { params: { limit: 30 }, timeout: 25000 });
+    const result = await api.get("/unified/runs", { params: { limit: 30, mode: "formal" }, timeout: 25000 });
     runs.value = result.data?.runs || result.data || [];
     if (runs.value.length) await select((selectedRun.value && runs.value.find((run) => run.run_id === selectedRun.value.run_id)) || runs.value[0]);
     else selectedRun.value = null;
@@ -376,17 +372,27 @@ async function startRound() {
   try {
     const result = await api.post("/rounds/start", {
       asset_id: selectedAssetId.value || 0,
-      batch_size: 1
+      // 0 = 范围内全部符合条件风险（受批次上限约束），不再固定为 1 条。
+      batch_size: 0
     }, { timeout: 120000 });
     const body = result.data || {};
     const review = body.review;
+    const round = body.round || null;
+    const counts = round?.counts || {};
     if (review && review.run_id) {
-      notify(`新一轮已启动：匹配 ${body.match_count} 项，风险 ${body.risk_count} 项，研判 ${review.run_id}`, "success");
-    } else if (review && review.status === "no_candidates") {
-      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；无可进入研判的候选对象。`, "info");
+      reviewRunId.value = review.run_id;
+      reviewRun.value = null;
+      reviewError.value = "";
+      notify(`新一轮已启动：匹配 ${body.match_count} 项，风险 ${body.risk_count} 项，候选 ${counts.candidates ?? review.candidate_count ?? 0} 条，研判 ${review.run_id}`, "success");
+    } else if (round?.status === "no_candidates" || (review && review.status === "no_candidates")) {
+      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；候选 0 条，未调用模型。`, "info");
+    } else if (body.reused) {
+      notify(`已恢复运行中的轮次 ${round?.round_id || ""}，未重复创建任务。`, "info");
+      if (round?.review_run_id) reviewRunId.value = round.review_run_id;
     } else {
-      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；研判未启动：${body.review_unavailable_reason || "未知原因"}`, "error");
+      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；研判未启动：${round?.blocked_reason || body.review_unavailable_reason || "未知原因"}`, "error");
     }
+    if (!reviewRunId.value && round?.review_run_id) reviewRunId.value = round.review_run_id;
     await refreshAll();
   } catch (cause) {
     error.value = handleWriteFailure(cause, "新一轮启动失败。");
@@ -395,8 +401,29 @@ async function startRound() {
   }
 }
 
+async function loadReview() {
+  if (!reviewRunId.value || (reviewRun.value && !reviewPending.value)) return;
+  const runId = reviewRunId.value;
+  try {
+    const result = await api.get(`/analysis/runs/${encodeURIComponent(runId)}`, { timeout: 20000 });
+    if (reviewRunId.value === runId) {
+      reviewRun.value = result.data || null;
+      reviewError.value = "";
+    }
+  } catch (cause) {
+    if (reviewRunId.value === runId) reviewError.value = `任务状态读取失败，将继续重试：${cause?.response?.data?.detail || cause.message || "未知错误"}`;
+  }
+}
+
 async function refreshAll() {
-  await Promise.all([loadRound(), load()]);
+  if (refreshing) return;
+  refreshing = true;
+  try {
+    await Promise.all([loadRound(), load(), loadReview()]);
+  } finally {
+    refreshing = false;
+    if (!disposed) syncPolling();
+  }
 }
 
 function syncPolling() {
@@ -415,6 +442,7 @@ onMounted(async () => {
 });
 watch(runningActive, syncPolling);
 onUnmounted(() => {
+  disposed = true;
   if (pollTimer) window.clearInterval(pollTimer);
 });
 </script>

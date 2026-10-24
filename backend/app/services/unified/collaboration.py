@@ -10,6 +10,12 @@ semantic paths, while ``evidence_changes`` records reference additions/removals.
 The latter alone never invalidates a role or increases its confidence. Freshness
 bucket and coverage changes do invalidate runtime conclusions, even when no new
 event arrived. Live approvals and token state must always be rechecked by Harness.
+
+Runtime evidence is registered individually only when it is inside
+``runtime_telemetry.EVIDENCE_FRESH_WINDOW_S`` or related to a candidate CVE /
+component; the rest becomes one bounded runtime summary entry (count, ID-set
+digest, oldest/newest, membership hashes). Historical IDs stay referenceable as
+``known_but_summarized`` and are never promoted to fresh evidence.
 """
 from __future__ import annotations
 
@@ -17,12 +23,14 @@ from copy import deepcopy
 from datetime import datetime, timezone
 import hashlib
 import json
+import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 from sqlalchemy import or_
 
 from app import models
+from app.services.runtime_telemetry import EVIDENCE_FRESH_WINDOW_S, event_time
 from app.services.unified.schemas import (
     AGENT_ASSET, AGENT_DECISION, AGENT_RUNTIME, AGENT_VULNERABILITY, ALL_AGENT_IDS,
 )
@@ -86,6 +94,154 @@ def _semantic(value: Any) -> Any:
     return value
 
 
+# ── 运行时证据有界化（A1） ──────────────────────────────────────────────────
+#
+# 历史运行留下 22,559 条 runtime 证据，逐条进入 registry/categories 会把每次
+# 超步持久化的 state 撑到 13.9MB。这里只把「新鲜窗口内」或「与本次候选
+# CVE/组件相关」的证据逐条登记；其余汇成一条显式摘要。
+#
+# 校验不能把摘要掉的历史 ID 当成捏造：摘要里保存每个 ID 的截短 SHA-256
+# （12 hex，约 48 bit；22,559 条集合的碰撞概率 < 1e-6），因此服务端仍可
+# 精确判定「这是一个被摘要的历史 ID」而不是「不存在的 ID」。摘要本身绝不
+# 冒充新鲜证据：摘要成员不会进入 registry 的 runtime 条目，也不会被
+# conflicts._fresh_related 当作新鲜证据。
+RUNTIME_SUMMARY_KEY = "RUNTIME-SUMMARY"
+RUNTIME_SUMMARY_KIND = "runtime_summary"
+_SUMMARIZED_ID_HASH_CHARS = 12
+_RUNTIME_SEARCH_FIELDS = (
+    "process", "parent_process", "commandline", "file_path", "description",
+    "destination_ip", "operation", "raw_data",
+)
+
+
+def _id_marker(evidence_id: Any) -> str:
+    return hashlib.sha256(str(evidence_id).encode("utf-8")).hexdigest()[:_SUMMARIZED_ID_HASH_CHARS]
+
+
+def _candidate_match_pattern(packet: dict, risk=None):
+    """候选 CVE / 组件名的确定性匹配式；无候选时返回 None。
+
+    匹配使用词边界（字母数字边界），避免短包名（如 go）命中任意子串。
+    公告编号取冒号前的 CVE 主体（packet 里可能带 ``:source`` 后缀）。
+    """
+    tokens: set[str] = set()
+
+    def add(value: Any) -> None:
+        text = str(value or "").strip().lower()
+        if not text:
+            return
+        if text.startswith("cve-"):
+            text = text.split(":", 1)[0]
+        if len(text) >= 2:
+            tokens.add(text)
+
+    for item in packet.get("candidates") or []:
+        if isinstance(item, dict):
+            add(item.get("cve_id"))
+            add(item.get("package_name"))
+    if risk is not None:
+        add(risk.cve_id)
+        add(risk.package_name)
+    if not tokens:
+        return None
+    return re.compile(r"(?<![a-z0-9])(?:" + "|".join(
+        re.escape(token) for token in sorted(tokens)) + r")(?![a-z0-9])", re.IGNORECASE)
+
+
+def _runtime_row_related(row, pattern) -> bool:
+    if pattern is None:
+        return False
+    text = "\n".join(str(getattr(row, field, "") or "") for field in _RUNTIME_SEARCH_FIELDS)
+    return bool(pattern.search(text))
+
+
+def _runtime_row_fresh(observed_at: Any, now: datetime) -> bool:
+    """严格新鲜：可解析、非未来、且落在 EVIDENCE_FRESH_WINDOW_S 内。"""
+    parsed = event_time(observed_at)
+    if parsed is None:
+        return False
+    return 0 <= (now - parsed).total_seconds() <= EVIDENCE_FRESH_WINDOW_S
+
+
+def _runtime_summary(records: list[tuple[str, Any]]) -> dict:
+    """把未逐条登记的 runtime 证据汇成 {count, sha256_of_ids, oldest, newest}。
+
+    ``id_sha256`` 是成员资格证明（截短 SHA-256），仅用于服务端判定
+    known_but_summarized；它不是可引用的证据条目，摘要也不会被当作新鲜证据。
+    """
+    ids = sorted({str(evidence_id) for evidence_id, _ in records})
+    parsed = [(event_time(timestamp), str(timestamp or "")) for _, timestamp in records]
+    valid = [(value, timestamp) for value, timestamp in parsed if value is not None]
+    return {
+        "kind": RUNTIME_SUMMARY_KIND,
+        "source": "security_evidence",
+        "count": len(ids),
+        "sha256_of_ids": fingerprint(ids),
+        "oldest": min(valid, key=lambda item: item[0])[1] if valid else "",
+        "newest": max(valid, key=lambda item: item[0])[1] if valid else "",
+        "unparsed_timestamps": sum(1 for value, _ in parsed if value is None),
+        "id_sha256": sorted(_id_marker(evidence_id) for evidence_id in ids),
+        "summarized": True,
+        "evidence_freshness": "historical",
+        "note": ("未逐条登记的运行时证据（超出新鲜窗口且与本次候选无关）已按 ID 集合摘要；"
+                 "id_sha256 仅用于服务端判定历史引用，不代表新鲜证据。数据库证据行未被删除。"),
+    }
+
+
+def _safe_summary_view(summary: dict | None) -> dict | None:
+    """categories 里只放有界摘要字段，成员哈希只保留在 registry 摘要条目中。"""
+    if not summary:
+        return None
+    return {key: summary[key] for key in
+            ("kind", "count", "sha256_of_ids", "oldest", "newest",
+             "unparsed_timestamps", "evidence_freshness")}
+
+
+def is_summary_entry(value: Any) -> bool:
+    return isinstance(value, dict) and (
+        value.get("kind") == RUNTIME_SUMMARY_KIND or value.get("summarized") is True)
+
+
+def evidence_registry_ids(snapshot: dict | None) -> set[str]:
+    """registry 中真正可引用的证据 ID；排除摘要标记与任何摘要条目。"""
+    registry = (snapshot or {}).get("evidence_registry") or {}
+    return {key for key, value in registry.items() if not is_summary_entry(value)}
+
+
+def _runtime_summary_entry(snapshot: dict | None) -> dict | None:
+    entry = ((snapshot or {}).get("evidence_registry") or {}).get(RUNTIME_SUMMARY_KEY)
+    return entry if is_summary_entry(entry) else None
+
+
+def classify_evidence_id(ref: str, snapshot: dict | None, *, kinds=None) -> str:
+    """服务端证据引用的四类判定。
+
+    - registered：registry 中逐条登记且 kind 匹配；
+    - known_but_summarized：被摘要掉的历史 runtime 证据（存在，但不是新鲜证据）；
+    - wrong_kind：逐条登记但 kind 不匹配；
+    - unknown：快照里确实不存在（捏造/跨资产/摘要之后才到达）。
+    """
+    registry = (snapshot or {}).get("evidence_registry") or {}
+    metadata = registry.get(ref)
+    if metadata is not None:
+        if is_summary_entry(metadata):
+            return "unknown"          # 摘要键不是证据 ID，不能引用
+        if kinds and metadata.get("kind") not in kinds:
+            return "wrong_kind"
+        return "registered"
+    summary = _runtime_summary_entry(snapshot)
+    if summary and (not kinds or "runtime" in kinds):
+        markers = summary.get("id_sha256")
+        if markers is None:
+            # 兼容只有 {count, sha256_of_ids, oldest, newest} 的旧/外部摘要：
+            # 无法逐 ID 证明成员资格时，按用户要求的保守语义标记为
+            # known_but_summarized——绝不让历史证据变成「不存在」。
+            return "known_but_summarized"
+        if _id_marker(ref) in set(markers):
+            return "known_but_summarized"
+    return "unknown"
+
+
 def _paths(before: Any, after: Any, prefix: str) -> list[str]:
     if before == after:
         return []
@@ -123,8 +279,8 @@ def affected_roles(changed_fields: list[str]) -> list[str]:
 def snapshot_diff(previous: dict | None, current: dict) -> dict:
     previous = previous or {}
     fields = _paths(previous.get("categories", {}), current.get("categories", {}), "")
-    old_ids = set(previous.get("evidence_registry") or {})
-    new_ids = set(current.get("evidence_registry") or {})
+    old_ids = evidence_registry_ids(previous)
+    new_ids = evidence_registry_ids(current)
     return {
         "changed_fields": fields,
         "substantive_change": bool(fields),
@@ -229,7 +385,17 @@ def _build_snapshot(db, packet: dict, run_id: str, risk_id=None, previous=None, 
     else:
         query = query.filter(False)
     runtime = []
+    summarized: list[tuple[str, Any]] = []
+    now = datetime.now(timezone.utc)
+    match_pattern = _candidate_match_pattern(packet, risk)
     for row in query.order_by(models.SecurityEvidence.id).all():
+        fresh = _runtime_row_fresh(row.timestamp, now)
+        related = _runtime_row_related(row, match_pattern)
+        if not fresh and not related:
+            # 历史且与本次候选无关：只保留摘要成员信息，不再为它逐条计算
+            # observation 指纹（22k 行 × 每次超步是原实现的主要开销之一）。
+            summarized.append((row.evidence_id, row.timestamp))
+            continue
         observation = {column.name: getattr(row, column.name) for column in row.__table__.columns
                        if column.name not in {"id", "created_at", "evidence_id", "evidence_hash"}}
         observed_hash = fingerprint(observation)
@@ -237,9 +403,14 @@ def _build_snapshot(db, packet: dict, run_id: str, risk_id=None, previous=None, 
             "collected_at": _time(row.created_at), "observed_at": row.timestamp,
             "content_sha256": row.evidence_hash or observed_hash, "observation_sha256": observed_hash,
             "asset_id": row.asset_id, "source_run_id": "",
+            "fresh": fresh,
+            "included_reason": "fresh_and_related" if fresh and related else ("fresh" if fresh else "candidate_related"),
             "integrity": "database_content_hash" if row.evidence_hash else "snapshot_observation_hash"}
         runtime.append({"observed_at": row.timestamp, "source": row.source,
                         "observation_sha256": observed_hash})
+    summary = _runtime_summary(summarized) if summarized else None
+    if summary is not None:
+        registry[RUNTIME_SUMMARY_KEY] = summary
     profile = (packet.get("asset_facts") or {}).get("profile") or {}
     identity = {"asset_id": asset_id, "risk_id": risk_id, "device_id": device.device_id if device else profile.get("device_id", asset_ref),
                 "target_ref": asset_ref, "target_type": target_type}
@@ -294,6 +465,7 @@ def _build_snapshot(db, packet: dict, run_id: str, risk_id=None, previous=None, 
         "identity": identity, "inventory": inventory,
         "official": {"records": official_latest, "candidates": official_candidates},
         "runtime": {"events": sorted(runtime, key=_json),
+                     "summarized": _safe_summary_view(summary),
                      "freshness": _semantic((packet.get("runtime_facts") or {}).get("freshness") or {}),
                      "coverage": _semantic((packet.get("runtime_facts") or {}).get("coverage") or {})},
         "harness": harness_semantic,
@@ -334,9 +506,18 @@ def collect_evidence_ids(value: Any) -> set[str]:
 
 
 def validate_evidence_ids(evidence_ids, snapshot: dict, *, kinds=None) -> list[str]:
-    registry = snapshot.get("evidence_registry") or {}
-    return [f"evidence_not_in_snapshot:{ref}" for ref in sorted(set(evidence_ids))
-            if ref not in registry or (kinds and registry[ref].get("kind") not in kinds)]
+    """只拒绝「快照中不存在」或「kind 不匹配」的引用。
+
+    被摘要掉的历史 runtime 证据不再被误判为捏造：它由摘要成员哈希判定为
+    known_but_summarized，可以引用为历史事实，但不会因此获得新鲜证据地位
+    （freshness 仍由 runtime_facts 与逐条 registry 条目的 observed_at 决定）。
+    """
+    errors = []
+    for ref in sorted(set(evidence_ids)):
+        status = classify_evidence_id(ref, snapshot, kinds=kinds)
+        if status in {"unknown", "wrong_kind"}:
+            errors.append(f"evidence_not_in_snapshot:{ref}")
+    return errors
 
 
 def merge_immutable(left, right):
@@ -469,7 +650,7 @@ def build_findings(role: str, output: dict, snapshot: dict, previous_findings=()
             if inventory_id:
                 refs.add(inventory_id)
         invalid = validate_evidence_ids(refs, snapshot)
-        refs &= set(snapshot.get("evidence_registry") or {})
+        refs &= evidence_registry_ids(snapshot)
         basis = item.get("rationale") or item.get("reason") or item.get("exploitation_relation_rationale") or ""
         subject = str(item.get("cve_id") or item.get("object_id") or item.get("device_id")
                       or snapshot.get("target_ref") or role)
