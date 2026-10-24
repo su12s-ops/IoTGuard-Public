@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import math
 import re
 import threading
 import time
@@ -46,6 +47,16 @@ _FINAL_ANSWER_INSTRUCTION = (
     "不要输出多余文字。已有数据不足时按现有字段如实标注证据不足/data_gaps，"
     "不得编造 evidence_id、CVE、端口、版本等事实。"
 )
+
+# 角色用量投影（2026-10-24，实测批次 UA-7b14f6e6bf3b 三条风险）：
+# 角色预算检查发生在「请求之间」，角色可以在一次工具循环里跑到越限后才被降级——
+# risk-130 漏洞角色 3 次请求 56,598 tokens / 550s 全部丢弃；risk-131 复审重试
+# 再丢 17,300 tokens / 226s。投影在每轮工具请求前把「已用 + 估算提示词×系数 +
+# 收敛预留」与角色剩余额度比较，超出时不再发起下一轮工具请求，改走与上下文
+# 超限完全相同的唯一一次无工具收敛（_finalize_without_tools）。预算数值、
+# 降级策略、成功判定标准均不变；收敛请求本身仍过 meter 闸门。
+ROLE_USAGE_PROJECTION_FACTOR = 2.0      # 估算 token → 实际 token 的保守系数（实测低报约 2 倍）
+ROLE_USAGE_COMPLETION_RESERVE = 12_000  # 最终收敛请求的完成 token 预留（实测收敛输出 0.9k–18k）
 
 # Stage-10 效率契约（请求内缓存）：这些工具读取的事实在一次编排运行内不变——
 # 版本比较是纯函数；情报源/命中清单/设备画像只被操作员动作（官方重取、匹配重算、
@@ -362,6 +373,29 @@ class UnifiedToolLoopAgent:
         return [{"name": tool.name, "description": tool.description,
                  "parameters": tool.parameters} for tool in self.spec.tools]
 
+    def _role_usage_projection(self, messages: list[dict[str, Any]]) -> str:
+        """下一轮工具请求的投影用量会越过角色剩余额度时返回原因，否则空串。
+
+        只影响「下一轮工具请求是否发起」：越限时调用方改走唯一一次无工具
+        收敛（复用上下文超限的既有路径），收敛请求本身仍由 meter 的
+        ensure_budget / reserve_request 硬闸门约束，不新增任何预算弹性。
+        """
+        if not self.meter:
+            return ""
+        limit = self.meter.role_limit(self.role)
+        if not limit:
+            return ""
+        used = self.meter.role_usage.get(self.role, 0)
+        chars = context_budget.messages_chars(messages)
+        estimated = max(1, math.ceil(chars / context_budget.CHARS_PER_TOKEN)) if chars else 0
+        projected_prompt = int(estimated * ROLE_USAGE_PROJECTION_FACTOR)
+        projected = used + projected_prompt + ROLE_USAGE_COMPLETION_RESERVE
+        if projected <= limit:
+            return ""
+        return (f"role_usage_projection: used={used} limit={limit} "
+                f"estimated_next_prompt≈{projected_prompt} "
+                f"completion_reserve={ROLE_USAGE_COMPLETION_RESERVE} projected={projected}")
+
     def _complete(self, messages, tools, deadline):
         remaining = deadline - time.monotonic()
         if remaining <= 0:
@@ -539,6 +573,12 @@ class UnifiedToolLoopAgent:
             {"role": "system", "content": self._system_message()},
             {"role": "user", "content": context},
         ]
+        # 同一会话内已执行工具调用的指纹 → (调用序号, 有界渲染结果)。
+        # 重复调用且结果一致时只回指不重复展开（消除重复上下文；实测运行
+        # runtime_analyst 单角色重复 query_process_evidence/query_process_tree，
+        # 每条 8k 字符结果在后续每轮请求中重复计费）。
+        seen_calls: dict[str, tuple[int, str]] = {}
+        call_ordinal = 0
         max_validation_attempts = 2   # 同一响应后的结构化校验反馈重试（F3，有界）
         for _ in range(self.spec.max_tool_rounds):
             if time.monotonic() > deadline:
@@ -551,6 +591,13 @@ class UnifiedToolLoopAgent:
                 except BudgetExceeded as exc:
                     return UnifiedAgentResult(self.spec.name, "degraded", None,
                                               error=str(exc), tool_calls=tool_calls_log)
+            # 角色用量投影：剩余额度装不下下一轮工具请求时，不再发送该请求，
+            # 改走唯一一次无工具收敛——否则本轮调查会「跑完才判超」并被整体
+            # 丢弃（实测 56,598 tokens / 550s 一次浪费）。
+            projection = self._role_usage_projection(messages)
+            if projection:
+                return self._finalize_without_tools(messages, deadline, projection,
+                                                    tool_calls_log, triaged)
             try:
                 response = self._complete(messages, self._tool_schemas() or None, deadline)
             except context_budget.ContextBudgetExceeded as exc:
@@ -591,38 +638,55 @@ class UnifiedToolLoopAgent:
             for call in calls:
                 if time.monotonic() >= deadline:
                     raise AgentDeadlineExceeded("工具执行前智能体总时限已耗尽")
+                call_ordinal += 1
                 entry = {"name": call["name"], "arguments": call["arguments"], "ok": False}
                 tool = allowed.get(call["name"])
+                fingerprint = call["name"] + "|" + json.dumps(
+                    call["arguments"], sort_keys=True, ensure_ascii=False, default=str)
                 cache_key = ""
                 if tool is not None and self.tool_cache is not None and call["name"] in CACHEABLE_TOOLS:
                     cache_key = self.snapshot_id + "|" + call["name"] + "|" + json.dumps(
                         call["arguments"], sort_keys=True, ensure_ascii=False, default=str)
-                    cached = self.tool_cache.get(cache_key)
+                output = None
+                if tool is None:
+                    entry["error"] = "未注册到当前智能体的工具被拒绝"
+                else:
+                    cached = self.tool_cache.get(cache_key) if cache_key else None
                     if cached is not None:
                         entry["ok"] = True
                         entry["cached"] = True
                         entry["summary"] = _brief(cached)
-                        messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": bounded_tool_result(cached)})
-                        tool_calls_log.append(entry)
-                        continue
-                if tool is None:
-                    entry["error"] = "未注册到当前智能体的工具被拒绝"
+                        output = cached
+                    else:
+                        try:
+                            output = tool.invoke(db, call["arguments"])
+                            entry["ok"] = True
+                            entry["summary"] = _brief(output)
+                            if cache_key:
+                                self.tool_cache[cache_key] = output
+                        except Exception as exc:
+                            entry["error"] = f"{type(exc).__name__}: {exc}"
+                if output is None:
                     messages.append({"role": "tool", "tool_call_id": call["id"],
-                                     "content": bounded_tool_result({"error": entry["error"]})})
+                                     "content": bounded_tool_result({"error": entry.get("error") or "unknown"})})
+                    tool_calls_log.append(entry)
+                    continue
+                rendered = bounded_tool_result(output)
+                prior = seen_calls.get(fingerprint)
+                if prior is not None and prior[1] == rendered:
+                    # 同参数重复调用且结果一致：完整结果已在上方对话中，只回指
+                    # 不重复展开。结果变化（如运行时新事件到达）仍全文返回。
+                    entry["duplicate_of"] = prior[0]
+                    messages.append({"role": "tool", "tool_call_id": call["id"],
+                                     "content": json.dumps({
+                                         "duplicate_call": True,
+                                         "same_parameters_as_call": prior[0],
+                                         "note": "参数与该次调用一致且结果相同，完整结果已在上方对话中；不重复展开。",
+                                     }, ensure_ascii=False)})
                 else:
-                    try:
-                        output = tool.invoke(db, call["arguments"])
-                        entry["ok"] = True
-                        entry["summary"] = _brief(output)
-                        if cache_key:
-                            self.tool_cache[cache_key] = output
-                        messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": bounded_tool_result(output)})
-                    except Exception as exc:
-                        entry["error"] = f"{type(exc).__name__}: {exc}"
-                        messages.append({"role": "tool", "tool_call_id": call["id"],
-                                         "content": bounded_tool_result({"error": entry["error"]})})
+                    messages.append({"role": "tool", "tool_call_id": call["id"],
+                                     "content": rendered})
+                    seen_calls[fingerprint] = (call_ordinal, rendered)
                 tool_calls_log.append(entry)
         return UnifiedAgentResult(self.spec.name, "failed", None,
                                   error=f"工具调用轮次超过上限 {self.spec.max_tool_rounds}",

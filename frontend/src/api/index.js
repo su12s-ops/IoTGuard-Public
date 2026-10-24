@@ -113,6 +113,11 @@ export const startAssetRound = (assetId, { riskId = 0, batchSize = 0 } = {}) =>
 export const reviewRiskEvent = (riskId, decision, reason, actor, expected_status) =>
   api.post(`/analysis/risks/${riskId}/human-review`, { decision, reason, actor, expected_status }, controlRequest()).then((res) => res.data);
 
+// 维护操作：回收被基础设施中断遗留的「研判中」对象。被存活 running 报告引用的
+// 对象由后端拒绝重置（在 skipped 中返回原因），前端只如实展示结果。
+export const recoverInterrupted = () =>
+  api.post("/analysis/recover-interrupted", null, { ...controlRequest(), timeout: 60000 }).then((res) => res.data);
+
 export const adjudicateHistoricalRisk = (riskId, payload) => api.post(`/analysis/risks/${riskId}/historical-adjudication`, payload, controlRequest()).then(r => r.data);
 
 export const analyzeHistoricalRisk = riskId => api.post(`/analysis/risks/${riskId}/historical-analysis`, null, controlRequest()).then(r => r.data);

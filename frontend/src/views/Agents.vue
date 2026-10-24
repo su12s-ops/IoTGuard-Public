@@ -25,6 +25,40 @@
       <div class="card-foot"><span>{{ reviewError || reviewRun?.error || reviewRun?.termination_reason || "任务完成仅表示流程结束，不代表自动研判成功；修复仍需人工审批。" }}</span><span>已处理 {{ reviewRun?.processed_object_count ?? "—" }} / {{ reviewRun?.selected_object_count ?? "—" }} · 待人工 {{ reviewRun?.human_review_object_count ?? "—" }}</span></div>
     </div>
 
+    <section class="card recover-card">
+      <div class="card-head">
+        <div>
+          <div class="card-title">中断恢复（维护操作）</div>
+          <div class="card-desc">宿主停机等基础设施中断可能把风险留在「研判中」并阻塞新批次；本操作只回收无存活报告引用的遗留对象</div>
+        </div>
+        <button class="btn" type="button" :disabled="recoverBusy || runningActive" @click="openRecover"><Icon name="refresh" :size="15" />{{ recoverBusy ? "执行中…" : "检查并恢复中断遗留" }}</button>
+      </div>
+      <div v-if="recoverResult" class="recover-body">
+        <div class="recover-stats">
+          <span><i class="dot ok" />已重置回待分析 <b>{{ recoverResult.recovered }}</b></span>
+          <span><i class="dot warn" />存活任务跳过 <b>{{ recoverResult.skipped?.length || 0 }}</b></span>
+          <span><i class="dot crit" />子运行标记中断 <b>{{ recoverResult.interrupted_run_ids?.length || 0 }}</b></span>
+        </div>
+        <div v-if="recoverResult.skipped?.length" class="recover-note">
+          以下对象被存活 running 报告引用，未重置（对仍存活任务禁止恢复）：
+          <span v-for="item in recoverResult.skipped" :key="item.object_id" class="chip muted mono-chip">{{ item.object_id }} · {{ item.reason }}</span>
+        </div>
+        <div v-else class="recover-note ok">没有存活报告引用的中断对象；被重置的对象已回到「待重新分析」，可在风险队列或资产面板重新发起。</div>
+      </div>
+    </section>
+
+    <Modal :open="recoverOpen" title="恢复中断遗留对象" description="维护操作：把未被存活报告引用的「研判中」风险重置回「待重新分析」，并把孤儿子运行标记为中断。" @close="recoverOpen = false">
+      <ul class="recover-facts">
+        <li>被存活 running 报告引用的对象会被跳过（对仍存活任务禁止恢复）。</li>
+        <li>原报告、治理事件与失败原因全部保留；重置只追加恢复标记。</li>
+        <li>该操作不产生新的模型调用，也不代签任何人工裁定。</li>
+      </ul>
+      <template #footer>
+        <button class="btn" type="button" @click="recoverOpen = false">取消</button>
+        <button class="btn primary" type="button" :disabled="recoverBusy" @click="doRecover">{{ recoverBusy ? "执行中…" : "执行恢复" }}</button>
+      </template>
+    </Modal>
+
     <section v-if="!hasActiveResults" class="card round-start">
       <div class="card-head">
         <div>
@@ -207,7 +241,9 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
-import { api } from "../api";
+import Modal from "../components/Modal.vue";
+import { api, recoverInterrupted } from "../api";
+import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
 import { shortTime, statusLabel, statusTone } from "../utils/format";
 
@@ -225,6 +261,33 @@ const starting = ref(false);
 const reviewRunId = ref("");
 const reviewRun = ref(null);
 const reviewError = ref("");
+const recoverOpen = ref(false);
+const recoverBusy = ref(false);
+const recoverResult = ref(null);
+
+function openRecover() {
+  if (!controlSession.token) {
+    notify("请先在顶栏设置操作令牌", "error");
+    ui.tokenOpen = true;
+    return;
+  }
+  recoverOpen.value = true;
+}
+
+async function doRecover() {
+  recoverBusy.value = true;
+  try {
+    const result = await recoverInterrupted();
+    recoverResult.value = result;
+    recoverOpen.value = false;
+    notify(`恢复完成：重置 ${result.recovered} 项，跳过存活引用 ${result.skipped?.length || 0} 项`, result.recovered ? "success" : "info");
+    await refreshAll();
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "恢复操作失败", "error");
+  } finally {
+    recoverBusy.value = false;
+  }
+}
 const terminalReviewStatuses = new Set(["completed", "succeeded", "partial", "human_review", "pending_human_review", "failed", "interrupted", "cancelled", "skipped", "no_candidates", "blocked"]);
 let pollTimer = null;
 let refreshing = false;
@@ -448,6 +511,15 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.recover-card .card-head { align-items: flex-start; }
+.recover-body { display: grid; gap: 8px; padding: 4px 16px 12px; }
+.recover-stats { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11.5px; }
+.recover-stats span { display: inline-flex; align-items: center; gap: 6px; }
+.recover-stats b { color: var(--ink); font-family: var(--font-num); font-size: 12.5px; }
+.recover-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11.5px; line-height: 1.6; }
+.recover-note.ok { color: #067647; }
+.mono-chip { font-size: 10px; height: 20px; font-family: var(--font-num); }
+.recover-facts { margin: 0 0 6px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
 .round-start .card-foot { justify-content: space-between; }
 .device-grid {
   display: grid;

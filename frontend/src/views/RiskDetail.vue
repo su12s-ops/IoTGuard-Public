@@ -21,7 +21,7 @@
         </div>
         <div class="actions">
           <button class="btn" type="button" @click="openDecision('reject')"><Icon name="flag" :size="15" />标记误报</button>
-          <button class="btn primary" type="button" @click="goRepair"><Icon name="wrench" :size="15" />生成修复计划</button>
+          <button class="btn primary" type="button" @click="openRepair"><Icon name="wrench" :size="15" />创建修复任务</button>
         </div>
       </div>
     </header>
@@ -100,6 +100,36 @@
                   <span class="ic"><Icon name="alert" :size="14" /></span>
                   <div><div class="t">{{ decisionLabel }}</div><div class="d">{{ recommendation }}</div></div>
                 </div>
+                <div class="verdict-grid">
+                  <div class="verdict-cell">
+                    <span class="v-label">机器结论</span>
+                    <b class="v-value">{{ verdictLabel }}</b>
+                    <span class="v-hint">置信 {{ pct(Number(row.review_confidence ?? row.decision_confidence ?? 0) * 100) }}{{ row.review_adjustment ? ` · 修正 +${row.review_adjustment}` : "" }}</span>
+                  </div>
+                  <div class="verdict-cell">
+                    <span class="v-label">降级角色</span>
+                    <b class="v-value">{{ row.review_failed_agents?.length ? row.review_failed_agents.join("、") : "无（四角色完整）" }}</b>
+                    <span class="v-hint">{{ row.review_failed_agents?.length ? "预算/证据边界导致降级" : "本轮无角色降级" }}</span>
+                  </div>
+                </div>
+                <div v-if="missingEvidence.length" class="gap-block">
+                  <div class="g-head"><Icon name="search" :size="12" />证据缺口（{{ missingEvidence.length }}）<span class="link" @click="gapsOpen = !gapsOpen">{{ gapsOpen ? "收起" : "展开全部" }}</span></div>
+                  <ul class="g-list">
+                    <li v-for="gap in visibleGaps" :key="gap">{{ gap }}</li>
+                  </ul>
+                </div>
+                <div v-if="conflictNotes.length" class="gap-block">
+                  <div class="g-head"><Icon name="branch" :size="12" />未消解冲突（{{ conflictNotes.length }}）</div>
+                  <ul class="g-list">
+                    <li v-for="note in conflictNotes" :key="note">{{ note }}</li>
+                  </ul>
+                </div>
+                <div v-if="auditReasons.length" class="gap-block">
+                  <div class="g-head"><Icon name="shield" :size="12" />进入人工复核的策略原因</div>
+                  <div class="audit-chips">
+                    <span v-for="reason in auditReasons" :key="reason" class="chip muted mono-chip">{{ reason }}</span>
+                  </div>
+                </div>
                 <div>
                   <div class="conf-top"><span>模型置信度</span><b>{{ pct(row.decision_confidence ? Number(row.decision_confidence) * 100 : 0) }}</b></div>
                   <div class="conf-bar"><i :style="{ width: `${Math.min(100, Number(row.decision_confidence || 0) * 100)}%` }" /></div>
@@ -116,8 +146,10 @@
                 <div class="actions-row">
                   <button class="btn primary" type="button" @click="openDecision('confirm')">确认受影响</button>
                   <button class="btn" type="button" @click="openDecision('reject')">判为不受影响</button>
+                  <button class="btn" type="button" @click="openDecision('accept_risk')">接受风险</button>
+                  <button class="btn" type="button" @click="openDecision('request_reanalysis')">要求重新分析</button>
                 </div>
-                <div class="decision-note">裁决会写入审计日志，并触发修复计划候选；不会直接修改设备。</div>
+                <div class="decision-note">裁定由操作员提交并写入审计；确认/接受风险前必须已有四智能体当期结论。不代签、不自动确认。</div>
               </div>
               <div class="card-foot"><span class="num">AUD-{{ row.risk_id || "—" }}</span><span>{{ row.reviewed_by ? `签收人 ${row.reviewed_by}` : "等待签收" }}</span></div>
             </section>
@@ -134,15 +166,52 @@
       </div>
     </template>
 
-    <Modal :open="decisionOpen" :title="decision === 'confirm' ? '确认受影响' : '判为不受影响'" description="裁决会写入审计日志；提交前请确认理由与操作员身份。" @close="decisionOpen = false">
+    <Modal :open="decisionOpen" :title="decisionMeta[decision]?.title || '人工裁决'" :description="decisionMeta[decision]?.hint || ''" @close="decisionOpen = false">
       <label class="field-label" for="actor">操作员标识</label>
       <input id="actor" v-model="actor" class="input" placeholder="例如：wang.gong" autocomplete="off" />
       <label class="field-label" for="reason">裁决理由</label>
       <textarea id="reason" v-model="reason" class="textarea" placeholder="写下依据、证据缺口或后续动作。"></textarea>
-      <p class="field-hint">当前对象：{{ row?.cve_id }} · expected_status {{ expectedStatus }}</p>
+      <p class="field-hint">当前对象：{{ row?.cve_id }} · expected_status {{ expectedStatus }}<br />{{ decisionMeta[decision]?.note }}</p>
       <template #footer>
         <button class="btn" type="button" @click="decisionOpen = false">取消</button>
         <button class="btn primary" type="button" :disabled="submitting || !actor.trim() || !reason.trim()" @click="submitDecision">{{ submitting ? "提交中…" : "提交裁决" }}</button>
+      </template>
+    </Modal>
+
+    <Modal :open="repairOpen" title="创建 Harness 修复任务" description="同一资产、同一风险创建修复计划；无适用修复方案时会被策略阻断，不会伪造成功。" @close="repairOpen = false">
+      <div class="plan-rows-mini">
+        <div><span>资产</span><b>asset {{ row?.asset_id }} · {{ row?.hostname }}</b></div>
+        <div><span>风险</span><b>risk-{{ row?.risk_id }} · {{ row?.cve_id }}</b></div>
+        <div><span>当前审核状态</span><b>{{ expectedStatus }}</b></div>
+      </div>
+      <label class="field-label" for="artifact">修复产物（已登记清单）</label>
+      <select id="artifact" v-model="artifactId" class="input">
+        <option value="">不指定（后端将校验并如实阻断）</option>
+        <option v-for="item in artifacts" :key="item.id" :value="item.id">{{ item.id }} · {{ item.package_name }} {{ item.version }}</option>
+      </select>
+      <p class="field-hint">审批与执行前检查保持不变：计划哈希锁定、人工审批、执行前资产与清单复核。</p>
+      <template #footer>
+        <button class="btn" type="button" @click="repairOpen = false">取消</button>
+        <button class="btn primary" type="button" :disabled="repairBusy" @click="submitRepairRun">{{ repairBusy ? "创建中…" : "创建修复任务" }}</button>
+      </template>
+    </Modal>
+
+    <Modal :open="Boolean(repairResult)" :title="repairResult?.status === 'blocked' ? '修复计划被策略阻断' : '修复任务已创建'" :description="''" @close="repairResult = null">
+      <div v-if="repairResult" class="plan-rows-mini">
+        <div><span>任务</span><b class="mono">{{ repairResult.id?.slice(0, 16) }}</b></div>
+        <div><span>状态</span><b>{{ repairResult.status }}</b></div>
+        <div><span>资产 / 风险</span><b>asset {{ repairResult.asset_id }} · risk-{{ repairResult.risk_id }}</b></div>
+      </div>
+      <div v-if="repairBlockedReasons.length" class="blocked-box">
+        <div class="g-head"><Icon name="shield" :size="12" />阻断原因（如实展示，不伪造成功）</div>
+        <ul class="g-list">
+          <li v-for="cause in repairBlockedReasons" :key="cause">{{ cause }}</li>
+        </ul>
+      </div>
+      <p v-else class="field-hint">计划进入待审批；请到「修复与验证」完成人工审批与执行前检查。</p>
+      <template #footer>
+        <button class="btn" type="button" @click="repairResult = null">关闭</button>
+        <router-link v-if="repairResult && repairResult.status !== 'blocked'" class="btn primary" to="/repairs">前往修复与验证</router-link>
       </template>
     </Modal>
   </div>
@@ -156,6 +225,7 @@ import EmptyState from "../components/EmptyState.vue";
 import Modal from "../components/Modal.vue";
 import TopActions from "../components/TopActions.vue";
 import { api, fetchBehaviorChains, fetchCveRuntimeEvidence, reviewRiskEvent } from "../api";
+import { createHarnessRun } from "../api/deviceOperations";
 import { controlSession } from "../api/controlSession";
 import { ui, notify } from "../stores/ui";
 import { cvss, dateTime, levelLabel, pct, score, statusLabel } from "../utils/format";
@@ -173,6 +243,35 @@ const decision = ref("confirm");
 const actor = ref("");
 const reason = ref("");
 const submitting = ref(false);
+const gapsOpen = ref(false);
+const repairOpen = ref(false);
+const repairBusy = ref(false);
+const repairResult = ref(null);
+const artifacts = ref([]);
+const artifactId = ref("");
+
+const DECISION_META = {
+  confirm: {
+    title: "确认受影响",
+    hint: "最终裁定：确认风险真实受影响，进入处置与修复候选。",
+    note: "需要四智能体当期结论（native assessment）存在；否则会被拒绝。"
+  },
+  accept_risk: {
+    title: "接受风险",
+    hint: "最终裁定：受影响但暂不修复，记录风险接受。",
+    note: "与确认一样需要当期结论；接受后不再进入修复授权。"
+  },
+  reject: {
+    title: "判为不受影响",
+    hint: "最终裁定：证据表明该风险不适用于本资产。",
+    note: "请在理由中写明反证或证据缺口。"
+  },
+  request_reanalysis: {
+    title: "要求重新分析",
+    hint: "退回重新分析：不形成最终裁定。",
+    note: "适用于证据过期、结论存疑或清单更新后需要复评。"
+  }
+};
 
 const level = computed(() => (row.value?.has_final_conclusion ? row.value?.risk_level : row.value?.preliminary_level) || "unknown");
 const riskScore = computed(() => row.value?.has_final_conclusion ? row.value?.final_score : row.value?.preliminary_score ?? row.value?.static_score);
@@ -200,6 +299,18 @@ const reviewLabel = computed(() => {
 });
 const reviewTone = computed(() => (row.value?.human_review_required || row.value?.review_status === "pending_human_review" || row.value?.review_status === "quarantined_mapping" ? "high" : row.value?.review_status === "human_confirmed" ? "low" : "info"));
 const recommendation = computed(() => row.value?.review_status_reason || row.value?.review_reason || row.value?.preliminary_reason || "版本适用性与暴露面需要人工签收；机器结论只作为输入。");
+const decisionMeta = DECISION_META;
+const verdictLabel = computed(() => ({
+  confirmed_affected: "确认受影响", potentially_affected: "可能受影响", not_affected: "不受影响", insufficient_data: "证据不足"
+}[row.value?.review_verdict] || row.value?.review_verdict || "无当期结论"));
+const missingEvidence = computed(() => (Array.isArray(row.value?.review_missing_evidence) ? row.value.review_missing_evidence : []));
+const visibleGaps = computed(() => (gapsOpen.value ? missingEvidence.value : missingEvidence.value.slice(0, 3)));
+const conflictNotes = computed(() => (Array.isArray(row.value?.review_conflicts) ? row.value.review_conflicts : []));
+const auditReasons = computed(() => (Array.isArray(row.value?.audit_policy_reasons) ? row.value.audit_policy_reasons : []));
+const repairBlockedReasons = computed(() => {
+  const plan = repairResult.value?.plan || {};
+  return Array.isArray(plan.blocked_reasons) ? plan.blocked_reasons : [];
+});
 
 const factors = computed(() => {
   const source = row.value || {};
@@ -259,8 +370,42 @@ function openEvidence() {
   router.push("/runtime");
 }
 
-function goRepair() {
-  router.push({ path: "/repairs", query: { risk: row.value?.risk_id ?? id.value } });
+async function openRepair() {
+  if (!row.value) return;
+  if (!controlSession.token) {
+    notify("请先在顶栏设置操作令牌", "error");
+    ui.tokenOpen = true;
+    return;
+  }
+  repairResult.value = null;
+  artifactId.value = "";
+  try {
+    const result = await api.get("/harness/artifacts", { timeout: 20000 });
+    artifacts.value = Array.isArray(result.data) ? result.data : [];
+  } catch {
+    artifacts.value = [];
+  }
+  repairOpen.value = true;
+}
+
+async function submitRepairRun() {
+  if (!row.value) return;
+  repairBusy.value = true;
+  try {
+    const result = await createHarnessRun({
+      asset_id: Number(row.value.asset_id),
+      risk_id: Number(row.value.risk_id ?? row.value.id),
+      goal: "repair",
+      artifact_id: artifactId.value
+    });
+    repairResult.value = result;
+    repairOpen.value = false;
+    notify(result.status === "blocked" ? "修复计划被策略阻断（原因已展示）" : "修复任务已创建", result.status === "blocked" ? "error" : "success");
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "修复任务创建失败", "error");
+  } finally {
+    repairBusy.value = false;
+  }
 }
 
 async function submitDecision() {
@@ -319,6 +464,25 @@ onMounted(load);
 .gate-list span { margin-left: auto; color: var(--muted); font-family: var(--font-num); font-size: 10.5px; }
 .terminal { min-height: 258px; }
 .risk-grid { height: auto; }
+.verdict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.verdict-cell { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fbfdff; }
+.v-label { color: var(--muted); font-size: 10.5px; }
+.v-value { color: var(--ink); font-size: 12.5px; font-weight: 700; line-height: 1.45; word-break: break-all; }
+.v-hint { color: var(--muted); font-size: 10.5px; }
+.gap-block { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fffdf7; }
+.g-head { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11px; font-weight: 700; }
+.g-head .link { margin-left: auto; font-weight: 400; }
+.g-list { margin: 0; padding-left: 16px; display: grid; gap: 4px; color: var(--ink-2); font-size: 11px; line-height: 1.5; }
+.audit-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.mono-chip { font-size: 10px; height: 20px; }
+.plan-rows-mini { display: grid; gap: 8px; margin-bottom: 10px; }
+.plan-rows-mini div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; font-size: 12px; align-items: baseline; }
+.plan-rows-mini span { color: var(--muted); }
+.plan-rows-mini b { color: var(--ink-2); font-weight: 600; word-break: break-all; }
+.blocked-box { display: grid; gap: 6px; padding: 10px; border: 1px solid #f3c6c6; border-radius: 8px; background: #fdf6f6; }
+.blocked-box .g-head { color: #b42318; }
+.actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.actions-row .btn { flex: 1 1 auto; min-width: 120px; }
 @media (max-width: 1280px) {
   .risk-grid { grid-template-columns: minmax(0, 1fr) !important; }
 }
