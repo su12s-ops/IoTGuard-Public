@@ -14,6 +14,8 @@ backend/data/
 reports/
 # 本地归档（原 Private 仓库证据/数据/凭据备份），绝不提交
 local-archive/
+# 本地 compose 覆盖（修复产物挂载/设备密钥/作用域写窗口），绝不提交
+docker-compose.override.yaml
 
 # ── 密钥与虚拟机文件（防御性规则，正常开发不产生） ────────────────
 *.pem

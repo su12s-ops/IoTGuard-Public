@@ -26,6 +26,7 @@ export const discoverDevices = data => api.post("/iot/discovery", data, control(
 export const fetchObservations = () => api.get("/iot/observations").then(r => r.data);
 export const fetchOpenWrtAdvisories = () => api.get("/iot/advisories").then(r => r.data);
 export const saveOpenWrtAdvisory = data => api.post("/iot/advisories", data, control()).then(r => r.data);
+export const enrollRepairDomain = (assetId, data) => api.post(`/assets/${assetId}/repair-domain`, data, control()).then(r => r.data);
 export const fetchHarnessRuns = () => api.get("/harness/runs").then(r => r.data);
 export const fetchHarnessRun = id => api.get("/harness/runs/" + id).then(r => r.data);
 export const fetchRepairArtifacts = () => api.get("/harness/artifacts").then(r => r.data);

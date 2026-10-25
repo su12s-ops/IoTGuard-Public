@@ -387,13 +387,25 @@ def _read_verification_logs(connection):
         client.close()
 
 
+def _check_env():
+    """Minimal environment for administrator-registered check processes.
+
+    The script is a registered tool, never model-generated code. Never pass
+    model keys or device passwords. LINUXGUARD_DATA_DIR is a plain directory
+    path declared by the deployment (docker-compose sets /app/data); container
+    deployments need it so registered regression checks can locate the product
+    database instead of the legacy host-relative backend/data layout.
+    """
+    env = {key: os.environ[key] for key in
+           ("SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP", "LINUXGUARD_DATA_DIR") if key in os.environ}
+    env["PYTHONUTF8"] = "1"
+    return env
+
+
 def _run_check(item, root, kind, target):
     config = item["checks"][kind]
     path = checked_file(root, config["path"], config["sha256"], max_bytes=1_000_000)
-    # The script is an administrator-registered tool, never model-generated code.
-    # Do not pass model keys or device passwords to the check process.
-    env = {key: os.environ[key] for key in ("SYSTEMROOT", "WINDIR", "PATH", "TEMP", "TMP") if key in os.environ}
-    env["PYTHONUTF8"] = "1"
+    env = _check_env()
     output = subprocess.run([sys.executable, str(path)], input=encode(target), text=True, encoding="utf-8",
                             capture_output=True, timeout=45, cwd=str(root), env=env, check=False)
     if output.returncode or len(output.stdout) > 20000:

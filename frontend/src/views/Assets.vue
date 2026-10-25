@@ -10,6 +10,7 @@
       </template>
       <template #actions>
         <button class="btn" type="button" @click="load"><Icon name="refresh" :size="15" />刷新</button>
+        <button class="btn" type="button" @click="openAdvisory"><Icon name="file" :size="15" />OpenWrt 公告登记</button>
         <button class="btn" type="button" :disabled="uploading" @click="pickImport"><Icon name="download" :size="15" />{{ uploading ? "导入中…" : "导入清单" }}</button>
         <button class="btn primary" type="button" @click="openDiscovery"><Icon name="scan" :size="15" />发现新设备</button>
       </template>
@@ -163,6 +164,19 @@
         <div><span>漏洞命中</span><b>{{ selected.matches?.count ?? "—" }} 条</b></div>
         <div><span>运行时</span><b>{{ runtimeLabel(selected.runtime) }}</b></div>
         <div><span>修复能力</span><b>{{ remediationLabel(selected.remediation) }}</b></div>
+        <div class="wide">
+          <span>修复授权域</span>
+          <b>
+            <span class="chip" :class="selected.repair_domain === 'openwrt_lab' ? 'low' : selected.repair_domain === 'production' ? 'crit' : 'muted'"><i class="dot" />{{ repairDomainLabel(selected.repair_domain) }}</span>
+            <small v-if="selected.repair_domain_actor" class="domain-note">登记人 {{ selected.repair_domain_actor }}；一次性登记，不可改写</small>
+            <button
+              v-if="canEnrollRepairDomain"
+              class="link enroll-link"
+              type="button"
+              @click="domainOpen = true"
+            >登记修复授权域</button>
+          </b>
+        </div>
         <div class="wide"><span>下一步</span><b>{{ nextActionLabel(selected.next_action) }}</b></div>
       </div>
       <DeviceCollectionPanel v-else-if="selected && detailTab === 'collection'" :asset="selected" :open="true" @updated="onCollectionUpdated" />
@@ -189,6 +203,66 @@
         <button class="btn primary" type="button" :disabled="discovering || !cidr.trim()" @click="submitDiscovery">{{ discovering ? "发现中…" : "开始发现" }}</button>
       </template>
     </Modal>
+
+    <Modal :open="domainOpen" title="登记修复授权域" description="一次性登记，登记后不能通过此入口改写；修复执行还需产物登记与作用域写窗口。" @close="domainOpen = false">
+      <div class="plan-rows-mini" v-if="selected">
+        <div><span>资产</span><b>asset {{ selected.asset_id }} · {{ selected.name || selected.key }} · {{ selected.version || "版本未识别" }}</b></div>
+        <div><span>当前授权域</span><b>{{ repairDomainLabel(selected.repair_domain) }}</b></div>
+      </div>
+      <label class="field-label" for="domain-choice">授权域</label>
+      <select id="domain-choice" v-model="domainChoice" class="input">
+        <option value="openwrt_lab">openwrt_lab（隔离实验克隆；修复写入走实验作用域开关）</option>
+        <option value="production">production（生产设备；须走生产修复总开关与独立审批）</option>
+      </select>
+      <label class="field-label" for="domain-actor">登记人</label>
+      <input id="domain-actor" v-model="domainActor" class="input" placeholder="操作员标识（例如 wang.gong）" autocomplete="off" />
+      <label class="field-label" for="domain-reason">登记依据</label>
+      <textarea id="domain-reason" v-model="domainReason" class="textarea" placeholder="该资产确属隔离实验克隆 / 生产设备的依据，例如克隆来源与快照名。"></textarea>
+      <p class="field-hint">授权域决定设备写许可的来源；清单、主机名或环境白名单都不能改写该字段。</p>
+      <template #footer>
+        <button class="btn" type="button" @click="domainOpen = false">取消</button>
+        <button class="btn primary" type="button" :disabled="domainBusy || !domainActor.trim() || !domainReason.trim()" @click="submitRepairDomain">{{ domainBusy ? "登记中…" : "登记授权域" }}</button>
+      </template>
+    </Modal>
+
+    <Modal :open="advisoryOpen" title="OpenWrt 公告版本登记" description="按官方公告与官方仓库登记精确受影响/已修复版本；官方 GHSA 快照导入的规范化记录不会被覆盖。" wide @close="advisoryOpen = false">
+      <div class="adv-grid">
+        <section class="adv-form">
+          <label class="field-label" for="adv-cve">CVE 编号</label>
+          <input id="adv-cve" v-model="advForm.cve_id" class="input" placeholder="CVE-2026-XXXXX" />
+          <label class="field-label" for="adv-package">组件（包名）</label>
+          <input id="adv-package" v-model="advForm.package_name" class="input" placeholder="cgi-io" />
+          <label class="field-label" for="adv-release">固件版本（release）</label>
+          <input id="adv-release" v-model="advForm.release" class="input" placeholder="25.12.4（须与资产固件版本一致才参与精确匹配）" />
+          <label class="field-label" for="adv-affected">受影响版本（逗号分隔）</label>
+          <input id="adv-affected" v-model="advForm.affected" class="input" placeholder="2025.12.11~658b14bd-r1" />
+          <label class="field-label" for="adv-fixed">已修复版本（逗号分隔）</label>
+          <input id="adv-fixed" v-model="advForm.fixed" class="input" placeholder="2026.07.21~31cb3c89-r1" />
+          <label class="field-label" for="adv-url">官方来源 URL</label>
+          <input id="adv-url" v-model="advForm.source_url" class="input" placeholder="官方公告或官方软件包下载地址" />
+          <label class="field-label" for="adv-notes">登记依据（须可复核）</label>
+          <textarea id="adv-notes" v-model="advForm.notes" class="textarea" placeholder="官方公告编号、受影响范围、镜像/仓库实测依据与校验和等。"></textarea>
+          <p class="field-hint">同一 (CVE, 包, release) 已有记录将被本表单覆盖；与官方规范化记录并存时精确记录优先参与匹配。</p>
+          <div class="adv-actions">
+            <button class="btn" type="button" @click="advisoryOpen = false">关闭</button>
+            <button class="btn primary" type="button" :disabled="advBusy || !advValid" @click="submitAdvisory">{{ advBusy ? "登记中…" : "登记版本记录" }}</button>
+          </div>
+        </section>
+        <section class="adv-list">
+          <div class="adv-list-head">已登记公告记录（{{ advisories.length }}）</div>
+          <div v-if="!advisories.length" class="empty-note" style="padding: 18px">暂无记录。</div>
+          <div v-for="row in advisories" :key="row.id" class="adv-row" :class="{ exact: !isNormalizedAdvisory(row) }">
+            <div class="adv-row-top">
+              <b class="mono">{{ row.cve_id }}</b>
+              <span class="chip" :class="isNormalizedAdvisory(row) ? 'muted' : 'low'">{{ isNormalizedAdvisory(row) ? "官方规范化" : "操作员精确" }}</span>
+            </div>
+            <div class="adv-row-line">{{ row.package_name }} · release {{ row.release || "—" }}</div>
+            <div class="adv-row-line">受影响 {{ row.affected_versions?.join(", ") || "—" }}</div>
+            <div class="adv-row-line">已修复 {{ row.fixed_versions?.join(", ") || "—" }}</div>
+          </div>
+        </section>
+      </div>
+    </Modal>
   </div>
 </template>
 
@@ -202,6 +276,7 @@ import Modal from "../components/Modal.vue";
 import DeviceCollectionPanel from "../components/DeviceCollectionPanel.vue";
 import AssetAnalysisPanel from "../components/AssetAnalysisPanel.vue";
 import { api } from "../api";
+import { enrollRepairDomain, fetchOpenWrtAdvisories, saveOpenWrtAdvisory } from "../api/deviceOperations";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
 import { ecosystemLabel, num, ratioPct } from "../utils/format";
@@ -223,6 +298,99 @@ const ports = ref("22, 80, 443");
 const enroll = ref(true);
 const discovering = ref(false);
 const uploading = ref(false);
+
+const domainOpen = ref(false);
+const domainBusy = ref(false);
+const domainChoice = ref("openwrt_lab");
+const domainActor = ref("");
+const domainReason = ref("");
+const advisoryOpen = ref(false);
+const advBusy = ref(false);
+const advisories = ref([]);
+const advForm = ref({ cve_id: "", package_name: "", release: "", affected: "", fixed: "", source_url: "", notes: "" });
+
+const canEnrollRepairDomain = computed(() =>
+  selected.value?.asset_id
+  && selected.value.distribution === "openwrt"
+  && (!selected.value.repair_domain || selected.value.repair_domain === "unassigned"));
+const advValid = computed(() =>
+  advForm.value.cve_id.trim().startsWith("CVE-")
+  && advForm.value.package_name.trim()
+  && advForm.value.release.trim()
+  && (advForm.value.affected.trim() || advForm.value.fixed.trim())
+  && advForm.value.source_url.trim().startsWith("http"));
+
+function repairDomainLabel(value) {
+  return { openwrt_lab: "OpenWrt 隔离实验", production: "生产设备", unassigned: "未登记" }[value] || value || "未登记";
+}
+
+function isNormalizedAdvisory(row) {
+  try {
+    const notes = typeof row.notes === "string" ? JSON.parse(row.notes) : row.notes || {};
+    return notes?.provenance === "openwrt_ghsa_normalized";
+  } catch {
+    return false;
+  }
+}
+
+async function submitRepairDomain() {
+  if (!selected.value?.asset_id || !requireToken()) return;
+  domainBusy.value = true;
+  try {
+    const result = await enrollRepairDomain(selected.value.asset_id, {
+      domain: domainChoice.value,
+      actor: domainActor.value.trim(),
+      reason: domainReason.value.trim()
+    });
+    notify(`已登记授权域：${result.repair_domain}`, "success");
+    domainOpen.value = false;
+    domainActor.value = "";
+    domainReason.value = "";
+    await load();
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "授权域登记失败", "error");
+  } finally {
+    domainBusy.value = false;
+  }
+}
+
+function openAdvisory() {
+  if (!requireToken()) return;
+  advisoryOpen.value = true;
+  if (!advisories.value.length) loadAdvisories();
+}
+
+async function loadAdvisories() {
+  try {
+    advisories.value = await fetchOpenWrtAdvisories();
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "公告记录读取失败", "error");
+  }
+}
+
+async function submitAdvisory() {
+  if (!requireToken()) return;
+  advBusy.value = true;
+  try {
+    const split = (value) => value.split(",").map((item) => item.trim()).filter(Boolean);
+    await saveOpenWrtAdvisory({
+      cve_id: advForm.value.cve_id.trim(),
+      package_name: advForm.value.package_name.trim(),
+      release: advForm.value.release.trim(),
+      affected_versions: split(advForm.value.affected),
+      fixed_versions: split(advForm.value.fixed),
+      source_url: advForm.value.source_url.trim(),
+      notes: advForm.value.notes.trim()
+    });
+    notify("版本记录已登记；请运行漏洞匹配使记录生效。", "success");
+    advForm.value = { cve_id: "", package_name: "", release: "", affected: "", fixed: "", source_url: "", notes: "" };
+    await loadAdvisories();
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "公告登记失败", "error");
+  } finally {
+    advBusy.value = false;
+  }
+}
 
 const ecoCatalog = {
   openwrt: { icon: "router", color: "#f4622a", soft: "#fff1e8" },
@@ -450,7 +618,10 @@ async function load() {
         identity_source: extra.identity_source || "",
         ip_address: extra.ip_address || "",
         inventory_collected_at: extra.inventory_collected_at || "",
-        os_name: extra.os_name || ""
+        os_name: extra.os_name || "",
+        repair_domain: extra.repair_domain || "unassigned",
+        repair_domain_actor: extra.repair_domain_actor || "",
+        repair_domain_reason: extra.repair_domain_reason || ""
       };
     });
     updated.value = new Date().toLocaleTimeString("zh-CN", { hour12: false });
@@ -472,6 +643,23 @@ onMounted(load);
 .asset-grid { display: grid; grid-template-columns: 236px minmax(0, 1fr) 286px; gap: 16px; align-items: stretch; }
 .detail-tabs { justify-self: start; }
 .detail-tabs span { cursor: pointer; }
+.domain-note { display: block; margin-top: 4px; color: var(--muted); font-size: 10.5px; font-weight: 400; }
+.enroll-link { margin-top: 4px; font-size: 11px; }
+.plan-rows-mini { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: #f9fbfe; }
+.plan-rows-mini div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; font-size: 12px; }
+.plan-rows-mini span { color: var(--muted); }
+.plan-rows-mini b { color: var(--ink-2); font-weight: 600; }
+.adv-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; }
+.adv-form { display: grid; gap: 4px; align-content: start; }
+.adv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.adv-list { border: 1px solid var(--line-soft); border-radius: 12px; background: #fbfdff; max-height: 460px; overflow: auto; }
+.adv-list-head { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); color: var(--ink); font-size: 12px; font-weight: 700; position: sticky; top: 0; background: #fbfdff; }
+.adv-row { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
+.adv-row.exact { background: #f2fbf5; }
+.adv-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.adv-row-top b { color: var(--ink); font-size: 11.5px; }
+.adv-row-line { color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+@media (max-width: 960px) { .adv-grid { grid-template-columns: minmax(0, 1fr); } }
 .type-card, .recent-card { display: flex; flex-direction: column; }
 .type-list { display: grid; gap: 2px; padding: 10px 10px 6px; }
 .type-row {
