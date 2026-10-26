@@ -14,7 +14,7 @@ npm run build
 npm run test:e2e
 ```
 
-Playwright 默认 Chromium，需先安装 `npx playwright install chromium`；Windows 使用已安装 Edge 时设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。测试夹具、模拟器与隔离数据库不是实体设备证据。
+本记录保留当时的验证背景；当前项目统一使用已安装的 Microsoft Edge（`$env:PLAYWRIGHT_CHANNEL='msedge'`），不会安装或下载其他浏览器。测试夹具、模拟器与隔离数据库不是实体设备证据。
 
 ## CI 与联调范围
 
