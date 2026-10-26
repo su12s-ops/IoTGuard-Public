@@ -1,0 +1,13 @@
+/* ==========================================================================
+   IoTGuard · 改造层入口（Q1：地基）
+   顺序即优先级：令牌 → 排版 → 表面。三份都在 console.css 之后加载，
+   因此可以覆盖既有规则；删除 main.js 中这一行 import 即可完全回退。
+   ========================================================================== */
+
+@import "./tokens.css";
+@import "./typography.css";
+@import "./surface.css";
+@import "./rhythm.css";
+@import "./contrast.css";
+@import "./motion.css";
+@import "./responsive.css";

@@ -1,0 +1,253 @@
+/* ==========================================================================
+   IoTGuard · 排版层 v3（Q1）
+   事实依据：改造前实测 —— 总览页 75.6% 的文字 < 13px，裁决页 89.1%，
+   全站 12 种字号挤在 9.5–13.5px 区间。投影场景下评委在 5 米外读不到。
+   本层做三件事：
+     1) 把字阶抬到 8 档（13 / 14 / 15 / 16 / 17 / 20 / 26 / 34 / 40）；
+     2) 上中文排版纪律（行高 1.6、避头尾、数字等宽）；
+     3) 把"减动效"做成全局通道，而不是逐页补丁。
+   ========================================================================== */
+
+/* —— 1. 基线 —— */
+body[data-theme="console"] {
+  font-size: var(--fs-body);
+  line-height: 1.6;
+  line-break: strict; /* 中文避头尾：不让标点落在行首 */
+  overflow-wrap: break-word;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* 标题：收紧字距 + 平衡换行，避免"最后一字落单" */
+h1, h2, h3, .card-title, .page-head h1, .brand-name {
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+}
+p, .card-desc, .ph-sub, .empty-state p, .field-hint {
+  text-wrap: pretty;
+}
+
+/* 数字一律等宽，数值刷新时不抖版 */
+.kpi-value, .score em, .donut-center b, .mono, [class*="num"], td.num, .kpi-delta {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* —— 2. 字号上抬：逐组件对齐到新字阶 —— */
+
+/* 侧栏 */
+.brand-name { font-size: 19px; }
+.brand-sub { font-size: 11px; letter-spacing: 0.14em; } /* 字标附属，非信息文字 */
+.ws-env { font-size: 11px; letter-spacing: 0.08em; }
+.ws-name { font-size: 14px; }
+.ws-sub { font-size: 12px; }
+.nav a { font-size: 15px; }
+.nav-count { font-size: 12px; }
+.rail-lifecycle { font-size: 13px; line-height: 1.55; }
+.rl-head { font-size: 13px; }
+.rl-note { font-size: 12.5px; }
+.rl-btn { font-size: 13px; }
+.avatar { font-size: 13px; }
+.user-name { font-size: 14px; }
+.user-role { font-size: 12px; }
+.rail-meta { font-size: 11.5px; letter-spacing: 0.02em; }
+
+/* 页头 */
+.page-head h1 { font-size: var(--h1-size); line-height: 1.18; }
+.ph-sub { font-size: 15px; }
+.ph-meta { font-size: 13.5px; }
+.eyebrow { font-size: 13px; letter-spacing: 0.06em; }
+.topbar .search input, .search input { font-size: 14.5px; }
+.search .kbd { font-size: 12px; }
+.health { font-size: 13px; }
+.top-avatar { font-size: 13px; }
+
+/* 卡片 */
+.card-title { font-size: 17px; }
+.card-desc { font-size: 14px; line-height: 1.6; }
+.card-foot { font-size: 13.5px; }
+.card-foot .link { font-size: 13.5px; }
+
+/* KPI */
+.kpi-label { font-size: 14px; }
+.kpi-value { font-size: var(--fs-number); line-height: 1.08; letter-spacing: -0.03em; }
+.kpi-unit { font-size: 14px; }
+.kpi-delta { font-size: 14px; }
+.kpi-sub { font-size: 13px; }
+.kpi-icon { font-size: 13px; }
+
+/* 控件 */
+.btn { font-size: 14.5px; }
+.btn.primary, .btn.danger, .btn.ghost { font-size: 14.5px; }
+.btn.sm { font-size: 13.5px; }
+.link { font-size: 13.5px; }
+.chip { font-size: 13px; }
+.pill-tabs button { font-size: 14px; }
+.segmented span { font-size: 14px; }
+.input, .select, .textarea { font-size: 15px; }
+.field-label { font-size: 13.5px; }
+.field-hint { font-size: 13px; line-height: 1.6; }
+
+/* 表格 */
+thead th { font-size: 13.5px; letter-spacing: 0.04em; }
+tbody td { font-size: 15px; }
+tbody td .mono, .mono { font-size: 13px; }
+
+/* 反馈与容器 */
+.empty-state { font-size: 15px; }
+.empty-state b, .empty-state strong { font-size: 16px; }
+.empty-state p { font-size: 14px; line-height: 1.65; }
+.error-banner { font-size: 14px; line-height: 1.6; }
+.toast { font-size: 14px; }
+.modal { font-size: 15px; }
+.modal-title, .modal h2 { font-size: 20px; }
+.donut-center b { font-size: 32px; }
+.donut-center span { font-size: 13px; }
+.queue-row { font-size: 14px; }
+.queue-row .q-sub { font-size: 13px; }
+
+/* —— 3. 焦点与可访问性 —— */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+/* 鼠标点击不显示焦点环，键盘操作才显示 */
+:focus:not(:focus-visible) { outline: none; }
+
+/* Q4 修复：输入类控件的焦点环。
+   console.css 里有 `.search input { outline: 0 }`（权重 0,1,1），
+   压过了全局 `:focus-visible`（0,1,0），导致搜索框与固件版本输入框
+   在键盘聚焦时**完全看不到焦点**（WCAG 2.4.7 不达标）。
+   这里用同权重或更高权重的选择器把它补回来。 */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible,
+.search input:focus-visible,
+.search-inline input:focus-visible,
+.v-input:focus-visible,
+.v-compare-select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Q4 修复：`.card-desc` 实测对比度 4.28:1，低于正文 4.5:1 的下限。
+   由 --muted 提到 --ink-2 后约 7.4:1。 */
+.card-desc {
+  color: var(--ink-2);
+}
+
+/* 滚动条：细，且不再"消失不见"（隐藏滚动条会让人不知道页面可滚） */
+.main { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.main::-webkit-scrollbar { width: 10px; height: 10px; }
+.main::-webkit-scrollbar-thumb {
+  background: var(--line-strong);
+  border: 3px solid var(--bg);
+  border-radius: var(--radius-pill);
+}
+.main::-webkit-scrollbar-track { background: transparent; }
+
+/* 选中高亮走支配色，不走默认蓝 */
+::selection { background: var(--accent-soft); color: var(--ink); }
+
+/* —— 4. 减动效：全局通道（改造前 9 个视图里 7 个完全没有） —— */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+    animation-delay: 0ms !important;
+  }
+}
+
+/* —— 4b. console.css 内仍偏小的家族（视图已逐页抬升，这里补齐宿主样式） ——
+   依据：Q2 探针实测剩余 55 种 <13px 元素，绝大多数落在这些 console.css 选择器上。
+   注意：这是普通规则（无 !important），权重与 console.css 相同、靠加载顺序生效。 */
+td small,
+.stat-value small {
+  font-size: 12.5px;
+}
+.health .seg,
+.health .seg b,
+.health .seg span {
+  font-size: 12.5px;
+}
+.hero-metric span,
+.cover-row span,
+.cover-val,
+.legend-list span,
+.legend-list em,
+.filters-count,
+.bucket-row span,
+.type-foot span,
+.map-foot span,
+.host-foot span,
+.chart-foot span,
+.chart-legend span,
+.recent-time,
+.recent-copy small,
+.rank,
+.rank.top,
+.ws-sub,
+.user-role,
+.search .kbd,
+.rail-meta {
+  font-size: 12.5px;
+}
+/* 图表坐标轴与矩阵轴：投影下仍需可读，但不与正文争 */
+.matrix .axis,
+.chart svg text,
+svg text {
+  font-size: 11.5px;
+}
+
+/* —— 4c. 路由加载指示（Q4）
+   实测依据：生产构建 + Fast 3G 下，点击导航到四态判决，首屏出现需 773ms，
+   期间页面毫无反馈。这里给一条 2px 顶部进度条：不遮挡内容、不锁交互、
+   延迟 180ms 才出现（快路由实测 155ms，不会闪）。 —— */
+.route-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  pointer-events: none;
+  z-index: var(--z-toast);
+  background-image: linear-gradient(90deg, transparent, var(--accent), transparent);
+  background-size: 40% 100%;
+  background-repeat: no-repeat;
+  animation: route-progress-slide 1.05s linear infinite;
+}
+@keyframes route-progress-slide {
+  0% { background-position: -45% 0; }
+  100% { background-position: 145% 0; }
+}
+/* 减动效：不做滑动，改为整条静止实色（否则动画归零后会停在不可见位置） */
+@media (prefers-reduced-motion: reduce) {
+  .route-progress {
+    animation: none !important;
+    background-image: none !important;
+    background-color: var(--accent) !important;
+    background-size: 100% 100% !important;
+  }
+}
+
+/* —— 5. 打印：只留内容，交互件与浮层全隐 ——
+   注：Q4 实测发现原写法里的 `.topbar` 是死选择器（实际顶栏容器是 `.top-actions`），
+   打印时会连着把工具条一起印出来，已改正。 */
+@media print {
+  .rail,
+  .top-actions,
+  .ph-row .actions,
+  .v-kbd-btn,
+  .toast-host,
+  .modal-backdrop,
+  .kbd,
+  .btn { display: none !important; }
+  .main { overflow: visible !important; }
+  .card { box-shadow: none !important; border-color: #bbb !important; }
+  body[data-theme="console"] { background: #fff !important; }
+}

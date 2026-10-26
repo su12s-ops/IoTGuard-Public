@@ -1,0 +1,130 @@
+/* ==========================================================================
+   IoTGuard · 间距双轨制（Q8）
+   实测依据（改造前）：
+     · 全站间距取值 19–22 种，其中 17 种不在 8pt 网格上；
+     · 页面区块之间的间距只有 0 / 12 / 14px；
+     · 全站最大间距 30px —— 也就是说**根本不存在"宏观留白"这一档**，
+       所有内容都挤在微观尺度里互相争抢，页面看起来"平"。
+   本层做两件事：
+     1) 微观刻度：把卡片内距、栅格间距收进 2/4/8/12/16/24；
+     2) 宏观刻度：新增 24/32/48 三档，用于区块之间与页面边缘。
+   所有取值来自 --sp-*，不再出现 18 / 26 / 30 这类散值。
+   ========================================================================== */
+
+body[data-theme="console"] {
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 48px;
+  --sp-9: 64px;
+  --sp-10: 96px;
+}
+
+/* —— 1. 宏观：页面边缘与区块节奏 ——
+   原来 .main 内距是 0 / 26 / 30（26 与 30 都不在网格上），区块之间 0–14px。 */
+.main {
+  padding: 0 var(--sp-7) var(--sp-8);
+}
+
+/* 区块之间统一 24px；相邻兄弟的 margin 会与已有样式合并，不会叠加 */
+.main > * + * {
+  margin-top: var(--sp-6);
+}
+.page > * + * {
+  margin-top: var(--sp-6);
+}
+
+/* 页头与第一个区块之间留更大的气口：标题承接页面顶部，需要比区块间更宽 */
+.page-head {
+  padding: var(--sp-5) 0 var(--sp-3);
+}
+.page-head + *,
+.main > .page-head + * {
+  margin-top: var(--sp-7);
+}
+
+/* —— 2. 微观：卡片内距收进刻度 ——
+   原来 card-head 是 16/18，card-body 13/18/16，card-foot 10/18（18 不在网格上）。 */
+.card-head {
+  padding: var(--sp-5) var(--sp-6) 0;
+}
+.card-body {
+  padding: var(--sp-4) var(--sp-6) var(--sp-5);
+}
+.card-foot {
+  padding: var(--sp-4) var(--sp-6);
+}
+.card-title {
+  line-height: 1.35;
+}
+
+/* KPI 行与栅格：14 → 12，16 → 16（保持密度，不放大） */
+.kpi-row {
+  gap: var(--sp-4);
+}
+.grid,
+.content {
+  gap: var(--sp-5);
+}
+
+/* 页头内部元素呼吸 */
+.ph-row {
+  gap: var(--sp-6);
+}
+.ph-sub {
+  gap: var(--sp-4);
+}
+
+/* —— 3. 空状态构图：空数据页不能是一片白卡加一行小字 ——
+   原来：icon 30px 灰线 + 13px 标题 + 12px 说明，垂直间距靠零散 margin。
+   现在：圆形软底图标（视觉锚点）+ 18px 标题 + 14px 说明 + 24px 气口。 */
+.empty-state {
+  display: grid;
+  justify-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-8) var(--sp-6);
+  text-align: center;
+}
+.empty-state .icon {
+  box-sizing: content-box;
+  width: 26px;
+  height: 26px;
+  padding: 11px; /* 26 + 22 = 48px 圆形底 */
+  border-radius: 50%;
+  background: var(--surface-3);
+  color: var(--ink-3);
+  margin-bottom: var(--sp-2);
+}
+.empty-state b {
+  font-size: 18px;
+  line-height: 1.4;
+  color: var(--ink);
+}
+.empty-state p {
+  max-width: 46ch;
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.7;
+  color: var(--ink-3);
+}
+/* 外层只负责居中，不再叠加内距（否则 64 + 48 两重留白） */
+.empty-wrap {
+  display: grid;
+  place-items: center;
+  padding: 0;
+}
+
+/* —— 4. 超宽屏再放大一档宏观留白 —— */
+@media (min-width: 1920px) {
+  .main {
+    padding: 0 var(--sp-8) var(--sp-9);
+  }
+  .main > * + *,
+  .page > * + * {
+    margin-top: var(--sp-7);
+  }
+}

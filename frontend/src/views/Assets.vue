@@ -16,6 +16,15 @@
       </template>
     </PageHeader>
 
+    <VerdictRuling
+      :state="ruling.state"
+      :stamp-main="ruling.stampMain"
+      :stamp-en="ruling.stampEn"
+      :title="ruling.title"
+      :detail="ruling.detail"
+      :tags="ruling.tags"
+    />
+
     <input ref="fileInput" type="file" accept=".json,.txt,.csv,.md" hidden @change="importAsset" />
 
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
@@ -281,6 +290,8 @@ import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
 import { ecosystemLabel, num, ratioPct } from "../utils/format";
 import { formatBackendTime, timeAgoText } from "../utils/deviceCollection";
+import VerdictRuling from "../components/VerdictRuling.vue";
+import { ECOSYSTEM } from "../lib/palette";
 
 const devices = ref([]);
 const loading = ref(true);
@@ -393,10 +404,10 @@ async function submitAdvisory() {
 }
 
 const ecoCatalog = {
-  openwrt: { icon: "router", color: "#f4622a", soft: "#fff1e8" },
-  zephyr: { icon: "cpu", color: "#12b76a", soft: "#e9fbf1" },
-  ubuntu: { icon: "server", color: "#2f6fed", soft: "#eef4ff" },
-  other_iot: { icon: "radio", color: "#7c3aed", soft: "#f3eeff" }
+  openwrt: { icon: "router", color: ECOSYSTEM.openwrt.color, soft: ECOSYSTEM.openwrt.soft },
+  zephyr: { icon: "cpu", color: ECOSYSTEM.zephyr.color, soft: ECOSYSTEM.zephyr.soft },
+  ubuntu: { icon: "server", color: ECOSYSTEM.ubuntu.color, soft: ECOSYSTEM.ubuntu.soft },
+  other_iot: { icon: "radio", color: ECOSYSTEM.other.color, soft: ECOSYSTEM.other.soft }
 };
 
 function ecoMeta(value) {
@@ -636,6 +647,42 @@ watch(selected, (value) => {
   if (!value) detailTab.value = "overview";
 });
 
+
+/* 页面级状态印章：资产页回答"清单可信到什么程度" */
+const ruling = computed(() => {
+  const total = devices.value.length;
+  const trusted = trustedCount.value;
+  const incomplete = incompleteCount.value;
+  const unknown = unidentifiedCount.value;
+  const tags = [
+    { text: `设备 ${total} 台`, tone: "" },
+    { text: `身份可信 ${trusted}`, tone: trusted === total && total > 0 ? "low" : "mid" },
+    { text: `清单待补 ${incomplete}`, tone: incomplete > 0 ? "high" : "" },
+    { text: `未识别 ${unknown}`, tone: unknown > 0 ? "mid" : "" },
+  ];
+  if (total === 0) {
+    return {
+      state: "weak", stampMain: "无数据", stampEn: "NO DATA",
+      title: "当前没有已发现设备",
+      detail: "没有设备不代表网络干净：需要先完成采集或导入清单，资产盘点才有意义。",
+      tags,
+    };
+  }
+  if (incomplete > 0 || unknown > 0) {
+    return {
+      state: "weak", stampMain: "清单不全", stampEn: "INCOMPLETE",
+      title: `${total} 台设备中，${incomplete} 台清单待补、${unknown} 台未识别`,
+      detail: "清单缺失会让漏洞匹配失去依据；未识别设备不能假定为安全。",
+      tags,
+    };
+  }
+  return {
+    state: "pass", stampMain: "清单可用", stampEn: "READY",
+    title: `${total} 台设备清单完整，身份可信 ${trusted} 台`,
+    detail: "该结论仅覆盖已发现设备；未接入的网段不在统计范围内。",
+    tags,
+  };
+});
 onMounted(load);
 </script>
 
@@ -643,29 +690,29 @@ onMounted(load);
 .asset-grid { display: grid; grid-template-columns: 236px minmax(0, 1fr) 286px; gap: 16px; align-items: stretch; }
 .detail-tabs { justify-self: start; }
 .detail-tabs span { cursor: pointer; }
-.domain-note { display: block; margin-top: 4px; color: var(--muted); font-size: 10.5px; font-weight: 400; }
-.enroll-link { margin-top: 4px; font-size: 11px; }
-.plan-rows-mini { display: grid; gap: 6px; padding: 10px 12px; margin-bottom: 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: #f9fbfe; }
-.plan-rows-mini div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 10px; font-size: 12px; }
+.domain-note { display: block; margin-top: 4px; color: var(--muted); font-size: 12.5px; font-weight: 400; }
+.enroll-link { margin-top: 4px; font-size: 13.5px; }
+.plan-rows-mini { display: grid; gap: 4px; padding: 8px 12px; margin-bottom: 12px; border: 1px solid var(--line-soft); border-radius: 10px; background: #f9fbfe; }
+.plan-rows-mini div { display: grid; grid-template-columns: 92px minmax(0, 1fr); gap: 8px; font-size: 14px; }
 .plan-rows-mini span { color: var(--muted); }
 .plan-rows-mini b { color: var(--ink-2); font-weight: 600; }
 .adv-grid { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr); gap: 16px; }
 .adv-form { display: grid; gap: 4px; align-content: start; }
-.adv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 10px; }
+.adv-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .adv-list { border: 1px solid var(--line-soft); border-radius: 12px; background: #fbfdff; max-height: 460px; overflow: auto; }
-.adv-list-head { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); color: var(--ink); font-size: 12px; font-weight: 700; position: sticky; top: 0; background: #fbfdff; }
-.adv-row { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); font-size: 11.5px; }
+.adv-list-head { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); color: var(--ink); font-size: 14px; font-weight: 700; position: sticky; top: 0; background: #fbfdff; }
+.adv-row { padding: 8px 12px; border-bottom: 1px solid var(--line-soft); font-size: 13.5px; }
 .adv-row.exact { background: #f2fbf5; }
 .adv-row-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.adv-row-top b { color: var(--ink); font-size: 11.5px; }
-.adv-row-line { color: var(--muted); margin-top: 3px; overflow: hidden; text-overflow: ellipsis; }
+.adv-row-top b { color: var(--ink); font-size: 13.5px; }
+.adv-row-line { color: var(--muted); margin-top: 2px; overflow: hidden; text-overflow: ellipsis; }
 @media (max-width: 960px) { .adv-grid { grid-template-columns: minmax(0, 1fr); } }
 .type-card, .recent-card { display: flex; flex-direction: column; }
-.type-list { display: grid; gap: 2px; padding: 10px 10px 6px; }
+.type-list { display: grid; gap: 2px; padding: 8px 8px 4px; }
 .type-row {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 8px;
   height: 46px;
   padding: 0 10px;
   border: 0;
@@ -678,36 +725,36 @@ onMounted(load);
 .type-row:hover { background: #f7fafd; }
 .type-row.active { background: #eff5ff; box-shadow: inset 0 0 0 1px #d8e6ff; }
 .type-ic { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; flex: 0 0 auto; }
-.type-name { flex: 1; font-size: 12.5px; font-weight: 600; color: #33465e; }
+.type-name { flex: 1; font-size: 14px; font-weight: 600; color: #33465e; }
 .type-row.active .type-name { color: #1d4ed8; }
-.type-row b { color: var(--ink); font-size: 12.5px; font-weight: 700; }
+.type-row b { color: var(--ink); font-size: 14px; font-weight: 700; }
 .type-chev { color: #c3d1e3; }
 .type-row.active .type-chev { color: #2f6fed; }
-.type-foot { margin-top: 0; padding: 10px 16px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; line-height: 1.5; }
-.type-sep { margin-top: auto; display: grid; gap: 8px; padding: 14px 16px 12px; border-top: 1px solid var(--line-soft); }
-.type-sep-title { color: var(--ink); font-size: 12px; font-weight: 700; }
-.bucket-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 24px; gap: 8px; align-items: center; color: var(--muted); font-size: 10.5px; }
+.type-foot { margin-top: 0; padding: 8px 16px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; line-height: 1.5; }
+.type-sep { margin-top: auto; display: grid; gap: 8px; padding: 12px 16px 12px; border-top: 1px solid var(--line-soft); }
+.type-sep-title { color: var(--ink); font-size: 14px; font-weight: 700; }
+.bucket-row { display: grid; grid-template-columns: 86px minmax(0, 1fr) 24px; gap: 8px; align-items: center; color: var(--muted); font-size: 12.5px; }
 .bucket-track { height: 6px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
 .bucket-track i { display: block; height: 6px; border-radius: 999px; background: #c3d1e3; }
 .bucket-track i.low { background: var(--low); }
 .bucket-track i.warn { background: var(--high); }
-.bucket-row b { text-align: right; color: var(--ink-2); font-size: 11px; font-weight: 700; }
+.bucket-row b { text-align: right; color: var(--ink-2); font-size: 13.5px; font-weight: 700; }
 
 .map-card { display: flex; flex-direction: column; }
 .map-body { padding: 8px 14px 0; }
-.map-legend { display: flex; align-items: center; gap: 16px; padding: 2px 4px 4px; color: #64748b; font-size: 11.5px; }
-.map-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.map-legend { display: flex; align-items: center; gap: 16px; padding: 2px 4px 4px; color: #64748b; font-size: 13.5px; }
+.map-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .map-legend b { color: var(--ink); font-family: var(--font-num); font-weight: 700; }
 .map-list { max-height: 440px; }
-.map-foot { display: flex; align-items: center; justify-content: space-between; padding: 8px 6px 10px; border-top: 1px solid var(--line-soft); margin-top: 4px; color: var(--muted); font-size: 10.5px; }
+.map-foot { display: flex; align-items: center; justify-content: space-between; padding: 8px 4px 8px; border-top: 1px solid var(--line-soft); margin-top: 4px; color: var(--muted); font-size: 12.5px; }
 
-.recent-list { display: grid; padding: 6px 10px; }
+.recent-list { display: grid; padding: 4px 8px; }
 .recent-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   width: 100%;
-  padding: 10px 8px;
+  padding: 8px 8px;
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -716,10 +763,10 @@ onMounted(load);
 .recent-row:hover { background: #f7fafd; }
 .recent-ic { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 9px; flex: 0 0 auto; }
 .recent-copy { min-width: 0; flex: 1; display: grid; gap: 2px; }
-.recent-copy b { color: var(--ink); font-size: 12px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.recent-copy small { color: var(--muted); font-family: var(--font-num); font-size: 10.5px; }
-.recent-time { color: #64748b; font-size: 10px; white-space: nowrap; }
+.recent-copy b { color: var(--ink); font-size: 14px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.recent-copy small { color: var(--muted); font-family: var(--font-num); font-size: 12.5px; }
+.recent-time { color: #64748b; font-size: 12.5px; white-space: nowrap; }
 .recent-chev { color: #c3d1e3; }
-.recent-foot { margin-top: auto; display: flex; align-items: center; gap: 7px; padding: 10px 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
+.recent-foot { margin-top: auto; display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; }
 .recent-foot .dot { background: var(--low); }
 </style>

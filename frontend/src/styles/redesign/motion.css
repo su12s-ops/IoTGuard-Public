@@ -1,0 +1,53 @@
+/* ==========================================================================
+   IoTGuard · 页面进入编舞（Q10）
+   现状：整站除了拓扑心跳与数据流，没有任何"进场"节奏——切到新页时
+   所有内容同时"啪"地出现，视觉上很硬。
+   本层只做一件事：路由切换时，页面区块按 45ms 步长错峰上升淡入。
+   纪律：
+     1) 只动 transform / opacity（不触发重排）；
+     2) 上限 6 档错峰，后面的区块共用最后一档，避免越拖越慢；
+     3) 减动效下整段不生效（内容直出，绝不出现"先透明再显示"）。
+   ========================================================================== */
+
+@keyframes page-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  /* .page 是部分页面的包裹层；有包裹层时只给子元素排舞，避免整页再套一层 */
+  .main > *:not(.page),
+  .page > * {
+    animation: page-rise var(--dur-2) var(--ease-out) both;
+  }
+
+  .main > *:not(.page):nth-child(1),
+  .page > *:nth-child(1) { animation-delay: 0ms; }
+  .main > *:not(.page):nth-child(2),
+  .page > *:nth-child(2) { animation-delay: calc(var(--stagger) * 1); }
+  .main > *:not(.page):nth-child(3),
+  .page > *:nth-child(3) { animation-delay: calc(var(--stagger) * 2); }
+  .main > *:not(.page):nth-child(4),
+  .page > *:nth-child(4) { animation-delay: calc(var(--stagger) * 3); }
+  .main > *:not(.page):nth-child(5),
+  .page > *:nth-child(5) { animation-delay: calc(var(--stagger) * 4); }
+  /* 第 6 个及以后共用同一档，避免长页面越往下越慢 */
+  .main > *:not(.page):nth-child(n + 6),
+  .page > *:nth-child(n + 6) { animation-delay: calc(var(--stagger) * 5); }
+}
+
+/* 打印时不参与（打印没有"进场"概念，且部分浏览器会把动画首帧印出来） */
+@media print {
+  .main > *,
+  .page > * {
+    animation: none !important;
+    opacity: 1 !important;
+    transform: none !important;
+  }
+}

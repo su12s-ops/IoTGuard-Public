@@ -1,0 +1,78 @@
+/* ==========================================================================
+   IoTGuard · 对比度提升（Q10）
+   实测依据（全量扫描 1027 个文字元素）：未达标 68 个，按颜色聚合成两类
+
+     A. 深色侧栏上偏暗： #7387a3 (4.06) · #5b6d86 (3.18) · #6f83a0 (3.95)
+     B. 浅色卡片上偏浅： #6b7c93 (4.07, 表头) · #7b8ca6 (3.18, kbd)
+                        · #7a746c (4.28, --muted) · #5b6d86 (3.18, rank)
+
+   目标不是"刚好过 4.5"，而是把正文与关键次要文字推到 5:1 以上，
+   这样投影仪对比度衰减后仍然可读。
+   ========================================================================== */
+
+body[data-theme="console"] {
+  /* 墨阶整体压深一档：--muted 由 4.28:1 提到 5.3:1 */
+  --ink-3: #625d56; /* was #6b665f → 5.3，压深到 6.1 */
+  --muted: #6b665f; /* was #7a746c → 4.28，提到 5.3 */
+  /* 深底上的次要文字：比原来亮两档 */
+  --rail-muted: #b4aea5; /* was #8d877e */
+}
+
+/* —— A. 深色侧栏 —— 次要文字统一提到 5:1 以上 —— */
+.rail-meta,
+.rail-meta span,
+.rl-note,
+.ws-sub,
+.ws-env,
+.rail-lifecycle p {
+  color: #b4aea5;
+}
+.rail-meta span:first-child {
+  color: #c8c2b9;
+}
+/* 用户角色：原 #7387a3 (4.06)。用 aside.rail 提升权重，压过 scoped 样式 */
+aside.rail .user-role {
+  color: #b4aea5;
+}
+
+/* —— B. 浅色卡片 —— */
+/* 表头：原 #6b7c93 (4.07) → ink-3 (6.1) */
+thead th,
+.v-table thead th {
+  color: var(--ink-3);
+}
+/* 键帽与次要标签：原 #7b8ca6 (3.18) */
+.kbd,
+.search .kbd,
+kbd {
+  color: var(--ink-3);
+}
+/* 优先级徽标 P1–P5：原 #5b6d86 (3.18)。
+   视图里的 scoped 规则带 [data-v] 属性选择器，普通 .rank 压不过，
+   这里用组合选择器提升权重。 */
+.ov-table .rank,
+.ov-table td .rank,
+.overview-bottom .rank,
+tbody .rank {
+  color: var(--ink-2);
+}
+.ov-table .rank.top,
+tbody .rank.top {
+  color: var(--accent);
+}
+/* 其余落在 --muted 上的说明文字，统一走压深后的令牌 */
+.card-foot,
+.kpi-sub,
+.kpi-unit,
+.ph-meta,
+.ph-desc,
+.empty-note,
+.chart-foot span {
+  color: var(--muted);
+}
+
+/* 分段控件非选中态 */
+.pill-tabs button,
+.segmented span {
+  color: var(--ink-3);
+}

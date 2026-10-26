@@ -1,0 +1,109 @@
+/* ==========================================================================
+   IoTGuard · 响应式层（Q2）
+   事实依据：390×844 实测 —— 顶部工具条横向溢出、日期范围被裁切、
+   页头元信息被挤成"逐字竖排"单字列（中文可在任意字符间断行导致的典型事故）。
+   本层只做"不塌"，不做移动端专门设计；答辩主场景是投影，手机是兜底。
+   ========================================================================== */
+
+/* —— 窄屏：页头与工具条允许换行，禁止逐字竖排 —— */
+@media (max-width: 900px) {
+  body[data-theme="console"] {
+    --h1-size: 26px;
+    --fs-number: 34px;
+  }
+
+  /* 顶部工具条：允许换行，搜索独占一行 */
+  .top-actions {
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+  .top-actions > * {
+    min-width: 0;
+  }
+  .top-actions .search {
+    flex: 1 1 100%;
+    width: 100%;
+  }
+
+  /* 页头：标题块整行，操作按钮另起一行 */
+  .page-head {
+    gap: 10px;
+    padding-top: 10px;
+  }
+  .ph-row {
+    flex-wrap: wrap;
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .ph-copy {
+    width: 100%;
+  }
+  .page-head h1 {
+    white-space: normal;
+  }
+  .page-head .actions {
+    margin-left: 0;
+    width: 100%;
+    flex-wrap: wrap;
+  }
+  .ph-sub {
+    font-size: 14px;
+    white-space: normal;
+  }
+
+  /* 元信息：整段换行，不允许每个字单独成一列 */
+  .ph-meta {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    font-size: 12.5px;
+  }
+  .ph-meta > * {
+    white-space: nowrap;
+  }
+
+  /* 内容区留白 */
+  .main {
+    padding: 0 14px 20px;
+  }
+
+  /* 表格：允许横向滚动而不是把列压死 */
+  .table-wrap {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+  table {
+    min-width: 640px;
+  }
+}
+
+/* —— 极窄屏：进一步收字号，避免挤压 —— */
+@media (max-width: 480px) {
+  body[data-theme="console"] {
+    --h1-size: 23px;
+    --fs-number: 30px;
+    --fs-body: 14px;
+  }
+  .kpi {
+    min-height: 78px;
+    padding: 12px 14px;
+  }
+  .eyebrow,
+  .ph-en {
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+  }
+}
+
+/* —— 超宽投影/大屏：字号与留白随视口放大，保证最后一排可读 —— */
+@media (min-width: 1920px) {
+  body[data-theme="console"] {
+    --fs-body: 16px;
+    --fs-meta: 15px;
+    --fs-micro: 14px;
+    --fs-number: 46px;
+    --h1-size: 38px;
+  }
+  .main {
+    padding: 0 32px 32px;
+  }
+}

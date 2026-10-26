@@ -14,12 +14,21 @@
       </template>
     </PageHeader>
 
+    <VerdictRuling
+      :state="ruling.state"
+      :stamp-main="ruling.stampMain"
+      :stamp-en="ruling.stampEn"
+      :title="ruling.title"
+      :detail="ruling.detail"
+      :tags="ruling.tags"
+    />
+
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
     <div class="kpi-row">
       <KpiCard label="高危漏洞" :value="num(highCount)" unit="条" icon="shield-alert" tone="red" :sub="`严重 ${counts.Critical || 0} · 高危 ${counts.High || 0}`" />
       <KpiCard label="中危漏洞" :value="num(counts.Medium || 0)" unit="条" icon="alert" tone="orange" :sub="`${share(counts.Medium)} 的资产级风险`" />
-      <KpiCard label="低危漏洞" :value="num(counts.Low || 0)" unit="条" icon="shield" tone="blue" :sub="`${share(counts.Low)} 的资产级风险`" />
+      <KpiCard label="低危漏洞" :value="num(counts.Low || 0)" unit="条" icon="shield" tone="low" :sub="`${share(counts.Low)} 的资产级风险`" />
       <KpiCard label="待审查" :value="num(pendingReview)" unit="条" icon="target" tone="purple" :sub="`${pendingReview} 条风险等待人工签收`" />
     </div>
 
@@ -128,6 +137,8 @@ import { api } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify } from "../stores/ui";
 import { cvss, levelLabel, levelTone, num, score, statusLabel } from "../utils/format";
+import VerdictRuling from "../components/VerdictRuling.vue";
+import { SEVERITY, SERIES } from "../lib/palette";
 
 const route = useRoute();
 const router = useRouter();
@@ -150,10 +161,10 @@ const highCount = computed(() => (counts.value.Critical || 0) + (counts.value.Hi
 const pendingReview = computed(() => rows.value.filter((row) => row.humanReviewRequired || row.reviewStatus === "pending_human_review").length);
 
 const riskItems = computed(() => [
-  { label: "严重", value: counts.value.Critical || 0, color: "#ef4444" },
-  { label: "高危", value: counts.value.High || 0, color: "#f97316" },
-  { label: "中危", value: counts.value.Medium || 0, color: "#f5b301" },
-  { label: "低危", value: counts.value.Low || 0, color: "#2f6fed" }
+  { label: "严重", value: counts.value.Critical || 0, color: SEVERITY.critical },
+  { label: "高危", value: counts.value.High || 0, color: SEVERITY.high },
+  { label: "中危", value: counts.value.Medium || 0, color: SEVERITY.medium },
+  { label: "低危", value: counts.value.Low || 0, color: SEVERITY.low }
 ]);
 
 const affectedAssets = computed(() => {
@@ -164,7 +175,7 @@ const affectedAssets = computed(() => {
   }, {});
   const entries = Object.entries(map).sort((a, b) => b[1] - a[1]).slice(0, 5);
   const max = Math.max(...entries.map(([, value]) => value), 1);
-  const palette = ["#2f6fed", "#4f8cff", "#12b8d8", "#7c3aed", "#f97316"];
+  const palette = SERIES;
   return entries.map(([name, count], index) => ({
     name,
     count,
@@ -287,6 +298,45 @@ async function load() {
   api.get("/matching/results", { timeout: 25000 }).then((value) => { matches.value = value.data || []; }).catch(() => { matches.value = []; });
 }
 
+
+/* 页面级状态印章：与判决页共用同一套视觉语言 */
+const ruling = computed(() => {
+  const nCrit = Number(counts.value.Critical || 0);
+  const nHigh = Number(counts.value.High || 0);
+  const nMid = Number(counts.value.Medium || 0);
+  const nLow = Number(counts.value.Low || 0);
+  const pending = pendingReview.value;
+  const total = rows.value.length;
+  const tags = [
+    { text: `严重 ${nCrit}`, tone: "crit" },
+    { text: `高危 ${nHigh}`, tone: "high" },
+    { text: `中危 ${nMid}`, tone: "mid" },
+    { text: `低危 ${nLow}`, tone: "low" },
+    { text: `待审 ${pending}`, tone: "" },
+  ];
+  if (total === 0) {
+    return {
+      state: "weak", stampMain: "无数据", stampEn: "NO DATA",
+      title: "当前没有可研判的风险记录",
+      detail: "无记录不等于安全：需要先完成资产采集与情报同步，风险条目才会产生。",
+      tags,
+    };
+  }
+  if (nCrit + nHigh > 0) {
+    return {
+      state: "fail", stampMain: "存在高危", stampEn: "AT RISK",
+      title: `当前资产存在 ${nCrit + nHigh} 条高危及以上风险`,
+      detail: `严重 ${nCrit} 条、高危 ${nHigh} 条；中危 ${nMid} 条、低危 ${nLow} 条。风险分综合 CVSS、EPSS、暴露面与运行时证据，不代表已确认利用。`,
+      tags,
+    };
+  }
+  return {
+    state: "pass", stampMain: "无高危", stampEn: "NO HIGH",
+    title: `共 ${total} 条风险，其中无高危及以上`,
+    detail: `中危 ${nMid} 条、低危 ${nLow} 条。该结论仅覆盖已采集资产，不代表未采集部分安全。`,
+    tags,
+  };
+});
 onMounted(load);
 </script>
 
@@ -294,12 +344,12 @@ onMounted(load);
 .risk-layout { display: grid; grid-template-columns: 312px minmax(0, 1fr); gap: 16px; align-items: start; }
 .risk-left { display: grid; gap: 16px; }
 .risk-donut { display: grid; place-items: center; padding: 16px 0 12px; }
-.device-bars { display: grid; gap: 11px; padding: 12px 18px 14px; }
-.device-bar-row { display: grid; grid-template-columns: 104px minmax(0, 1fr) 32px; gap: 9px; align-items: center; }
-.db-name { color: #5b6b82; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-bars { display: grid; gap: 12px; padding: 12px 16px 12px; }
+.device-bar-row { display: grid; grid-template-columns: 104px minmax(0, 1fr) 32px; gap: 8px; align-items: center; }
+.db-name { color: #5b6b82; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .db-track { height: 7px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
 .db-track i { display: block; height: 7px; border-radius: 999px; }
-.device-bar-row b { text-align: right; color: var(--ink); font-size: 12px; font-weight: 700; }
+.device-bar-row b { text-align: right; color: var(--ink); font-size: 14px; font-weight: 700; }
 
 .risk-list-card { min-width: 0; }
 .risk-table { width: 100%; table-layout: fixed; }
@@ -322,10 +372,10 @@ onMounted(load);
   .risk-table th:nth-child(7), .risk-table td:nth-child(7) { width: 48px; }
   .risk-table .score i { width: 36px; }
 }
-.matrix-body { padding: 12px 18px 14px; }
+.matrix-body { padding: 12px 16px 12px; }
 .matrix-body .matrix { height: 168px; }
-.risk-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 18px 12px; flex-wrap: wrap; }
-.risk-tabs { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.risk-toolbar { display: flex; align-items: center; gap: 12px; padding: 12px 16px 12px; flex-wrap: wrap; }
+.risk-tabs { display: flex; align-items: center; gap: 4px; flex-wrap: wrap; }
 .risk-tabs .chip { cursor: pointer; height: 28px; border-radius: 8px; padding: 0 11px; }
 .risk-toolbar .search-inline { margin-left: auto; width: 240px; height: 34px; }
 .row-action {

@@ -1,0 +1,296 @@
+/* ==========================================================================
+   IoTGuard · 表面层 v3（Q1）
+   事实依据：改造前 console.css 有 31 处渐变、6 种 KPI 彩色色调、8 种圆角。
+   装饰性渐变会把"造型"和"含义"混在一起 —— 评委看到颜色就分不清哪处是问题。
+   本层做三件事：
+     1) 拆掉所有装饰性渐变与彩色 KPI，颜色只用来表达语义；
+     2) 圆角收敛到三档（6 / 10 / 胶囊）；
+     3) 用 1px 细线和明度差建立层级，替代投影与彩色底。
+   ========================================================================== */
+
+/* —— 1. 页底与侧栏：去掉径向光斑与蓝色渐变 —— */
+body[data-theme="console"] {
+  background: var(--bg);
+}
+.rail {
+  background: var(--rail-bg);
+  border-right: 1px solid rgba(255, 255, 255, 0.06);
+}
+.rail-lifecycle {
+  background: rgba(255, 255, 255, 0.04);
+  border-color: rgba(255, 255, 255, 0.09);
+}
+.rail-lifecycle:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: rgba(255, 255, 255, 0.16);
+}
+.brand-mark {
+  background: var(--accent);
+  box-shadow: none;
+}
+.avatar,
+.top-avatar {
+  background: var(--ink-2);
+}
+
+/* —— 2. KPI：拆掉洗色与色块，只保留一枚语义红 —— */
+.kpi {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.kpi::after {
+  display: none; /* 右上角模糊光斑：纯装饰，删 */
+}
+.kpi-icon {
+  /* 默认中性，但保留 tone 的语义色通道（否则语义色阶会被这一行写死而失效） */
+  background: var(--kpi-tile, var(--surface-3));
+  color: var(--kpi-color, var(--ink-2));
+  box-shadow: none;
+  border-radius: 10px;
+}
+/* 语义色阶：tone 名直接对应含义，跨页面保持一致
+   —— 这是"同一个低危三处三色"的正解：不是删掉颜色，而是让它有唯一含义。 */
+.kpi.tone-neutral,
+.kpi.tone-crit,
+.kpi.tone-high,
+.kpi.tone-mid,
+.kpi.tone-low,
+.kpi.tone-ok,
+.kpi.tone-info,
+.kpi.tone-pending {
+  --kpi-wash: transparent;
+}
+.kpi.tone-neutral { --kpi-color: var(--ink-2); --kpi-tile: var(--surface-3); }
+.kpi.tone-crit { --kpi-color: var(--crit); --kpi-tile: var(--crit-soft); }
+.kpi.tone-high { --kpi-color: var(--high); --kpi-tile: var(--high-soft); }
+.kpi.tone-mid { --kpi-color: var(--mid); --kpi-tile: var(--mid-soft); }
+.kpi.tone-low,
+.kpi.tone-ok { --kpi-color: var(--low); --kpi-tile: var(--low-soft); }
+.kpi.tone-info,
+.kpi.tone-pending { --kpi-color: var(--info); --kpi-tile: var(--info-soft); }
+
+/* 向后兼容：旧的通用 tone 名映射到新语义名，
+   避免其他并行改动仍写 tone-blue/tone-purple 时样式失效 */
+.kpi.tone-blue { --kpi-color: var(--ink-2); --kpi-tile: var(--surface-3); --kpi-wash: transparent; }
+.kpi.tone-red { --kpi-color: var(--crit); --kpi-tile: var(--crit-soft); --kpi-wash: transparent; }
+.kpi.tone-orange { --kpi-color: var(--mid); --kpi-tile: var(--mid-soft); --kpi-wash: transparent; }
+.kpi.tone-green { --kpi-color: var(--low); --kpi-tile: var(--low-soft); --kpi-wash: transparent; }
+.kpi.tone-purple { --kpi-color: var(--info); --kpi-tile: var(--info-soft); --kpi-wash: transparent; }
+.kpi.tone-cyan { --kpi-color: var(--info); --kpi-tile: var(--info-soft); --kpi-wash: transparent; }
+
+/* —— 3. 卡片与容器：细线 + 单档投影 —— */
+.card {
+  border: 1px solid var(--line);
+  box-shadow: var(--shadow);
+}
+.card.feature,
+.card.lift {
+  box-shadow: var(--shadow-lift);
+}
+.agent-core {
+  background: var(--surface-3);
+  box-shadow: none;
+}
+
+/* —— 4. 控件：纯色，不用渐变伪装"高级" —— */
+.btn {
+  border-color: var(--line);
+  background: var(--surface);
+  box-shadow: none;
+}
+.btn:hover {
+  border-color: var(--line-strong);
+  background: var(--surface-2);
+}
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-ink);
+  box-shadow: none;
+}
+.btn.primary:hover {
+  background: #ae440f;
+  border-color: #ae440f;
+}
+.btn.danger {
+  background: var(--crit);
+  border-color: var(--crit);
+  color: #fff;
+  box-shadow: none;
+}
+.btn.danger:hover {
+  background: #991f19;
+  border-color: #991f19;
+}
+.input,
+.select,
+.textarea {
+  border-color: var(--line-strong);
+  background: var(--surface);
+}
+.input:focus,
+.select:focus,
+.textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+/* —— 5. 进度与步进：纯色表达状态 —— */
+.score em {
+  background: var(--ink-3);
+}
+.score.crit em { background: var(--crit); }
+.score.high em { background: var(--high); }
+.score.mid em { background: var(--mid); }
+.score.low em { background: var(--low); }
+.score.info em { background: var(--info); }
+.conf-bar i {
+  background: var(--accent-2);
+}
+.step.active .step-dot,
+.step-track .track-step.active .track-no {
+  background: var(--accent-2);
+  border-color: var(--accent-2);
+  box-shadow: none;
+}
+
+/* —— 6. 圆角收敛：全站只留 6 / 10 / 胶囊三档 —— */
+.card,
+.kpi,
+.modal,
+.table-wrap,
+.topology-card,
+.donut-center {
+  border-radius: var(--radius);
+}
+.btn,
+.input,
+.select,
+.textarea,
+.pill-tabs button,
+.segmented,
+.queue-row,
+.panel {
+  border-radius: var(--radius-sm);
+}
+.chip,
+.search .kbd,
+.segmented,
+.pill-tabs {
+  border-radius: var(--radius-pill);
+}
+
+/* —— 7. 表格：细线分隔，去掉斑马纹以外的厚重感 —— */
+thead th {
+  border-bottom: 1px solid var(--line);
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+tbody tr:hover {
+  background: var(--surface-2);
+}
+
+/* —— 8. 页头：英文副标题改为"眉标"，不再是渐变文字 ——
+   原实现是 background-clip:text + color:transparent 的渐变字，
+   任何纯色覆盖都会让它退化成看不见字的色块，这里彻底换成眉标写法。 */
+.ph-en {
+  background: none;
+  -webkit-background-clip: border-box;
+  background-clip: border-box;
+  color: var(--ink-3);
+  font-size: 12.5px;
+  font-weight: 650;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.ph-divider,
+.ph-sep,
+.ph-meta .sep,
+.meta .sep {
+  color: var(--line-strong);
+  background: var(--line-strong);
+}
+/* 眉标后面的竖线是硬编码的 "|" 字符，和 10px 间距重复承担了分隔职责。
+   层级应由留白建立，不靠标点符号堆叠 —— 直接隐掉。 */
+.ph-divider {
+  display: none;
+}
+.ph-desc,
+.ph-meta {
+  color: var(--ink-3);
+}
+
+/* —— 9. 侧栏：字号放大后防溢出（改造前 a.brand 已经溢出） —— */
+.ws-name,
+.ws-sub,
+.user-name,
+.user-role {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws,
+.user {
+  min-width: 0;
+}
+.brand {
+  min-width: 0;
+}
+.brand-name,
+.brand-sub {
+  white-space: nowrap;
+}
+.nav a {
+  min-width: 0;
+}
+.nav a span:not(.nav-count) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* —— 10. 状态芯片：与语义令牌对齐 ——
+   改造前实测：同一个"低危"在三个地方是三种颜色：
+     KPI 卡 tone="blue"（蓝色洗色）/ 环形图图例 #2f6fed（蓝）/ 表格 chip #067647（绿）
+   同页同义异色会让评审无法建立"颜色→严重度"的直觉，这里先统一到语义令牌。
+   注：KPI 卡的 tone 名是通用词（tone-blue 在不同页面含义不同），
+       真正的完整修复需要视图侧改成语义 tone 名（见台账 Q2）。 */
+.chip.crit,
+.chip.high,
+.chip.mid,
+.chip.low,
+.chip.info,
+.chip.ok,
+.chip.warn,
+.chip.accent,
+.chip.muted {
+  border-color: transparent;
+}
+.chip.crit { background: var(--crit-soft); color: var(--crit); }
+.chip.high { background: var(--high-soft); color: var(--high); }
+.chip.mid { background: var(--mid-soft); color: var(--mid); }
+.chip.low,
+.chip.ok { background: var(--low-soft); color: var(--low); }
+.chip.info,
+.chip.accent { background: var(--info-soft); color: var(--info); }
+.chip.muted { background: var(--surface-3); color: var(--ink-3); }
+.chip.warn { background: var(--high-soft); color: var(--high); }
+
+/* —— 11. 数据表列宽：CVE 编号不许在连字符处折断 ——
+   现象：字号抬升后 "CVE-2026-84782" 被浏览器在 "-" 处断成两行（CSS 默认允许
+   在连字符后断行）。编号是本系统的证据标识，折断会破坏可读性与复制粘贴。 */
+.ov-table td.mono,
+.v-table td.c-cve,
+.v-table td.c-cve small {
+  white-space: nowrap;
+}
+/* 组件名/包名可能极长，仍允许断行，但优先在合理位置断 */
+.v-table td.c-code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* 表格容器允许横向滚动，避免 nowrap 把表格撑破卡片 */
+.table-wrap {
+  overflow-x: auto;
+}

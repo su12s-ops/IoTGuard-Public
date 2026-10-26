@@ -1,0 +1,185 @@
+{
+  "schema": "iotguard.device-capture/1",
+  "captured_at": "2026-10-23T09:25:22+08:00",
+  "captured_at_utc": "2026-10-23T01:25:22Z",
+  "device": {
+    "device_key": "DEV-7C322610162A",
+    "device_name": "SmartCam-X1",
+    "device_type": "ip_camera",
+    "vendor": "SmartCam Technologies",
+    "model": "SmartCam-X1",
+    "firmware_version": "2.4.7",
+    "os": "SmartCamOS 2.4.7 (Linux 4.9.68 armv7l)",
+    "ip": "127.0.0.1",
+    "status": "online",
+    "security_status": "unassessed",
+    "identity_source": "device_identity_endpoint",
+    "identity_confidence": 0.9,
+    "identity_metadata": {
+      "identity_endpoint": "/api/system",
+      "mac_address": "A4:CF:12:9B:E3:40",
+      "serial_number": "SCX1-2026-0816-0001"
+    },
+    "risk_score": 40,
+    "risk_score_basis": "service_exposure_baseline"
+  },
+  "services": [
+    {
+      "port": 8080,
+      "transport": "tcp",
+      "service_type": "http",
+      "product": "SmartCam-X1 httpd/2.4.7",
+      "version": "2.4.7",
+      "banner": "HTTP/1.1 200 OK",
+      "auth_state": "unknown",
+      "status": "open",
+      "evidence": {
+        "status_line": "HTTP/1.1 200 OK",
+        "server": "SmartCam-X1 httpd/2.4.7",
+        "title": "SmartCam-X1 管理登录"
+      }
+    },
+    {
+      "port": 21883,
+      "transport": "tcp",
+      "service_type": "mqtt",
+      "product": "SmartCam MQTT broker 1.6.2",
+      "version": "1.6.2",
+      "banner": "",
+      "auth_state": "anonymous_accepted",
+      "status": "open",
+      "evidence": {
+        "connack_return_code": 0
+      }
+    },
+    {
+      "port": 22022,
+      "transport": "tcp",
+      "service_type": "ssh",
+      "product": "dropbear SSH 2022.83",
+      "version": "2022.83",
+      "banner": "SSH-2.0-dropbear_2022.83 SmartCamX1",
+      "auth_state": "auth_required",
+      "status": "open",
+      "evidence": {
+        "banner": "SSH-2.0-dropbear_2022.83 SmartCamX1"
+      }
+    },
+    {
+      "port": 28554,
+      "transport": "tcp",
+      "service_type": "rtsp",
+      "product": "SmartCam-X1 RTSP/2.4.7",
+      "version": "2.4.7",
+      "banner": "RTSP/1.0 200 OK",
+      "auth_state": "unknown",
+      "status": "open",
+      "evidence": {
+        "status_line": "RTSP/1.0 200 OK",
+        "public": "OPTIONS, DESCRIBE, SETUP, TEARDOWN, PLAY, PAUSE"
+      }
+    }
+  ],
+  "components": [
+    {
+      "component_name": "SmartCam-X1 firmware",
+      "component_type": "firmware",
+      "version": "2.4.7",
+      "cpe": "cpe:2.3:o:smartcam_technologies:smartcam_x1:2.4.7",
+      "source": "device_identity",
+      "service_port": null
+    },
+    {
+      "component_name": "SmartCam-X1 httpd/2.4.7",
+      "component_type": "software",
+      "version": "2.4.7",
+      "cpe": "",
+      "source": "service_banner",
+      "service_port": 8080
+    },
+    {
+      "component_name": "SmartCam MQTT broker",
+      "component_type": "software",
+      "version": "1.6.2",
+      "cpe": "",
+      "source": "service_banner",
+      "service_port": 21883
+    },
+    {
+      "component_name": "dropbear ssh",
+      "component_type": "software",
+      "version": "2022.83",
+      "cpe": "",
+      "source": "service_banner",
+      "service_port": 22022
+    },
+    {
+      "component_name": "SmartCam-X1 RTSP/2.4.7",
+      "component_type": "software",
+      "version": "2.4.7",
+      "cpe": "",
+      "source": "service_banner",
+      "service_port": 28554
+    }
+  ],
+  "exposure": {
+    "score": 40,
+    "factors": {
+      "port_service:http": 8,
+      "port_service:ssh": 12,
+      "port_service:mqtt": 12,
+      "mqtt_anonymous_access": 6,
+      "port_service:rtsp": 8
+    },
+    "anonymous_mqtt": true
+  },
+  "provenance": {
+    "capture_tool": "_work/device_capture.py",
+    "backend_module": "backend/app/services/device_inventory.py",
+    "backend_module_sha256": "e396e6c7a4f16c542d5cc58c97320319d78f3322bc332ab8fe0fb0ffe00812e9",
+    "simulator_device": "simulator/smartcam_x1.py",
+    "simulator_sha256": "18eb6f1349c02ec6555173cf63369ee79baa23fcc7698243252b883cdf50b2e1",
+    "python": "3.11.0a7",
+    "platform": "win32",
+    "probe_ports": [
+      8080,
+      22022,
+      21883,
+      28554
+    ],
+    "probe_timeout_s": 1.2,
+    "per_port_ms": {
+      "8080": 25,
+      "22022": 14,
+      "21883": 3477,
+      "28554": 4643
+    },
+    "elapsed_ms": 8164,
+    "no_response_ports": [],
+    "note": "探测与识别由仓库原文件中的函数执行；本快照只做序列化。"
+  },
+  "self_check": {
+    "ok": true,
+    "basis": "device_identity_endpoint",
+    "endpoint": "http://127.0.0.1:8080/api/system",
+    "compared_fields": [
+      "device_name",
+      "device_type",
+      "vendor",
+      "model",
+      "firmware_version",
+      "os",
+      "services.port"
+    ],
+    "mismatches": [],
+    "reported_services": [
+      8080,
+      21883,
+      22022,
+      28554
+    ],
+    "self_report_sha256": "0169a009df9e56b510862ff149b362d32fdb8f7f4d4fcd0669001df4d4689e7d"
+  },
+  "snapshot_sha256": "cd8d6d1306733c40220b7cf7ada0eb68699bb181b7345577db9df32cbf480ead",
+  "verify_command": "python _work/device_capture.py --verify-hash"
+}

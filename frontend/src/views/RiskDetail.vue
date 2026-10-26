@@ -156,7 +156,7 @@
             </section>
 
             <section class="card">
-              <div class="card-head" style="padding-top: 12px"><div class="card-title" style="font-size: 12px">关联记录</div><span class="link" @click="router.push('/risks')">全部 <Icon name="chev-right" :size="11" /></span></div>
+              <div class="card-head" style="padding-top: 12px"><div class="card-title" style="font-size: 14px">关联记录</div><span class="link" @click="router.push('/risks')">全部 <Icon name="chev-right" :size="11" /></span></div>
               <div class="rel"><span class="ic"><Icon name="branch" :size="11" /></span><span class="name">匹配记录</span><span class="id">#{{ row.match_id ?? "—" }}</span><span class="chip" :class="affectedTone"><i class="dot" />{{ affectedLabel }}</span><span class="chev"><Icon name="chev-right" :size="11" /></span></div>
               <div class="rel"><span class="ic"><Icon name="shield" :size="11" /></span><span class="name">风险事件</span><span class="id">R-{{ row.risk_id ?? "—" }}</span><span class="chip" :class="reviewTone"><i class="dot" />{{ reviewLabel }}</span><span class="chev"><Icon name="chev-right" :size="11" /></span></div>
               <div class="rel" @click="router.push('/agents')"><span class="ic"><Icon name="cpu" :size="11" /></span><span class="name">Agent 运行</span><span class="id">—</span><span class="chip info"><i class="dot" />查看</span><span class="chev"><Icon name="chev-right" :size="11" /></span></div>
@@ -526,29 +526,29 @@ onMounted(load);
 .risk-head .ph-copy { display: grid; gap: 4px; justify-items: start; }
 .back-link { margin-bottom: 2px; }
 .risk-title { margin-top: 0; }
-.risk-sub { display: flex; align-items: center; gap: 9px; color: var(--ink-3); font-size: 12.5px; }
-.risk-sub .pkg { color: var(--ink-2); font-family: var(--font-num); font-size: 12px; }
-.gate-list { display: grid; gap: 5px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #f9fbfe; }
-.gate-list div { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-2); }
-.gate-list span { margin-left: auto; color: var(--muted); font-family: var(--font-num); font-size: 10.5px; }
+.risk-sub { display: flex; align-items: center; gap: 8px; color: var(--ink-3); font-size: 14px; }
+.risk-sub .pkg { color: var(--ink-2); font-family: var(--font-num); font-size: 14px; }
+.gate-list { display: grid; gap: 4px; padding: 8px 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: #f9fbfe; }
+.gate-list div { display: flex; align-items: center; gap: 4px; font-size: 13.5px; color: var(--ink-2); }
+.gate-list span { margin-left: auto; color: var(--muted); font-family: var(--font-num); font-size: 12.5px; }
 .terminal { min-height: 258px; }
 .risk-grid { height: auto; }
 .verdict-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
-.verdict-cell { display: grid; gap: 3px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fbfdff; }
-.v-label { color: var(--muted); font-size: 10.5px; }
-.v-value { color: var(--ink); font-size: 12.5px; font-weight: 700; line-height: 1.45; word-break: break-all; }
-.v-hint { color: var(--muted); font-size: 10.5px; }
-.gap-block { display: grid; gap: 6px; padding: 9px 10px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fffdf7; }
-.g-head { display: flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11px; font-weight: 700; }
+.verdict-cell { display: grid; gap: 2px; padding: 8px 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fbfdff; }
+.v-label { color: var(--muted); font-size: 12.5px; }
+.v-value { color: var(--ink); font-size: 14px; font-weight: 700; line-height: 1.45; word-break: break-all; }
+.v-hint { color: var(--muted); font-size: 12.5px; }
+.gap-block { display: grid; gap: 4px; padding: 8px 8px; border: 1px solid var(--line-soft); border-radius: 8px; background: #fffdf7; }
+.g-head { display: flex; align-items: center; gap: 4px; color: var(--ink-2); font-size: 13.5px; font-weight: 700; }
 .g-head .link { margin-left: auto; font-weight: 400; }
-.g-list { margin: 0; padding-left: 16px; display: grid; gap: 4px; color: var(--ink-2); font-size: 11px; line-height: 1.5; }
+.g-list { margin: 0; padding-left: 16px; display: grid; gap: 4px; color: var(--ink-2); font-size: 13.5px; line-height: 1.5; }
 .audit-chips { display: flex; flex-wrap: wrap; gap: 4px; }
-.mono-chip { font-size: 10px; height: 20px; }
-.plan-rows-mini { display: grid; gap: 8px; margin-bottom: 10px; }
-.plan-rows-mini div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 10px; font-size: 12px; align-items: baseline; }
+.mono-chip { font-size: 12.5px; height: 20px; }
+.plan-rows-mini { display: grid; gap: 8px; margin-bottom: 8px; }
+.plan-rows-mini div { display: grid; grid-template-columns: 88px minmax(0, 1fr); gap: 8px; font-size: 14px; align-items: baseline; }
 .plan-rows-mini span { color: var(--muted); }
 .plan-rows-mini b { color: var(--ink-2); font-weight: 600; word-break: break-all; }
-.blocked-box { display: grid; gap: 6px; padding: 10px; border: 1px solid #f3c6c6; border-radius: 8px; background: #fdf6f6; }
+.blocked-box { display: grid; gap: 4px; padding: 8px; border: 1px solid #f3c6c6; border-radius: 8px; background: #fdf6f6; }
 .blocked-box .g-head { color: #b42318; }
 .actions-row { display: flex; flex-wrap: wrap; gap: 8px; }
 .actions-row .btn { flex: 1 1 auto; min-width: 120px; }

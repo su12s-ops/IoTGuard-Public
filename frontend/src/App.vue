@@ -1,4 +1,5 @@
 <template>
+  <div v-if="ui.routeLoading" class="route-progress" role="status" aria-label="页面加载中"></div>
   <AppSprite />
   <div class="shell">
     <aside class="rail" aria-label="IoTGuard 主导航">
@@ -93,13 +94,24 @@ import { notify, ui } from "./stores/ui";
 const route = useRoute();
 const tokenDraft = ref("");
 const summary = ref({});
-const buildLabel = ref("working-tree");
+// 构建标识：本仓库不是 git 仓库，后端只会返回 working-tree / unknown 这类内部状态字符串。
+// 这类值不该出现在展示层（投影上看着像没打包），统一归一成「本地构建」；
+// 将来接入真实构建号时，只要给 buildRaw 赋值即可原样显示。
+const buildRaw = ref("working-tree");
+const buildLabel = computed(() => {
+  const raw = String(buildRaw.value || "").trim();
+  if (!raw || /^(working-tree|unknown|dev|none|null|undefined)$/i.test(raw)) return "本地构建";
+  return raw;
+});
 let timer = null;
 
 const navigation = [
   { to: "/", icon: "home", text: "安全总览" },
   { to: "/assets", icon: "shield", text: "资产与发现" },
+  { to: "/devices", icon: "camera", text: "设备接入" },
+  { to: "/hosts", icon: "server", text: "主机资产" },
   { to: "/risks", icon: "bug", text: "漏洞与风险" },
+  { to: "/verdict", icon: "target", text: "四态判决" },
   { to: "/agents", icon: "cpu", text: "智能研判中心" },
   { to: "/repairs", icon: "wrench", text: "修复与验证" },
   { to: "/runtime", icon: "activity", text: "运行监控与审计" }
@@ -124,8 +136,13 @@ function num(value) {
 }
 
 const workspaceSub = computed(() => {
-  const assets = Number(summary.value.asset_count);
-  return `${Number.isFinite(assets) ? assets : "—"} 台资产 · 3 个节点`;
+  // 原实现写死「3 个节点」，那是没有数据支撑的假数字；现在只报后端真实台账：
+  // 主机线（LinuxAsset）+ 设备线（IotDevice）。
+  const hosts = Number(summary.value.linux_asset_count ?? summary.value.asset_count);
+  const devices = Number(summary.value.iot_device_count);
+  if (!Number.isFinite(hosts) && !Number.isFinite(devices)) return "台账未就绪";
+  const total = (Number.isFinite(hosts) ? hosts : 0) + (Number.isFinite(devices) ? devices : 0);
+  return `${total} 台资产 · ${Number.isFinite(hosts) ? hosts : 0} 主机 / ${Number.isFinite(devices) ? devices : 0} 设备`;
 });
 
 async function loadSummary() {

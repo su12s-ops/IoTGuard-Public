@@ -18,13 +18,22 @@
       </template>
     </PageHeader>
 
+    <VerdictRuling
+      :state="ruling.state"
+      :stamp-main="ruling.stampMain"
+      :stamp-en="ruling.stampEn"
+      :title="ruling.title"
+      :detail="ruling.detail"
+      :tags="ruling.tags"
+    />
+
     <input ref="evidenceInput" type="file" accept=".json,.jsonl,.log,.txt" hidden @change="uploadEvidence" />
 
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
     <div class="kpi-row">
-      <KpiCard label="实时事件" :value="num(summary.total)" unit="条" icon="activity" tone="blue" :sub="`最近事件 ${latestLabel}`" />
-      <KpiCard label="告警事件" :value="num(alertCount)" unit="条" icon="shield-alert" tone="red" :sub="`${criticalCount} 条严重 · ${warningCount} 条警告`" />
+      <KpiCard label="实时事件" :value="uncollected ? '—' : num(summary.total)" :unit="uncollected ? '' : '条'" icon="activity" tone="blue" :sub="uncollected ? '未采集，无法判断是否有事件' : `最近事件 ${latestLabel}`" />
+      <KpiCard label="告警事件" :value="uncollected ? '—' : num(alertCount)" :unit="uncollected ? '' : '条'" icon="shield-alert" tone="red" :sub="uncollected ? '未采集 ≠ 无告警' : `${criticalCount} 条严重 · ${warningCount} 条警告`" />
       <KpiCard label="涉及主机" :value="num(hostCount)" unit="台" icon="server" tone="orange" :sub="`按事件设备名归并 · ${hostCount} 台`" />
       <KpiCard label="采集传感器" :value="num(totalSensors)" unit="个" icon="radio" tone="green" :sub="`${healthySensors} 个在线 · 证据${evidenceFresh ? '新鲜' : '过期'}`" />
     </div>
@@ -34,8 +43,8 @@
         <div class="card-head">
           <div><div class="card-title">事件强度分布</div><div class="card-desc">按严重度分桶 · 最近 {{ filteredEvents.length }} 条样本</div></div>
           <div class="chart-legend">
-            <span><i style="background: #2f6fed" />全部事件</span>
-            <span><i style="background: #ef4444" />高危事件</span>
+            <span><i :style="{ background: SERIES[0] }" />全部事件</span>
+            <span><i :style="{ background: SEVERITY.critical }" />高危事件</span>
           </div>
         </div>
         <div class="chart-body">
@@ -105,14 +114,14 @@
           <thead><tr><th>时间</th><th>设备</th><th>事件类型</th><th>违规 / 行为</th><th>进程 / 端口</th><th>目标</th><th>严重程度</th><th>操作</th></tr></thead>
           <tbody>
             <tr v-for="event in filteredEvents.slice(0, 8)" :key="event.id || `${event.timestamp}-${event.rule}`" style="cursor: pointer" tabindex="0" role="button" @click="activeEvent = event" @keydown.enter="activeEvent = event">
-              <td class="num" style="font-size: 11.5px; color: var(--muted)">{{ shortTime(event.timestamp) }}</td>
+              <td class="num" style="font-size: 13.5px; color: var(--muted)">{{ shortTime(event.timestamp) }}</td>
               <td class="name" :title="event.hostname">{{ event.hostname || "—" }}</td>
               <td><span class="chip" :class="eventTone(event.category)"><i class="dot" />{{ categoryLabel(event.category) }}</span></td>
               <td :title="event.rule">
                 <span class="event-rule">{{ event.rule || event.event_type || "—" }}</span>
               </td>
-              <td class="mono" style="font-size: 11px">{{ event.process_name || "—" }}{{ event.port ? ` · ${event.port}` : "" }}</td>
-              <td class="mono" style="font-size: 11px">{{ event.destination || "—" }}</td>
+              <td class="mono" style="font-size: 13.5px">{{ event.process_name || "—" }}{{ event.port ? ` · ${event.port}` : "" }}</td>
+              <td class="mono" style="font-size: 13.5px">{{ event.destination || "—" }}</td>
               <td><span class="chip" :class="severityTone(event.severity_score)"><i class="dot" />{{ severityLabel(event.severity_score) }}</span></td>
               <td><button class="row-action" type="button" aria-label="查看事件" @click.stop="activeEvent = event"><Icon name="eye" :size="15" /></button></td>
             </tr>
@@ -150,6 +159,7 @@ import DonutChart from "../components/DonutChart.vue";
 import AreaChart from "../components/AreaChart.vue";
 import Modal from "../components/Modal.vue";
 import { fetchHealth } from "../api";
+import VerdictRuling from "../components/VerdictRuling.vue";
 import { api } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
@@ -187,23 +197,72 @@ const alertCount = computed(() => {
   const counts = summary.value.severity_counts || {};
   return Number(counts.Critical || 0) + Number(counts.Warning || 0) + Number(counts.warning || 0);
 });
+
+/* 页面级状态印章：把"采集是否在进行、证据是否新鲜"收敛成一句结论 */
+const uncollected = computed(() => Number(summary.value.total || 0) === 0);
+
+const ruling = computed(() => {
+  const total = Number(summary.value.total || 0);
+  const alerts = Number(alertCount.value || 0);
+  const sensors = totalSensors.value;
+  const healthy = healthySensors.value;
+  const fresh = evidenceFresh.value;
+  const tags = [
+    { text: `事件 ${total} 条`, tone: "" },
+    { text: `传感器 ${healthy}/${sensors}`, tone: sensors > 0 && healthy === sensors ? "low" : "mid" },
+    { text: `告警 ${alerts} 条`, tone: alerts > 0 ? "crit" : "" },
+    { text: fresh ? "证据新鲜" : "证据过期", tone: fresh ? "low" : "mid" },
+  ];
+  if (total === 0) {
+    return {
+      state: "weak", stampMain: "未采集", stampEn: "NO DATA",
+      title: "当前没有运行时事件",
+      detail: "没有事件不代表安全：需要先确认采集节点与传感器是否在线，再判断设备行为是否正常。",
+      tags,
+    };
+  }
+  if (!fresh) {
+    return {
+      state: "weak", stampMain: "证据过期", stampEn: "STALE",
+      title: "窗口内事件已超出新鲜度阈值",
+      detail: `共 ${total} 条事件，但最近一条已超出新鲜度窗口；回放数据不能当作实时状态。`,
+      tags,
+    };
+  }
+  if (alerts > 0) {
+    return {
+      state: "fail", stampMain: "有告警", stampEn: "ALERTING",
+      title: `窗口内出现 ${alerts} 条告警事件`,
+      detail: "告警来自规则匹配，需要人工确认是否构成真实风险；告警本身不等于已被利用。",
+      tags,
+    };
+  }
+  return {
+    state: "pass", stampMain: "实时", stampEn: "LIVE",
+    title: `采集正常，窗口内 ${total} 条事件`,
+    detail: "事件来自 eBPF 采集；该结论仅覆盖已接入的传感器与主机。",
+    tags,
+  };
+});
 const criticalCount = computed(() => Number(summary.value.severity_counts?.Critical || 0));
 const warningCount = computed(() => Number(summary.value.severity_counts?.Warning || 0) + Number(summary.value.severity_counts?.warning || 0));
 
+import { SERIES, SEVERITY } from "../lib/palette";
+
 const categoryCatalog = {
-  process_execution: { label: "进程执行", color: "#2f6fed" },
-  network_activity: { label: "网络活动", color: "#12b8d8" },
-  sensitive_file_access: { label: "敏感文件", color: "#ef4444" },
-  privilege_activity: { label: "权限变更", color: "#7c3aed" },
-  package_or_service_change: { label: "服务变更", color: "#f97316" },
-  runtime_observation: { label: "运行时观测", color: "#12b76a" }
+  process_execution: { label: "进程执行", color: SERIES[0] },
+  network_activity: { label: "网络活动", color: SERIES[1] },
+  sensitive_file_access: { label: "敏感文件", color: SEVERITY.critical },
+  privilege_activity: { label: "权限变更", color: SERIES[2] },
+  package_or_service_change: { label: "服务变更", color: SERIES[3] },
+  runtime_observation: { label: "运行时观测", color: SEVERITY.low }
 };
 
 const categoryItems = computed(() =>
   Object.entries(summary.value.category_counts || {}).map(([key, value]) => ({
     label: categoryCatalog[key]?.label || key,
     value: Number(value) || 0,
-    color: categoryCatalog[key]?.color || "#94a3b8"
+    color: categoryCatalog[key]?.color || SEVERITY.none
   })).sort((a, b) => b.value - a.value)
 );
 
@@ -217,7 +276,7 @@ const hostCount = computed(() => Object.keys(summary.value.host_counts || {}).le
 const hostBars = computed(() => {
   const entries = Object.entries(summary.value.host_counts || {}).sort((a, b) => b[1] - a[1]).slice(0, 4);
   const max = Math.max(...entries.map(([, value]) => Number(value)), 1);
-  const palette = ["#2f6fed", "#f97316", "#12b76a", "#7c3aed"];
+  const palette = SERIES;
   return entries.map(([name, count], index) => ({
     name,
     count: Number(count),
@@ -240,8 +299,8 @@ const intensitySeries = computed(() => {
     if (score >= 60) high[bin] += 1;
   }
   return [
-    { name: "全部事件", color: "#2f6fed", values: all },
-    { name: "高危事件", color: "#ef4444", values: high }
+    { name: "全部事件", color: SERIES[0], values: all },
+    { name: "高危事件", color: SEVERITY.critical, values: high }
   ];
 });
 
@@ -357,55 +416,55 @@ onUnmounted(() => {
 .range-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   height: 36px;
   padding: 0 12px;
   border: 1px solid #e2ebf7;
   border-radius: 9px;
   background: #fff;
   color: #5b6b82;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
 }
-.live-toggle { display: inline-flex; align-items: center; gap: 8px; color: #5b6b82; font-size: 12px; font-weight: 500; white-space: nowrap; cursor: pointer; user-select: none; }
+.live-toggle { display: inline-flex; align-items: center; gap: 8px; color: #5b6b82; font-size: 14px; font-weight: 500; white-space: nowrap; cursor: pointer; user-select: none; }
 .switch { position: relative; width: 34px; height: 20px; border-radius: 999px; background: #dbe4f0; transition: background 160ms ease; }
 .switch::after { content: ""; position: absolute; left: 2px; top: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(16, 35, 70, 0.25); transition: transform 160ms ease; }
 .switch.on { background: var(--accent); }
 .switch.on::after { transform: translateX(14px); }
 
 .runtime-charts { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.85fr); gap: 16px; }
-.chart-body { padding: 6px 14px 4px; }
-.chart-foot { display: flex; align-items: center; gap: 18px; margin-top: auto; padding: 8px 18px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
-.chart-foot b { color: var(--ink-2); font-family: var(--font-num); font-size: 11px; }
-.chart-legend { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 11px; }
-.chart-legend span { display: inline-flex; align-items: center; gap: 5px; }
+.chart-body { padding: 4px 12px 4px; }
+.chart-foot { display: flex; align-items: center; gap: 16px; margin-top: auto; padding: 8px 16px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; }
+.chart-foot b { color: var(--ink-2); font-family: var(--font-num); font-size: 13.5px; }
+.chart-legend { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13.5px; }
+.chart-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .chart-legend i { width: 7px; height: 7px; border-radius: 2px; }
-.type-donut { display: flex; align-items: center; gap: 14px; padding: 14px 16px 16px; }
-.type-donut .legend-list { flex: 1; min-width: 0; gap: 7px; }
-.type-donut .legend-list span { font-size: 11px; }
+.type-donut { display: flex; align-items: center; gap: 12px; padding: 12px 16px 16px; }
+.type-donut .legend-list { flex: 1; min-width: 0; gap: 8px; }
+.type-donut .legend-list span { font-size: 13.5px; }
 .type-donut .legend-list em { width: 34px; }
 
-.host-chart { display: grid; gap: 12px; padding: 18px 18px 12px; }
-.host-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 42px; gap: 9px; align-items: center; }
-.host-name { color: #5b6b82; font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.host-chart { display: grid; gap: 12px; padding: 16px 16px 12px; }
+.host-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 42px; gap: 8px; align-items: center; }
+.host-name { color: #5b6b82; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .host-track { height: 8px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
 .host-track i { display: block; height: 8px; border-radius: 999px; }
-.host-row b { text-align: right; color: var(--ink); font-size: 12px; font-weight: 700; }
-.host-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding: 9px 18px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
+.host-row b { text-align: right; color: var(--ink); font-size: 14px; font-weight: 700; }
+.host-foot { display: flex; align-items: center; justify-content: space-between; margin-top: auto; padding: 8px 16px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; }
 
 .event-table td { overflow: hidden; text-overflow: ellipsis; }
 .event-table td.name { white-space: nowrap; }
-.event-rule { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 12px; }
+.event-rule { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-2); font-size: 14px; }
 .row-action { display: grid; place-items: center; width: 28px; height: 28px; border: 1px solid transparent; border-radius: 7px; background: transparent; color: #64748b; }
 .row-action:hover { border-color: #e3ebf6; background: #f7fafd; color: var(--accent-2); }
 
 .event-detail { display: grid; grid-template-columns: 1fr 1fr; gap: 0 22px; }
 .event-detail > div { padding: 10px 0; border-bottom: 1px solid var(--line-soft); min-width: 0; }
-.event-detail span { display: block; color: var(--muted); font-size: 11px; }
-.event-detail b { display: block; margin-top: 3px; color: var(--ink); font-size: 12.5px; font-weight: 600; overflow-wrap: anywhere; }
+.event-detail span { display: block; color: var(--muted); font-size: 13.5px; }
+.event-detail b { display: block; margin-top: 2px; color: var(--ink); font-size: 14px; font-weight: 600; overflow-wrap: anywhere; }
 .event-detail .wide { grid-column: 1 / -1; }
-.event-detail .cmd { font-size: 11px; line-height: 1.6; color: var(--ink-3); background: #f7fafd; padding: 8px 10px; border-radius: 7px; }
+.event-detail .cmd { font-size: 13.5px; line-height: 1.6; color: var(--ink-3); background: #f7fafd; padding: 8px 8px; border-radius: 7px; }
 
 @media (max-width: 1280px) {
   .runtime-charts { grid-template-columns: minmax(0, 1fr); }

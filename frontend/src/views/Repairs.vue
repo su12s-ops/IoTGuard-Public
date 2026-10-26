@@ -15,6 +15,15 @@
       </template>
     </PageHeader>
 
+    <VerdictRuling
+      :state="ruling.state"
+      :stamp-main="ruling.stampMain"
+      :stamp-en="ruling.stampEn"
+      :title="ruling.title"
+      :detail="ruling.detail"
+      :tags="ruling.tags"
+    />
+
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
     <section class="card step-card">
@@ -99,7 +108,7 @@
     <section class="card">
       <div class="card-head">
         <div><div class="card-title">最近任务</div><div class="card-desc">包含调查、采集与修复；机器复验与人工签收分开记录</div></div>
-        <span class="num" style="color: var(--muted); font-size: 11.5px">{{ runs.length }} 条记录</span>
+        <span class="num" style="color: var(--muted); font-size: 13.5px">{{ runs.length }} 条记录</span>
       </div>
       <div v-if="!runs.length" class="empty-note" style="padding: 18px">暂无任务记录。</div>
       <div v-else class="table-wrap">
@@ -112,8 +121,8 @@
               <td class="name">asset {{ run.asset_id }}</td>
               <td>{{ goalLabel(run.plan?.goal) }}</td>
               <td><span class="chip" :class="statusTone(run.status)"><i class="dot" />{{ statusLabel(run.status) }}</span></td>
-              <td class="mono" style="font-size: 11.5px">{{ toolLabel(run.current_step) }}</td>
-              <td class="num" style="color: var(--muted); font-size: 11.5px">{{ shortTime(run.updated_at) }}</td>
+              <td class="mono" style="font-size: 13.5px">{{ toolLabel(run.current_step) }}</td>
+              <td class="num" style="color: var(--muted); font-size: 13.5px">{{ shortTime(run.updated_at) }}</td>
               <td><Icon name="chev-right" :size="13" style="color: #c3d1e3" /></td>
             </tr>
           </tbody>
@@ -140,6 +149,7 @@ import { computed, onMounted, ref } from "vue";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
+import VerdictRuling from "../components/VerdictRuling.vue";
 import Modal from "../components/Modal.vue";
 import { api } from "../api";
 import { controlSession } from "../api/controlSession";
@@ -147,6 +157,29 @@ import { notify } from "../stores/ui";
 import { dateTime, shortTime, statusLabel, statusTone } from "../utils/format";
 
 const runs = ref([]);
+/* 页面级状态印章：修复是受控操作，结论必须写清"有没有待办"与边界 */
+const ruling = computed(() => {
+  const total = Array.isArray(runs.value) ? runs.value.length : 0;
+  const tags = [
+    { text: `任务 ${total} 个`, tone: "" },
+    { text: "设备写：只读", tone: "" },
+    { text: "三段审批：检查 · 审批 · 复验", tone: "" },
+  ];
+  if (total === 0) {
+    return {
+      state: "weak", stampMain: "无任务", stampEn: "IDLE",
+      title: "当前没有修复任务",
+      detail: "从风险对象创建计划后，会依次经过执行前检查、人工审批、执行修复与效果复验；未经审批不会发生任何设备写。",
+      tags,
+    };
+  }
+  return {
+    state: "weak", stampMain: "进行中", stampEn: "IN PROGRESS",
+    title: `当前有 ${total} 个修复任务`,
+    detail: "任务状态以审批记录为准；执行修复前必须具备身份校验、作用域与恢复准备。",
+    tags,
+  };
+});
 const selected = ref(null);
 const loading = ref(true);
 const error = ref("");
@@ -351,41 +384,41 @@ onMounted(load);
 </script>
 
 <style scoped>
-.step-card { padding: 14px 18px 12px; }
+.step-card { padding: 12px 16px 12px; }
 .step-card-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding-bottom: 12px; border-bottom: 1px solid var(--line-soft); flex-wrap: wrap; }
-.step-target { display: flex; align-items: center; gap: 9px; min-width: 0; flex-wrap: wrap; }
+.step-target { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
 .step-target .back-link { margin-right: 4px; }
 .step-target b { color: var(--ink); font-family: var(--font-num); font-size: 14px; font-weight: 700; }
-.step-stats { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 11.5px; }
-.step-stats span { display: inline-flex; align-items: center; gap: 6px; }
-.step-stats b { color: var(--ink); font-family: var(--font-num); font-size: 12.5px; }
-.step-track { padding: 18px 10px 6px; }
+.step-stats { display: flex; align-items: center; gap: 16px; color: var(--muted); font-size: 13.5px; }
+.step-stats span { display: inline-flex; align-items: center; gap: 4px; }
+.step-stats b { color: var(--ink); font-family: var(--font-num); font-size: 14px; }
+.step-track { padding: 16px 8px 4px; }
 .step-track .track-step.skip .track-no { background: #f6f9fd; color: #9aa9c0; border-style: dashed; }
 .step-track .track-step.skip .track-label { color: #8b9bb1; }
 
-.plan-grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr) minmax(0, 1fr); gap: 14px; }
+.plan-grid { display: grid; grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
 .plan-panel { display: flex; flex-direction: column; border: 1px solid #e6eef8; border-radius: 12px; background: #fff; overflow: hidden; box-shadow: 0 1px 2px rgba(16, 35, 70, 0.03); }
-.pp-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); background: #f9fbfe; color: var(--ink); font-size: 13px; font-weight: 700; }
+.pp-head { display: flex; align-items: center; gap: 8px; padding: 12px 16px; border-bottom: 1px solid var(--line-soft); background: #f9fbfe; color: var(--ink); font-size: 14.5px; font-weight: 700; }
 .pp-head .icon { color: var(--accent-2); }
 .plan-rows { display: grid; }
-.plan-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); font-size: 12px; }
+.plan-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); gap: 12px; padding: 8px 16px; border-bottom: 1px solid var(--line-soft); font-size: 14px; }
 .plan-row:last-child { border-bottom: 0; }
 .plan-row > span { color: var(--muted); }
 .plan-row b { color: var(--ink-2); font-weight: 600; line-height: 1.5; }
-.plan-row b .chip { height: 22px; font-size: 11px; }
-.plan-hash { margin-top: auto; padding: 11px 16px; border-top: 1px solid var(--line-soft); background: #fbfdff; display: grid; gap: 3px; }
-.plan-hash span { color: var(--muted); font-size: 10.5px; }
-.plan-hash b { color: var(--ink-3); font-size: 10.5px; font-weight: 600; }
+.plan-row b .chip { height: 22px; font-size: 13.5px; }
+.plan-hash { margin-top: auto; padding: 12px 16px; border-top: 1px solid var(--line-soft); background: #fbfdff; display: grid; gap: 2px; }
+.plan-hash span { color: var(--muted); font-size: 12.5px; }
+.plan-hash b { color: var(--ink-3); font-size: 12.5px; font-weight: 600; }
 .approve-actions { display: flex; gap: 8px; padding: 12px 16px 8px; margin-top: auto; }
 .approve-actions .btn { flex: 1; height: 36px; }
-.approval-note { display: flex; align-items: center; gap: 6px; padding: 0 16px 12px; color: #64748b; font-size: 10.5px; }
+.approval-note { display: flex; align-items: center; gap: 4px; padding: 0 16px 12px; color: #64748b; font-size: 12.5px; }
 .verify-list { display: grid; }
-.verify-row { display: flex; align-items: center; gap: 9px; padding: 10px 16px; border-bottom: 1px solid var(--line-soft); color: var(--ink-2); font-size: 12px; }
+.verify-row { display: flex; align-items: center; gap: 8px; padding: 8px 16px; border-bottom: 1px solid var(--line-soft); color: var(--ink-2); font-size: 14px; }
 .verify-row:last-child { border-bottom: 0; }
 .ok-ic { display: grid; place-items: center; width: 20px; height: 20px; border-radius: 50%; background: var(--low-soft); color: #067647; }
 .ok-ic.pending { background: var(--high-soft); color: #c2410c; }
-.verify-row .chip { margin-left: auto; height: 22px; font-size: 11px; }
-.verify-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; padding: 11px 16px; border-top: 1px solid var(--line-soft); background: #fbfdff; color: var(--muted); font-size: 10.5px; }
+.verify-row .chip { margin-left: auto; height: 22px; font-size: 13.5px; }
+.verify-foot { margin-top: auto; display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-top: 1px solid var(--line-soft); background: #fbfdff; color: var(--muted); font-size: 12.5px; }
 
 @media (max-width: 1280px) {
   .plan-grid { grid-template-columns: minmax(0, 1fr); }

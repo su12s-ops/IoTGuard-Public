@@ -351,36 +351,36 @@ function stopPolling() {
 </script>
 
 <style scoped>
-.analysis-panel { display: grid; gap: 14px; }
+.analysis-panel { display: grid; gap: 12px; }
 .analysis-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 2px 2px 0; }
 .analysis-title { display: grid; gap: 4px; }
 .analysis-title b { color: var(--ink); font-size: 14px; }
-.analysis-title small { color: var(--muted); font-size: 11px; }
+.analysis-title small { color: var(--muted); font-size: 13.5px; }
 .analysis-state { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 10px; }
-.kpi { display: grid; gap: 3px; padding: 12px 14px; border: 1px solid #e4edf9; border-radius: 12px; background: #fff; }
-.kpi span { color: var(--muted); font-size: 11px; }
+.kpi-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: 8px; }
+.kpi { display: grid; gap: 2px; padding: 12px 12px; border: 1px solid #e4edf9; border-radius: 12px; background: #fff; }
+.kpi span { color: var(--muted); font-size: 13.5px; }
 .kpi b { color: var(--ink); font-size: 21px; line-height: 1.1; }
 .kpi b.small-b { font-size: 14px; }
 .kpi b.warn { color: #b45309; }
 .kpi b.bad { color: #b42318; }
-.kpi small { color: var(--muted); font-size: 10px; }
-.basis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 18px; padding: 12px 14px; border: 1px solid var(--line-soft); border-radius: 12px; background: #fbfdff; }
-.basis-grid div { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+.kpi small { color: var(--muted); font-size: 12.5px; }
+.basis-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; padding: 12px 12px; border: 1px solid var(--line-soft); border-radius: 12px; background: #fbfdff; }
+.basis-grid div { display: flex; justify-content: space-between; gap: 12px; font-size: 13.5px; }
 .basis-grid span { color: var(--muted); }
 .basis-grid b { color: var(--ink-2); font-weight: 600; text-align: right; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .basis-grid b.warn { color: #b45309; }
-.analysis-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.analysis-actions .hint { color: var(--muted); font-size: 11px; }
-.notice-line { padding: 9px 12px; border-radius: 9px; background: #f2f8ff; color: #245b9e; font-size: 11.5px; }
+.analysis-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.analysis-actions .hint { color: var(--muted); font-size: 13.5px; }
+.notice-line { padding: 8px 12px; border-radius: 9px; background: #f2f8ff; color: #245b9e; font-size: 13.5px; }
 .empty-analysis { padding: 4px 0; }
 .section-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 4px 2px; }
-.section-head b { color: var(--ink); font-size: 12.5px; }
-.section-head small { display: block; color: var(--muted); font-size: 10.5px; margin-top: 2px; }
-.skipped-block { display: grid; gap: 6px; }
+.section-head b { color: var(--ink); font-size: 14px; }
+.section-head small { display: block; color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+.skipped-block { display: grid; gap: 4px; }
 .skip-list { display: grid; gap: 4px; }
-.skip-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto auto; gap: 10px; align-items: center; padding: 7px 10px; border-radius: 8px; background: #f8fafc; font-size: 11px; color: var(--ink-2); }
-.round-foot { display: flex; justify-content: space-between; gap: 12px; padding: 10px 2px 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
+.skip-row { display: grid; grid-template-columns: 90px minmax(0, 1fr) auto auto; gap: 8px; align-items: center; padding: 8px 8px; border-radius: 8px; background: #f8fafc; font-size: 13.5px; color: var(--ink-2); }
+.round-foot { display: flex; justify-content: space-between; gap: 12px; padding: 10px 2px 0; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12.5px; }
 .muted-text { color: var(--muted); }
 .link { color: var(--accent-2, #2f6fed); text-decoration: none; }
 </style>

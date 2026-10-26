@@ -6,7 +6,7 @@
       description="多智能体协同的物联网安全运营平台"
     >
       <template #meta>
-        <span>数据读取于 {{ updated || "尚未读取" }}</span><i class="sep" /><span>{{ num(summary.asset_count) }} 台资产</span><i class="sep" /><span>{{ num(summary.total_vulnerabilities) }} 条情报</span>
+        <span>数据读取于 {{ updated || "尚未读取" }}</span><i class="sep" /><span>{{ num(totalAssets) }} 台资产</span><i class="sep" /><span>{{ num(summary.total_vulnerabilities) }} 条情报</span>
       </template>
       <template #actions>
         <span class="range-chip"><Icon name="calendar" :size="14" />{{ today }} · 最近 7 天<Icon name="chev-down" :size="13" /></span>
@@ -15,13 +15,22 @@
       </template>
     </PageHeader>
 
+  <VerdictRuling
+    :state="ruling.state"
+    :stamp-main="ruling.stampMain"
+    :stamp-en="ruling.stampEn"
+    :title="ruling.title"
+    :detail="ruling.detail"
+    :tags="ruling.tags"
+  />
+
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
 
     <div class="kpi-row">
-      <KpiCard label="接入设备" :value="num(summary.asset_count)" unit="台" icon="server" tone="blue" :sub="`${num(summary.affected_asset_count)} 台存在风险暴露`" />
+      <KpiCard label="接入资产" :value="num(totalAssets)" unit="台" icon="server" tone="blue" :sub="`${num(summary.linux_asset_count)} 台 Linux 主机 · ${num(summary.iot_device_count)} 台 IoT 设备`" />
       <KpiCard label="高危风险" :value="num(highCount)" unit="条" icon="shield-alert" tone="red" :delta="riskDelta" :delta-tone="riskDeltaTone" :sub="`严重 ${critical} · 高危 ${high}`" />
       <KpiCard label="运行任务" :value="num(runs.length)" unit="个" icon="cpu" tone="green" :sub="`${completedCount} 个已完成 · ${runningCount} 个执行中`" />
-      <KpiCard label="待审事项" :value="num(pendingReview)" unit="项" icon="shield" tone="purple" :sub="`${num(summary.pending_remediation_tasks)} 条待修复 · 人工签收`" />
+      <KpiCard label="待审事项" :value="num(pendingReview)" unit="项" icon="shield" tone="purple" :sub="`${num(candidateRisk)} 条待研判 · ${num(summary.pending_remediation_tasks)} 条待修复`" />
     </div>
 
     <div class="overview-main">
@@ -32,15 +41,22 @@
             <div class="card-desc">资产、漏洞与运行时证据在同一张图上关联</div>
           </div>
           <div class="row">
-            <span class="live-dot" :class="{ warn: !evidenceFresh }" /><span class="live-text" :class="{ warn: !evidenceFresh }">{{ evidenceFresh ? "实时监测" : "监测受限" }}</span>
+            <span class="live-dot" :class="{ warn: !evidenceFresh }" /><span class="live-text" :class="{ warn: !evidenceFresh }">{{ evidenceFresh ? "实时监测" : hasEvidence ? "监测受限" : "未采集运行时证据" }}</span>
             <span class="chip" :class="healthySensors === totalSensors && totalSensors ? 'low' : 'high'" style="margin-left: 6px"><i class="dot" />{{ healthySensors }}/{{ totalSensors }} 传感器健康</span>
           </div>
         </div>
-        <TopologyMap :nodes="topologyNodes" :height="286" />
+        <TopologyMap
+          :nodes="topologyNodes"
+          :height="368"
+          :events="runtimeEvents"
+          :mode="runtimeMode"
+          :mode-label="runtimeModeLabel"
+          :nodes-by-host="nodesByHost"
+        />
         <div class="hero-metrics">
           <div class="hero-metric"><span>风险对象</span><b>{{ num(riskTotal) }}</b></div>
           <div class="hero-metric"><span>待处置</span><b>{{ num(summary.pending_remediation_tasks) }}</b></div>
-          <div class="hero-metric"><span>运行时证据</span><b class="evidence" :style="{ color: evidenceFresh ? 'var(--low)' : 'var(--high)' }">{{ evidenceFresh ? "新鲜" : "部分过期" }}</b></div>
+          <div class="hero-metric"><span>运行时证据</span><b class="evidence" :style="{ color: evidenceFresh ? 'var(--low)' : hasEvidence ? 'var(--high)' : 'var(--ink-3)' }">{{ evidenceLabel }}</b></div>
           <div class="hero-metric"><span>情报来源</span><b>{{ sourceCount }}</b></div>
           <router-link class="link" to="/runtime" style="margin-left: auto">运行监控 <Icon name="chev-right" :size="13" /></router-link>
         </div>
@@ -94,7 +110,7 @@
             <tbody>
               <tr v-for="(row, index) in priorityRows" :key="row.cve_id || index" style="cursor: pointer" tabindex="0" role="link" @click="openRisk(row)" @keydown.enter="openRisk(row)">
                 <td><span class="rank" :class="{ top: index < 2 }">P{{ index + 1 }}</span></td>
-                <td class="mono">{{ row.cve_id }}</td>
+                <td class="mono cve-cell"><span class="cve-id">{{ row.cveOnly }}</span><small v-if="row.cveContext">{{ row.cveContext }}</small></td>
                 <td class="name" :title="row.hostname">{{ row.hostname || "—" }}</td>
                 <td><span class="score" :class="toneForLevel(row.risk_level)"><b>{{ score(row.score) }}</b><i><em :style="{ width: `${Math.min(100, Number(row.score) || 0)}%` }" /></i></span></td>
                 <td><span class="chip" :class="toneForLevel(row.risk_level)"><i class="dot" />{{ levelLabel(row.risk_level) }}</span></td>
@@ -103,7 +119,7 @@
             </tbody>
           </table>
         </div>
-        <div class="card-foot"><span>风险分综合 CVSS、EPSS、暴露面与运行时证据；不代表已确认利用。</span><span class="num">{{ num(riskTotal) }} 条 · {{ pendingReview }} 条待审</span></div>
+        <div class="card-foot"><span>风险分综合 CVSS、EPSS、暴露面与运行时证据；不代表已确认利用。</span><span class="num">{{ num(riskTotal) }} 条 · {{ num(candidateRisk) }} 条待研判 · {{ num(pendingReview) }} 条待审</span></div>
       </section>
 
       <section class="card agent-card">
@@ -156,6 +172,7 @@ import Icon from "../components/Icon.vue";
 import EmptyState from "../components/EmptyState.vue";
 import KpiCard from "../components/KpiCard.vue";
 import TopologyMap from "../components/TopologyMap.vue";
+import VerdictRuling from "../components/VerdictRuling.vue";
 import DonutChart from "../components/DonutChart.vue";
 import WorkflowStrip from "../components/WorkflowStrip.vue";
 import { api, fetchHealth, fetchReportArchives } from "../api";
@@ -179,6 +196,11 @@ const low = computed(() => Number(summary.value.risk_level_distribution?.Low || 
 const riskTotal = computed(() => critical.value + high.value + medium.value + low.value);
 const highCount = computed(() => Number(summary.value.high_risk_vulnerabilities ?? critical.value + high.value));
 const pendingReview = computed(() => Number(summary.value.pending_human_review || 0) + Number(summary.value.pending_remediation_tasks || 0));
+const candidateRisk = computed(() => Number(summary.value.candidate_risk_count || 0));
+// 接入总数 = 主机线（LinuxAsset） + 设备线（IotDevice）。两条台账本来就是不同对象，
+// 只报一个数字会让"资产 1 台"和拓扑上的设备计数对不上。
+const linuxAssetCount = computed(() => Number(summary.value.linux_asset_count ?? summary.value.asset_count ?? 0));
+const totalAssets = computed(() => linuxAssetCount.value + Number(summary.value.iot_device_count || 0));
 const completedCount = computed(() => runs.value.filter((run) => ["completed", "succeeded"].includes(run.status)).length);
 const runningCount = computed(() => runs.value.filter((run) => ["running", "queued_remote"].includes(run.status)).length);
 
@@ -192,11 +214,13 @@ const riskDelta = computed(() => {
 });
 const riskDeltaTone = computed(() => (riskDelta.value.startsWith("-") ? "up" : "down"));
 
+import { SEVERITY, ECOSYSTEM } from "../lib/palette";
+
 const riskItems = computed(() => [
-  { label: "严重", value: critical.value, color: "#ef4444" },
-  { label: "高危", value: high.value, color: "#f97316" },
-  { label: "中危", value: medium.value, color: "#f5b301" },
-  { label: "低危", value: low.value, color: "#2f6fed" }
+  { label: "严重", value: critical.value, color: SEVERITY.critical },
+  { label: "高危", value: high.value, color: SEVERITY.high },
+  { label: "中危", value: medium.value, color: SEVERITY.medium },
+  { label: "低危", value: low.value, color: SEVERITY.low }
 ]);
 
 function pctOf(value) {
@@ -207,12 +231,23 @@ function pctOf(value) {
 
 function scoreColor(value) {
   const n = Number(value) || 0;
-  if (n >= 75) return "linear-gradient(90deg, #ff9d7a, #ef4444)";
-  if (n >= 60) return "linear-gradient(90deg, #ffc48a, #f97316)";
-  return "linear-gradient(90deg, #9dc0ff, #2f6fed)";
+  if (n >= 75) return SEVERITY.critical;
+  if (n >= 60) return SEVERITY.high;
+  return SEVERITY.low;
 }
 
-const priorityRows = computed(() => (summary.value.top_vulnerabilities || []).slice(0, 5));
+// 风险记录的 cve_id 实际是复合键，形如 "CVE-2026-84782:noble:openssl"。
+// 直接整串塞进表格会在连字符/冒号处折断，因此拆成"主标识 + 上下文"两级显示。
+const priorityRows = computed(() =>
+  (summary.value.top_vulnerabilities || []).slice(0, 5).map((row) => {
+    const parts = String(row.cve_id || "").split(":");
+    return {
+      ...row,
+      cveOnly: parts[0] || row.cve_id || "—",
+      cveContext: parts.slice(1).filter(Boolean).join(" · ")
+    };
+  })
+);
 const topAssets = computed(() => (summary.value.top_assets || []).slice(0, 4));
 const latestRun = computed(() => runs.value[0] || null);
 
@@ -220,6 +255,16 @@ const layers = computed(() => health.value?.layers || {});
 const totalSensors = computed(() => Number(layers.value.sensors?.total || 0));
 const healthySensors = computed(() => Number(layers.value.sensors?.healthy || 0));
 const evidenceFresh = computed(() => Boolean(layers.value.runtime_evidence?.fresh));
+// 从没采过运行时证据时，latest_event_age_seconds 是 null——这时说"过期"是假话，
+// 只能说"未采集"。
+const hasEvidence = computed(() => {
+  const age = layers.value.runtime_evidence?.latest_event_age_seconds;
+  return age !== null && age !== undefined;
+});
+const evidenceLabel = computed(() => {
+  if (evidenceFresh.value) return "新鲜";
+  return hasEvidence.value ? "部分过期" : "未采集";
+});
 const sourceCount = computed(() => Object.keys(summary.value.source_distribution || {}).length);
 
 const topologyNodes = computed(() => {
@@ -228,11 +273,15 @@ const topologyNodes = computed(() => {
     map[key] = (map[key] || 0) + 1;
     return map;
   }, {});
+  // 主机线单独报数：LinuxAsset 除去已经是"设备"的 OpenWrt，剩下的就是基础设施主机。
+  // 后端把两个计数分开给出，前端不做减法猜测。
+  const linuxHosts = Math.max(0, linuxAssetCount.value - Number(summary.value.openwrt_asset_count || 0))
+    + Number(counts.ubuntu || 0);
   return [
-    { key: "openwrt", name: ecosystemLabel("openwrt"), count: counts.openwrt || 0, icon: "router", color: "#f4622a", soft: "#fff1e8" },
-    { key: "zephyr", name: ecosystemLabel("zephyr"), count: counts.zephyr || 0, icon: "cpu", color: "#12b76a", soft: "#e9fbf1" },
-    { key: "ubuntu", name: ecosystemLabel("ubuntu"), count: counts.ubuntu || 0, icon: "server", color: "#2f6fed", soft: "#eef4ff" },
-    { key: "other", name: "其他设备", count: counts.other_iot || 0, icon: "box", color: "#7c3aed", soft: "#f3eeff" }
+    { key: "openwrt", name: ecosystemLabel("openwrt"), count: counts.openwrt || 0, icon: "router", color: ECOSYSTEM.openwrt.color, soft: ECOSYSTEM.openwrt.soft },
+    { key: "zephyr", name: ecosystemLabel("zephyr"), count: counts.zephyr || 0, icon: "cpu", color: ECOSYSTEM.zephyr.color, soft: ECOSYSTEM.zephyr.soft },
+    { key: "ubuntu", name: "Linux 主机", count: linuxHosts, icon: "server", color: ECOSYSTEM.ubuntu.color, soft: ECOSYSTEM.ubuntu.soft },
+    { key: "other", name: "其他设备", count: counts.other_iot || 0, icon: "box", color: ECOSYSTEM.other.color, soft: ECOSYSTEM.other.soft }
   ];
 });
 
@@ -282,7 +331,108 @@ async function refresh() {
   fetchReportArchives().then((value) => { archives.value = value.archives || []; }).catch(() => { archives.value = []; });
   api.get("/unified/runs", { params: { limit: 20 }, timeout: 15000 }).then((value) => { runs.value = value.data?.runs || value.data || []; }).catch(() => { runs.value = []; });
   api.get("/devices/business/overview", { timeout: 20000 }).then((value) => { devices.value = value.data?.devices || []; }).catch(() => { devices.value = []; });
+  loadRuntimeEvents();
 }
+
+/* —— 拓扑活性数据源（B 方案）——
+   1) 优先用真实实时事件 /runtime/ebpf/events；
+   2) 若采集未开（当前运行时证据为"未采集"，接口返回 0 条），
+      退到仓库内的**实采快照** verdict-data.json#capture（真实录制的 40 条 eBPF 事件），
+      并在界面上显式标注「回放」+ 采集时间，绝不伪装成实时；
+   3) 两者都没有则显示"运行证据未采集"，拓扑保持静态。 */
+const runtimeEvents = ref([]);
+const runtimeMode = ref("none");
+const runtimeModeLabel = ref("运行证据未采集");
+
+async function loadRuntimeEvents() {
+  try {
+    const res = await api.get("/runtime/ebpf/events", { params: { limit: 500 }, timeout: 20000 });
+    const list = res.data?.events || [];
+    if (list.length) {
+      runtimeEvents.value = list;
+      runtimeMode.value = "live";
+      runtimeModeLabel.value = `实时 · ${list.length} 条`;
+      return;
+    }
+  } catch {
+    /* 落到回放分支 */
+  }
+  try {
+    const mod = await import("../data/verdict-data.json");
+    const capture = mod.default?.capture;
+    const list = capture?.events || [];
+    if (list.length) {
+      runtimeEvents.value = list;
+      runtimeMode.value = "replay";
+      const first = capture?.meta?.derived?.first_timestamp;
+      // 统一用本地时间：事件行按本地时区显示，标签若用原始 UTC 串会出现
+      // "标签 12:05 / 事件 20:05" 的自相矛盾（UTC+8 环境）。
+      const when = first ? new Date(first) : null;
+      const stamp = when && !Number.isNaN(when.getTime())
+        ? `${when.getFullYear()}-${String(when.getMonth() + 1).padStart(2, "0")}-${String(when.getDate()).padStart(2, "0")} ${String(when.getHours()).padStart(2, "0")}:${String(when.getMinutes()).padStart(2, "0")}`
+        : "";
+      runtimeModeLabel.value = stamp ? `回放 · 实采 ${list.length} 条 · ${stamp}` : `回放 · 实采 ${list.length} 条`;
+      return;
+    }
+  } catch {
+    /* 保持 none */
+  }
+  runtimeMode.value = "none";
+  runtimeModeLabel.value = "运行证据未采集";
+}
+
+/* 主机名 → 生态节点 key：来自设备业务总览；未识别主机归入"其他设备" */
+const nodesByHost = computed(() => {
+  const map = {};
+  for (const device of devices.value) {
+    const host = device.hostname || device.host || device.device_name || device.name;
+    const eco = device.ecosystem || device.ecosystem_key;
+    if (!host || !eco) continue;
+    map[host] = eco === "other_iot" ? "other" : eco;
+  }
+  // 实采快照来自 Ubuntu 实验室主机，归入 Linux（ubuntu）节点
+  map["lab-ebpf-host"] = "ubuntu";
+  return map;
+});
+/* 页面级状态印章：总览页回答"整体安全姿态是什么" */
+const ruling = computed(() => {
+  const crit = critical.value;
+  const danger = high.value;
+  const mid = medium.value;
+  const mild = low.value;
+  const total = riskTotal.value;
+  const assets = Number(summary.value.asset_count ?? 0);
+  const tags = [
+    { text: `严重 ${crit}`, tone: "crit" },
+    { text: `高危 ${danger}`, tone: "high" },
+    { text: `中危 ${mid}`, tone: "mid" },
+    { text: `低危 ${mild}`, tone: "low" },
+    { text: `资产 ${assets} 台`, tone: "" },
+  ];
+  if (total === 0) {
+    return {
+      state: "weak", stampMain: "无数据", stampEn: "NO DATA",
+      title: "当前没有可研判的风险",
+      detail: "没有风险条目不代表安全：需要先完成资产采集与情报同步，风险才会被计算出来。",
+      tags,
+    };
+  }
+  if (crit + danger > 0) {
+    return {
+      state: "fail", stampMain: "存在高危", stampEn: "AT RISK",
+      title: `当前 ${assets} 台资产上有 ${crit + danger} 条高危及以上风险`,
+      detail: "风险分综合 CVSS、EPSS、暴露面与运行时证据；命中不等于已被利用。",
+      tags,
+    };
+  }
+  return {
+    state: "pass", stampMain: "无高危", stampEn: "NO HIGH",
+    title: `共 ${total} 条风险，其中无高危及以上`,
+    detail: `中危 ${mid} 条、低危 ${mild} 条；结论仅覆盖已采集资产。`,
+    tags,
+  };
+});
+
 
 onMounted(refresh);
 </script>
@@ -291,14 +441,14 @@ onMounted(refresh);
 .range-chip {
   display: inline-flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   height: 36px;
   padding: 0 12px;
   border: 1px solid #e2ebf7;
   border-radius: 9px;
   background: #fff;
   color: #5b6b82;
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 500;
   white-space: nowrap;
   box-shadow: 0 1px 2px rgba(16, 35, 70, 0.03);
@@ -308,22 +458,22 @@ onMounted(refresh);
 .topology-head { position: relative; z-index: 2; }
 .live-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--low); box-shadow: 0 0 0 4px rgba(18, 183, 106, 0.12); }
 .live-dot.warn { background: var(--high); box-shadow: 0 0 0 4px rgba(249, 115, 22, 0.12); }
-.live-text { color: var(--low); font-size: 11.5px; font-weight: 600; }
+.live-text { color: var(--low); font-size: 13.5px; font-weight: 600; }
 .live-text.warn { color: var(--high); }
 
 .risk-dist { display: flex; flex-direction: column; }
-.risk-donut { display: flex; align-items: center; gap: 18px; padding: 14px 18px 10px; }
+.risk-donut { display: flex; align-items: center; gap: 16px; padding: 12px 16px 8px; }
 .risk-donut .legend-list { flex: 1; min-width: 0; }
-.trend-block { margin-top: auto; padding: 12px 18px 14px; border-top: 1px solid var(--line-soft); }
+.trend-block { margin-top: auto; padding: 12px 16px 12px; border-top: 1px solid var(--line-soft); }
 .trend-title { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 8px; }
-.trend-title b { color: var(--ink); font-size: 12.5px; font-weight: 700; }
-.trend-title span { color: var(--muted); font-size: 10.5px; }
-.asset-risk-list { display: grid; gap: 9px; }
-.asset-risk-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 38px; gap: 9px; align-items: center; }
-.ar-name { color: #5b6b82; font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.trend-title b { color: var(--ink); font-size: 14px; font-weight: 700; }
+.trend-title span { color: var(--muted); font-size: 12.5px; }
+.asset-risk-list { display: grid; gap: 8px; }
+.asset-risk-row { display: grid; grid-template-columns: minmax(0, 1fr) 92px 38px; gap: 8px; align-items: center; }
+.ar-name { color: #5b6b82; font-size: 13.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ar-track { height: 6px; border-radius: 999px; background: #eef3fa; overflow: hidden; }
 .ar-track i { display: block; height: 6px; border-radius: 999px; }
-.asset-risk-row b { text-align: right; color: var(--ink); font-size: 12px; font-weight: 700; }
+.asset-risk-row b { text-align: right; color: var(--ink); font-size: 14px; font-weight: 700; }
 
 .rank {
   display: inline-grid;
@@ -335,7 +485,7 @@ onMounted(refresh);
   background: #f3f7fc;
   color: #7b8ca6;
   font-family: var(--font-num);
-  font-size: 11px;
+  font-size: 13.5px;
   font-weight: 700;
 }
 .rank.top { background: var(--accent-soft); color: #c2410c; }
@@ -347,6 +497,18 @@ onMounted(refresh);
 .ov-table th:nth-child(5), .ov-table td:nth-child(5) { width: 82px; }
 .ov-table th:nth-child(6), .ov-table td:nth-child(6) { width: 104px; }
 .ov-table td.name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* CVE 复合键拆两级：主标识一行不折，生态/组件作次要信息 */
+.ov-table .cve-id { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ov-table .cve-cell small {
+  display: block;
+  margin-top: 2px;
+  font-size: 12.5px;
+  font-weight: 400;
+  color: var(--ink-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 @media (max-width: 1500px) {
   .ov-table th:nth-child(2), .ov-table td:nth-child(2) { width: 140px; }
   .ov-table th:nth-child(3), .ov-table td:nth-child(3) { width: 190px; }
@@ -357,22 +519,22 @@ onMounted(refresh);
 }
 
 .agent-card { display: flex; flex-direction: column; }
-.agent-body { padding: 12px 18px 10px; flex: 1; }
+.agent-body { padding: 12px 16px 8px; flex: 1; }
 .agent-flow { display: grid; gap: 0; }
-.agent-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 10px; position: relative; padding-bottom: 13px; }
+.agent-row { display: grid; grid-template-columns: 26px minmax(0, 1fr) auto; gap: 8px; position: relative; padding-bottom: 12px; }
 .agent-row::before { content: ""; position: absolute; left: 12px; top: 24px; bottom: 0; width: 1px; background: #e8f0f9; }
 .agent-row:last-child { padding-bottom: 0; }
 .agent-row:last-child::before { display: none; }
 .agent-row .step-dot { width: 25px; height: 25px; }
 .agent-row-copy { padding-top: 2px; }
-.agent-row .step-title { font-size: 12.5px; }
-.agent-row .step-note { font-size: 10.5px; }
-.agent-row .step-time { color: var(--muted); font-size: 10px; padding-top: 4px; }
-.agent-meta { display: grid; grid-template-columns: 1.7fr 0.9fr 0.7fr; gap: 8px; margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--line-soft); }
-.agent-meta span { display: block; color: var(--muted); font-size: 10px; }
+.agent-row .step-title { font-size: 14px; }
+.agent-row .step-note { font-size: 12.5px; }
+.agent-row .step-time { color: var(--muted); font-size: 12.5px; padding-top: 4px; }
+.agent-meta { display: grid; grid-template-columns: 1.7fr 0.9fr 0.7fr; gap: 8px; margin-top: 12px; padding-top: 8px; border-top: 1px solid var(--line-soft); }
+.agent-meta span { display: block; color: var(--muted); font-size: 12.5px; }
 .agent-meta b { display: block; margin-top: 2px; color: var(--ink); font: 700 11.5px var(--font-num); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.agent-callout { display: flex; align-items: center; gap: 8px; margin-top: 10px; padding: 8px 10px; border: 1px solid var(--high-line); border-radius: 8px; background: var(--high-soft); color: #c2410c; font-size: 11.5px; font-weight: 600; }
-.agent-callout .link { margin-left: auto; color: #c2410c; font-size: 11px; }
+.agent-callout { display: flex; align-items: center; gap: 8px; margin-top: 8px; padding: 8px 8px; border: 1px solid var(--high-line); border-radius: 8px; background: var(--high-soft); color: #c2410c; font-size: 13.5px; font-weight: 600; }
+.agent-callout .link { margin-left: auto; color: #c2410c; font-size: 13.5px; }
 
 @media (max-width: 1280px) {
   .overview-main, .overview-bottom { grid-template-columns: minmax(0, 1fr); }

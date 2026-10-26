@@ -1,0 +1,120 @@
+/* ==========================================================================
+   IoTGuard · 令牌层 v3（Q1）
+   目标：一套有支配关系的色彩系统 + 三档圆角 + 三档时长 + 语义四态白名单。
+   规则：
+     1) 只重定义变量，不写业务选择器 —— 视图层零改动即可换肤；
+     2) 选择器必须用 body[data-theme="console"]，才能压过 console.css 的同名令牌；
+     3) 装饰色（gilt/ink 阶梯）与语义色（裁决四态）严格分离。
+   回退：删除 main.js 中 redesign/index.css 的 import 即完全复原。
+   ========================================================================== */
+
+body[data-theme="console"] {
+  /* —— 基底：暖中性纸（不用蓝调，蓝调会让深色文字发灰） —— */
+  --bg: #f7f6f4;
+  --bg-deep: #efeeea;
+  --surface: #ffffff;
+  --surface-2: #fbfaf8;
+  --surface-3: #f2f1ed;
+
+  /* —— 墨阶：一套四档，够用且不散 —— */
+  --ink: #2a2723;
+  --ink-2: #4d4843;
+  --ink-3: #6b665f;
+  --muted: #7a746c;
+
+  --line: #e0ddd7;
+  --line-soft: #eeece8;
+  --line-strong: #cfcbc3;
+
+  /* —— 支配色：橙（主操作 / 当前位置），全站面积 ≤5% —— */
+  --accent: #c95012;
+  --accent-ink: #ffffff;
+  --accent-soft: #fbf0e9;
+  --accent-2: #0f6b78; /* 信息与链接，第二支色相，克制使用 */
+  --accent-3: #4d4843; /* 原紫色降级为中性，不再作为品牌色 */
+
+  /* —— 渐变全部拆掉：改纯色，装饰不再伪装成层级 —— */
+  --gradient-brand: #c95012;
+  --gradient-blue: #0f6b78;
+  --card-top: none;
+
+  /* —— 语义四态：白名单，只准出现在裁决性内容上 —— */
+  --crit: #b3261e; /* 危险 */
+  --crit-soft: #fdeceb;
+  --crit-line: #f0cac6;
+  --high: #a84a09; /* 高危 */
+  --high-soft: #fdf1e6;
+  --high-line: #eed6bf;
+  --mid: #8a6200; /* 中危（原来的 #eab308 对白底只有 1.9:1，不可读） */
+  --mid-soft: #fbf5e2;
+  --mid-line: #e8d9ae;
+  --low: #1a6b45; /* 低危 / 通过 */
+  --low-soft: #e9f4ee;
+  --low-line: #c3ddcf;
+  --info: #1c5a86; /* 信息 */
+  --info-soft: #eaf1f7;
+  --info-line: #cbdce9;
+
+  /* —— 侧栏：暖近黑，去掉海军蓝与径向光斑 —— */
+  --rail-bg: #1f1d1a;
+  --rail-bg-2: #262421;
+  --rail-text: #ded9d1;
+  --rail-muted: #8d877e;
+  --rail-line: rgba(255, 255, 255, 0.08);
+  --rail-active: #c95012; /* 纯色，不再是渐变 */
+  --rail-active-text: #ffffff;
+  --topbar-bg: rgba(247, 246, 244, 0.86);
+
+  /* —— 圆角：只三档（6 / 10 / 999） —— */
+  --radius: 10px;
+  --radius-sm: 6px;
+  --radius-pill: 999px;
+
+  /* —— 阴影：两档（静态卡 / 浮层），暖灰而不是蓝灰 —— */
+  --shadow: 0 1px 2px rgba(28, 24, 20, 0.05), 0 10px 24px -20px rgba(28, 24, 20, 0.35);
+  --shadow-pop: 0 24px 60px -28px rgba(28, 24, 20, 0.45);
+  --shadow-lift: 0 10px 22px -14px rgba(28, 24, 20, 0.3);
+  --card-border: 1px solid var(--line);
+
+  /* —— 动效：三档时长，语义化命名 —— */
+  --dur-1: 0.18s; /* 微反馈 */
+  --dur-2: 0.34s; /* 面板变换 */
+  --dur-3: 0.6s; /* 章节揭幕 */
+  --ease-out: cubic-bezier(0.22, 0.61, 0.2, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
+  --stagger: 45ms;
+
+  /* —— 层级：单表维护，禁止散落 9999 —— */
+  --z-base: 0;
+  --z-sticky: 10;
+  --z-dock: 20;
+  --z-pop: 60;
+  --z-modal: 70;
+  --z-toast: 80;
+
+  /* —— 字体：拉丁层 Inter、汉字层系统黑体、数据层等宽 —— */
+  --font-body: "Inter Variable", "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", "Noto Sans SC", system-ui, sans-serif;
+  --font-display: "Inter Variable", "Inter", "PingFang SC", "Microsoft YaHei UI", "Microsoft YaHei", system-ui, sans-serif;
+  --font-num: "Inter Variable", "Inter", "Bahnschrift", "Segoe UI", sans-serif;
+  --font-mono: "Cascadia Mono", Consolas, "SFMono-Regular", "Courier New", monospace;
+
+  /* —— 字阶：8 档封顶，投影可读下限 13px —— */
+  --fs-micro: 13px;
+  --fs-meta: 14px;
+  --fs-body: 15px;
+  --fs-body-lg: 16px;
+  --fs-title-sm: 17px;
+  --fs-title: 20px;
+  --fs-head: 26px;
+  --fs-display: 34px;
+  --fs-number: 40px;
+  --h1-size: 34px;
+
+  /* —— 图表：一支主导 + 中性阶梯，不做彩虹 —— */
+  --chart-1: #0f6b78;
+  --chart-2: #c95012;
+  --chart-3: #4d4843;
+  --chart-4: #8a6200;
+  --chart-5: #8d877e;
+  --grid-line: #eeece8;
+}

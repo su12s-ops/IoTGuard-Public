@@ -15,6 +15,15 @@
       </template>
     </PageHeader>
 
+    <VerdictRuling
+      :state="ruling.state"
+      :stamp-main="ruling.stampMain"
+      :stamp-en="ruling.stampEn"
+      :title="ruling.title"
+      :detail="ruling.detail"
+      :tags="ruling.tags"
+    />
+
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
     <div v-if="pipelineNote" class="error-banner soft" role="status"><Icon name="alert" :size="15" />{{ pipelineNote }}</div>
     <div v-if="reviewRunId" class="card" role="status" aria-live="polite">
@@ -202,7 +211,7 @@
     <section v-if="hasActiveResults" class="card">
       <div class="card-head">
         <div><div class="card-title">本轮运行</div><div class="card-desc">点击一行读取该次运行详情</div></div>
-        <span class="num" style="color: var(--muted); font-size: 11.5px">{{ runs.length }} 条记录</span>
+        <span class="num" style="color: var(--muted); font-size: 13.5px">{{ runs.length }} 条记录</span>
       </div>
       <div v-if="!runs.length" class="empty-note" style="padding: 18px">暂无运行记录。</div>
       <div v-else class="table-wrap">
@@ -215,7 +224,7 @@
               <td class="name">{{ run.target_ref || "—" }}</td>
               <td><span class="chip muted">{{ run.mode || "—" }}</span></td>
               <td><span class="chip" :class="statusTone(run.status)"><i class="dot" />{{ statusLabel(run.status) }}</span></td>
-              <td class="num" style="color: var(--muted); font-size: 11.5px">{{ shortTime(run.created_at) }}</td>
+              <td class="num" style="color: var(--muted); font-size: 13.5px">{{ shortTime(run.created_at) }}</td>
               <td><Icon name="chev-right" :size="13" style="color: #c3d1e3" /></td>
             </tr>
           </tbody>
@@ -246,6 +255,8 @@ import { api, recoverInterrupted } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
 import { shortTime, statusLabel, statusTone } from "../utils/format";
+import VerdictRuling from "../components/VerdictRuling.vue";
+import { SERIES, SEVERITY_SOFT } from "../lib/palette";
 
 const runs = ref([]);
 const selectedRun = ref(null);
@@ -325,10 +336,10 @@ const pipelineNote = computed(() => {
 const agents = computed(() => {
   const detailAgents = detail.value?.agents || null;
   const definitions = [
-    { key: "asset_investigator", code: "ASSET", label: "资产建模", note: "设备识别 / 拓扑建模", output: "身份与清单", icon: "user", color: "#0e9fbf", soft: "#e9faff" },
-    { key: "vulnerability_analyst", code: "VULN", label: "漏洞分析", note: "CVE 分析 / 漏洞挖掘", output: "候选与命中", icon: "bug", color: "#f4622a", soft: "#fff1e8" },
-    { key: "runtime_analyst", code: "RUNTIME", label: "运行时分析", note: "行为建模 / 证据聚合", output: "上下文关联", icon: "activity", color: "#2f6fed", soft: "#eef4ff" },
-    { key: "decision_planner", code: "DECISION", label: "决策规划", note: "风险评级 / 处置建议", output: "决策建议", icon: "target", color: "#7c3aed", soft: "#f3eeff" }
+    { key: "asset_investigator", code: "ASSET", label: "资产建模", note: "设备识别 / 拓扑建模", output: "身份与清单", icon: "user", color: SERIES[0], soft: SEVERITY_SOFT.none },
+    { key: "vulnerability_analyst", code: "VULN", label: "漏洞分析", note: "CVE 分析 / 漏洞挖掘", output: "候选与命中", icon: "bug", color: SERIES[1], soft: SEVERITY_SOFT.none },
+    { key: "runtime_analyst", code: "RUNTIME", label: "运行时分析", note: "行为建模 / 证据聚合", output: "上下文关联", icon: "activity", color: SERIES[2], soft: SEVERITY_SOFT.none },
+    { key: "decision_planner", code: "DECISION", label: "决策规划", note: "风险评级 / 处置建议", output: "决策建议", icon: "target", color: SERIES[3], soft: SEVERITY_SOFT.none }
   ];
   return definitions.map((agent) => {
     const rawStatus = detailAgents?.[agent.key]?.status;
@@ -499,6 +510,38 @@ function syncPolling() {
   }
 }
 
+
+/* 页面级状态印章：研判页回答"多智能体是否已产出可复核结论" */
+const ruling = computed(() => {
+  const total = runs.value.length;
+  const tags = [
+    { text: `研判轮次 ${total}`, tone: "" },
+    { text: runningActive.value ? "本轮进行中" : "本轮未运行", tone: runningActive.value ? "mid" : "" },
+    { text: "四智能体协作", tone: "" },
+  ];
+  if (!hasActiveResults.value) {
+    return {
+      state: "weak", stampMain: "未运行", stampEn: "IDLE",
+      title: "还没有发起过智能研判",
+      detail: "发起一次研判后，资产建模、漏洞分析、运行时分析与决策规划四个智能体的状态会在这里出现。",
+      tags,
+    };
+  }
+  if (runningActive.value) {
+    return {
+      state: "weak", stampMain: "进行中", stampEn: "RUNNING",
+      title: "本轮研判正在进行",
+      detail: "流程结束不代表风险已被确认；结论仍需证据链与人工签收。",
+      tags,
+    };
+  }
+  return {
+    state: "pass", stampMain: "已产出", stampEn: "PRODUCED",
+    title: `已产生 ${total} 轮研判结果`,
+    detail: "研判结果需要逐条对照证据才可采信；流程完成不等于风险已消除。",
+    tags,
+  };
+});
 onMounted(async () => {
   await refreshAll();
   syncPolling();
@@ -513,26 +556,26 @@ onUnmounted(() => {
 <style scoped>
 .recover-card .card-head { align-items: flex-start; }
 .recover-body { display: grid; gap: 8px; padding: 4px 16px 12px; }
-.recover-stats { display: flex; flex-wrap: wrap; gap: 14px; color: var(--muted); font-size: 11.5px; }
-.recover-stats span { display: inline-flex; align-items: center; gap: 6px; }
-.recover-stats b { color: var(--ink); font-family: var(--font-num); font-size: 12.5px; }
-.recover-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; color: var(--ink-2); font-size: 11.5px; line-height: 1.6; }
+.recover-stats { display: flex; flex-wrap: wrap; gap: 12px; color: var(--muted); font-size: 13.5px; }
+.recover-stats span { display: inline-flex; align-items: center; gap: 4px; }
+.recover-stats b { color: var(--ink); font-family: var(--font-num); font-size: 14px; }
+.recover-note { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; color: var(--ink-2); font-size: 13.5px; line-height: 1.6; }
 .recover-note.ok { color: #067647; }
-.mono-chip { font-size: 10px; height: 20px; font-family: var(--font-num); }
-.recover-facts { margin: 0 0 6px; padding-left: 18px; display: grid; gap: 6px; color: var(--ink-2); font-size: 12px; line-height: 1.6; }
+.mono-chip { font-size: 12.5px; height: 20px; font-family: var(--font-num); }
+.recover-facts { margin: 0 0 6px; padding-left: 16px; display: grid; gap: 4px; color: var(--ink-2); font-size: 14px; line-height: 1.6; }
 .round-start .card-foot { justify-content: space-between; }
 .device-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(228px, 1fr));
   gap: 12px;
-  padding: 6px 16px 12px;
+  padding: 4px 16px 12px;
 }
 .device-card {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: 6px;
-  padding: 14px;
+  gap: 4px;
+  padding: 12px;
   border: 1px solid #e4edf9;
   border-radius: 12px;
   background: #fff;
@@ -545,12 +588,12 @@ onUnmounted(() => {
   border-color: var(--accent-2, #2f6fed);
   box-shadow: 0 0 0 3px rgba(47, 111, 237, 0.12);
 }
-.device-card b { color: var(--ink); font-size: 12.5px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
+.device-card b { color: var(--ink); font-size: 14px; font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 100%; }
 .dc-icon { display: grid; place-items: center; width: 32px; height: 32px; border-radius: 9px; background: #eef4ff; color: #2f6fed; }
 .device-card.selected .dc-icon { background: var(--gradient-blue); color: #fff; }
-.dc-meta { color: var(--muted); font-size: 10.5px; }
-.dc-flags { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
-.dc-flags .mono { color: #64748b; font-family: var(--font-num); font-size: 10px; }
+.dc-meta { color: var(--muted); font-size: 12.5px; }
+.dc-flags { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; }
+.dc-flags .mono { color: #64748b; font-family: var(--font-num); font-size: 12.5px; }
 .error-banner.soft { background: #fff8ec; border-color: #f3dfb6; color: #92400e; }
 
 .agent-grid { display: grid; grid-template-columns: 292px minmax(0, 1fr) 330px; gap: 16px; align-items: stretch; }
@@ -559,7 +602,7 @@ onUnmounted(() => {
 .flow-step-row {
   display: grid;
   grid-template-columns: 30px minmax(0, 1fr) auto;
-  gap: 11px;
+  gap: 12px;
   align-items: center;
   padding: 12px 0;
   border-bottom: 1px solid var(--line-soft);
@@ -574,27 +617,27 @@ onUnmounted(() => {
   background: #eef4ff;
   color: #2f6fed;
   font-family: var(--font-num);
-  font-size: 12px;
+  font-size: 14px;
   font-weight: 700;
 }
 .flow-step-row.done .fs-no { background: var(--low-soft); color: #067647; }
 .flow-step-row.active .fs-no { background: var(--gradient-blue); color: #fff; box-shadow: 0 0 0 4px rgba(47, 111, 237, 0.12); }
-.fs-title { color: var(--ink); font-size: 12.5px; font-weight: 650; }
-.fs-note { color: var(--muted); font-size: 10.5px; margin-top: 2px; }
+.fs-title { color: var(--ink); font-size: 14px; font-weight: 650; }
+.fs-note { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
 .fs-state { display: flex; align-items: center; color: var(--low); }
-.fs-state .chip { height: 20px; font-size: 10px; }
-.run-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; padding: 8px 16px 10px; border-top: 1px solid var(--line-soft); }
-.run-facts > div { display: grid; gap: 1px; padding: 6px 0; border-bottom: 1px dashed #eef3fa; min-width: 0; }
+.fs-state .chip { height: 20px; font-size: 12.5px; }
+.run-facts { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0 14px; padding: 8px 16px 8px; border-top: 1px solid var(--line-soft); }
+.run-facts > div { display: grid; gap: 2px; padding: 6px 0; border-bottom: 1px dashed #eef3fa; min-width: 0; }
 .run-facts > div:first-child { grid-column: 1 / -1; }
-.run-facts span { color: var(--muted); font-size: 9.5px; white-space: nowrap; }
-.run-facts b { color: var(--ink-2); font-size: 10.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.gate-mini { margin-top: auto; padding: 10px 16px; border-top: 1px solid var(--line-soft); display: grid; gap: 0; }
-.gate-mini div { display: flex; align-items: center; gap: 7px; height: 30px; border-bottom: 1px dashed #eef3fa; color: #5b6b82; font-size: 11px; }
+.run-facts span { color: var(--muted); font-size: 12.5px; white-space: nowrap; }
+.run-facts b { color: var(--ink-2); font-size: 12.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gate-mini { margin-top: auto; padding: 8px 16px; border-top: 1px solid var(--line-soft); display: grid; gap: 0; }
+.gate-mini div { display: flex; align-items: center; gap: 8px; height: 30px; border-bottom: 1px dashed #eef3fa; color: #5b6b82; font-size: 13.5px; }
 .gate-mini div:last-child { border-bottom: 0; }
 .gate-mini b { margin-left: auto; color: var(--muted); font: 600 10.5px var(--font-num); }
 
 .map-panel { display: flex; flex-direction: column; }
-.agent-map { position: relative; flex: 1; min-height: 440px; margin: 6px 12px 10px; }
+.agent-map { position: relative; flex: 1; min-height: 440px; margin: 4px 12px 8px; }
 .agent-links { position: absolute; inset: 0; width: 100%; height: 100%; }
 .agent-core {
   position: absolute;
@@ -606,19 +649,19 @@ onUnmounted(() => {
   display: grid;
   place-content: center;
   justify-items: center;
-  gap: 3px;
+  gap: 2px;
   border-radius: 50%;
   background: radial-gradient(circle at 38% 30%, #f4f9ff, #e4efff 60%, #d5e6ff);
   box-shadow: 0 0 0 12px rgba(47, 111, 237, 0.045), inset 0 1px 0 #fff, 0 18px 30px -24px rgba(47, 111, 237, 0.6);
   z-index: 2;
 }
 .core-ic { display: grid; place-items: center; width: 46px; height: 46px; border-radius: 50%; background: #fff; color: #2f6fed; box-shadow: 0 8px 18px -10px rgba(47, 111, 237, 0.55); }
-.agent-core b { color: var(--ink); font-size: 12.5px; font-weight: 700; margin-top: 3px; }
-.agent-core span { color: var(--muted); font-size: 10px; }
+.agent-core b { color: var(--ink); font-size: 14px; font-weight: 700; margin-top: 2px; }
+.agent-core span { color: var(--muted); font-size: 12.5px; }
 .agent-node {
   position: absolute;
   width: 186px;
-  padding: 10px 12px;
+  padding: 8px 12px;
   border: 1px solid #e4edf9;
   border-radius: 12px;
   background: #fff;
@@ -630,16 +673,16 @@ onUnmounted(() => {
 .agent-node.n3 { right: 0; left: auto; top: 50%; bottom: auto; transform: translateY(-50%); }
 .agent-node.n4 { left: 50%; top: auto; bottom: 3%; transform: translateX(-50%); }
 .agent-node.idle { opacity: 0.72; }
-.an-head { display: flex; align-items: center; gap: 7px; }
+.an-head { display: flex; align-items: center; gap: 8px; }
 .an-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: var(--an-soft); color: var(--an-color); }
-.an-head b { color: var(--ink); font-size: 11.5px; font-weight: 700; white-space: nowrap; }
+.an-head b { color: var(--ink); font-size: 13.5px; font-weight: 700; white-space: nowrap; }
 .an-state { margin-left: auto; }
-.agent-node p { margin: 7px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.45; }
-.an-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 7px; color: #64748b; font-size: 10px; }
+.agent-node p { margin: 7px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.45; }
+.an-foot { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; color: #64748b; font-size: 12.5px; }
 .an-foot em { font-style: normal; color: var(--an-color); font-weight: 600; }
 
-.messages { flex: 1; padding: 8px 14px; }
-.message-row { display: flex; gap: 11px; padding: 11px 4px; border-bottom: 1px solid var(--line-soft); }
+.messages { flex: 1; padding: 8px 12px; }
+.message-row { display: flex; gap: 12px; padding: 12px 4px; border-bottom: 1px solid var(--line-soft); }
 .message-row:last-child { border-bottom: 0; }
 .msg-icon { display: grid; place-items: center; width: 30px; height: 30px; border-radius: 9px; background: #eef4ff; color: #2f6fed; flex: 0 0 auto; }
 .msg-icon.low { background: var(--low-soft); color: #067647; }
@@ -648,9 +691,9 @@ onUnmounted(() => {
 .msg-icon.muted { background: #f3f7fc; color: #7b8ca6; }
 .msg-copy { min-width: 0; flex: 1; }
 .msg-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-.msg-head b { color: var(--ink); font-size: 11.5px; font-weight: 650; }
-.msg-head time { color: #64748b; font-family: var(--font-num); font-size: 10px; white-space: nowrap; }
-.msg-copy p { margin: 3px 0 0; color: var(--muted); font-size: 10.5px; line-height: 1.5; }
+.msg-head b { color: var(--ink); font-size: 13.5px; font-weight: 650; }
+.msg-head time { color: #64748b; font-family: var(--font-num); font-size: 12.5px; white-space: nowrap; }
+.msg-copy p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.5; }
 
 @media (max-width: 1440px) {
   .agent-grid { grid-template-columns: 272px minmax(0, 1fr) 300px; }
