@@ -86,7 +86,7 @@ def ebpf_correlations(db: Session = Depends(get_db)):
 
 
 @router.post("/ebpf/events", dependencies=[Depends(require_control)])
-async def ingest_ebpf_events(payload: dict[str, Any] | list[dict[str, Any]], db: Session = Depends(get_db)):
+def ingest_ebpf_events(payload: dict[str, Any] | list[dict[str, Any]], db: Session = Depends(get_db)):
     payloads = payload if isinstance(payload, list) else [payload]
     if len(payloads) > 2000:
         raise HTTPException(413, "每批最多接收 2000 条事件")
@@ -152,7 +152,7 @@ def reset_ebpf_events(db: Session = Depends(get_db)):
 
 
 @router.post("/ebpf/events/batch", dependencies=[Depends(require_control)])
-async def ingest_ebpf_events_batch(payload: dict[str, Any], db: Session = Depends(get_db)):
+def ingest_ebpf_events_batch(payload: dict[str, Any], db: Session = Depends(get_db)):
     """P0 转发器批量确认端点。
 
     契约：请求 {"events":[...]}（≤500 条）；响应即服务端持久化确认——

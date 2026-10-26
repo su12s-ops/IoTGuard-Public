@@ -4,7 +4,6 @@
       <div class="ph-copy">
         <h1>{{ title }}</h1>
       </div>
-      <TopActions />
     </div>
     <div class="ph-row">
       <div class="ph-sub">
@@ -17,10 +16,11 @@
       <div v-if="$slots.actions" class="actions"><slot name="actions" /></div>
     </div>
   </header>
+  <ConsoleRunPanel />
 </template>
 
 <script setup>
-import TopActions from "./TopActions.vue";
+import ConsoleRunPanel from "./ConsoleRunPanel.vue";
 
 defineProps({
   eyebrow: { type: String, default: "" },

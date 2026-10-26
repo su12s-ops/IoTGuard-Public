@@ -2,7 +2,7 @@
   <div class="top-actions">
     <form class="search" role="search" @submit.prevent="submit">
       <Icon name="search" :size="16" />
-      <input ref="input" v-model="q" type="search" placeholder="搜索设备、CVE、事件、策略…" aria-label="全局搜索" />
+      <input ref="input" v-model="q" type="search" placeholder="搜索资产、CVE、组件…" aria-label="全局搜索" />
       <span class="kbd">Ctrl K</span>
     </form>
 
@@ -14,7 +14,7 @@
       </span>
     </div>
 
-    <button class="icon-btn" type="button" aria-label="操作令牌" title="操作令牌" @click="ui.tokenOpen = true">
+    <button v-if="!controlSession.managed" class="icon-btn" type="button" aria-label="操作令牌" title="操作令牌" @click="ui.tokenOpen = true">
       <Icon name="lock" :size="17" />
     </button>
     <button class="icon-btn" type="button" aria-label="运行审计" title="运行审计" @click="router.push('/runtime')">
@@ -25,7 +25,6 @@
     <div class="top-user">
       <span class="top-avatar">AD</span>
       <span>admin</span>
-      <Icon name="chev-down" :size="13" />
     </div>
   </div>
 </template>
@@ -36,6 +35,7 @@ import { useRouter } from "vue-router";
 import Icon from "./Icon.vue";
 import { fetchHealth } from "../api";
 import { ui } from "../stores/ui";
+import { controlSession } from "../api/controlSession";
 
 const router = useRouter();
 const q = ref("");

@@ -19,7 +19,7 @@ from app.services.event_semantics import semantics
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 EVENT_FILE = Path(os.getenv("LINUXGUARD_EVENT_FILE", str(DATA_DIR / "ebpf_events.jsonl")))
-COLLECTOR_SCRIPT = Path(__file__).resolve().parents[2] / "collector" / "run_falco_capture.sh"
+COLLECTOR_SCRIPT = Path(__file__).resolve().parents[3] / "collector" / "run_falco_capture.sh"
 
 FALCO_TEXT_RE = re.compile(
     r"(?P<time>\d{2}:\d{2}:\d{2}(?:\.\d+)?)\s+"
@@ -389,7 +389,10 @@ def _persist_events_locked(db: Session, events: list[dict[str, Any]]) -> None:
     # its outbox job exists, breaking rollback/ack atomicity.
     connection = db.connection()
     if connection.dialect.name == "sqlite" and not connection.connection.driver_connection.in_transaction:
-        connection.exec_driver_sql("BEGIN")
+        # Reserve the writer before reading identity/dedup rows. A deferred WAL
+        # snapshot cannot upgrade after another writer commits (SQLITE_BUSY),
+        # even with busy_timeout; analysis and live ingestion share this DB.
+        connection.exec_driver_sql("BEGIN IMMEDIATE")
     native_count = sum(event.get("source") == "c_ebpf" for event in events)
     if native_count:
         check_capacity(db, native_count)
@@ -475,20 +478,45 @@ def append_events(payloads: list[dict[str, Any]], db: Session | None = None) -> 
     return normalized
 
 
+def _event_file_tail(limit=500, max_bytes=4 * 1024 * 1024):
+    """Bound both disk IO and memory; file history is not a database index."""
+    if limit <= 0:
+        return [], {"truncated": False, "bytes_read": 0, "file_size_bytes": 0}
+    try:
+        with EVENT_FILE.open("rb") as handle:
+            handle.seek(0, 2)
+            size = handle.tell()
+            position, chunks, read = size, [], 0
+            newlines = 0
+            while position and read < max_bytes and newlines <= limit:
+                count = min(65536, position, max_bytes - read)
+                position -= count
+                handle.seek(position)
+                chunk = handle.read(count)
+                chunks.append(chunk)
+                read += len(chunk)
+                newlines += chunk.count(b"\n")
+            lines = b"".join(reversed(chunks)).splitlines()
+            if position and lines:
+                lines = lines[1:]  # The first line can begin in the middle of UTF-8/JSON.
+    except FileNotFoundError:
+        return [], {"truncated": False, "bytes_read": 0, "file_size_bytes": 0}
+    rows = []
+    for line in reversed(lines):
+        try:
+            item = json.loads(line)
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if isinstance(item, dict):
+            rows.append(item)
+        if len(rows) >= limit:
+            break
+    return list(reversed(rows)), {"truncated": bool(position or len(lines) > len(rows)),
+                                  "bytes_read": read, "file_size_bytes": size}
+
+
 def load_events(limit: int = 500) -> list[dict[str, Any]]:
-    if not EVENT_FILE.exists():
-        return []
-    rows: list[dict[str, Any]] = []
-    with EVENT_FILE.open("r", encoding="utf-8") as handle:
-        for line in handle:
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                rows.append(json.loads(line))
-            except json.JSONDecodeError:
-                continue
-    return rows[-limit:]
+    return _event_file_tail(limit)[0]
 
 
 def _apply_runtime_filters(
@@ -659,7 +687,8 @@ def build_collector_command(api_base: str, duration: int = 60) -> str:
 
 
 def runtime_status(db: Session, api_base: str) -> dict[str, Any]:
-    file_events = load_events(limit=100000)
+    from app.services.runtime_telemetry import evidence_freshness, sensor_summary
+    file_events, file_sample = _event_file_tail(limit=500)
     db_events = load_runtime_events(db=db, limit=5000)
     assets = db.query(models.LinuxAsset).all()
     known_hostnames = {asset.hostname for asset in assets if asset.hostname}
@@ -684,13 +713,24 @@ def runtime_status(db: Session, api_base: str) -> dict[str, Any]:
         recommendations.append("Runtime events are not mapped to assets. Verify hostname or IP alignment between assets and events.")
     if observation_mode_counts.get("probe", 0) and not observation_mode_counts.get("ebpf", 0):
         recommendations.append("Current runtime evidence is demo probe data. Replace it with real Falco/Tetragon capture before final delivery.")
+    sensors = sensor_summary(db)
+    freshness = evidence_freshness(db)
+    if not freshness["fresh"]:
+        recommendations.append("Runtime evidence is stale or unavailable; restore collection before using it for a current assessment.")
+    if sensors["healthy"] < sensors["total"] or not sensors["total"]:
+        recommendations.append("Sensor coverage is incomplete; check the individual sensor heartbeat and forwarding state.")
     if db_events and not recommendations:
-        recommendations.append("Runtime evidence is healthy. You can proceed with attack-chain verification and report export.")
+        recommendations.append("Recent runtime evidence and sensor heartbeats are available; coverage and loss still require verification.")
 
     latest_event_at = db_events[-1]["timestamp"] if db_events else ""
     return {
         "db_event_count": len(db_events),
         "file_event_count": len(file_events),
+        "file_event_count_exact": not file_sample["truncated"],
+        "file_sample": file_sample,
+        "db_sample_truncated": len(db_events) == 5000,
+        "sensors": sensors,
+        "runtime_evidence": freshness,
         "asset_count": len(assets),
         "matched_asset_count": len(matched_asset_ids),
         "matched_asset_ratio": round((len(matched_asset_ids) / len(assets)) * 100, 2) if assets else 0,

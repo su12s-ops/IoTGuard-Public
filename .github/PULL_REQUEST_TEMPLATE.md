@@ -1,24 +1,16 @@
-# Pull Request
+## 变更
 
-## 变更说明
+<!-- 描述具体问题、触发条件及最终行为。 -->
 
-<!-- 做了什么、为什么；关联 Issue（#N） -->
+## 验证
 
-## 涉及模块
+<!-- 填写实际执行的命令与结果，区分本地、CI、模拟协议和现场设备。 -->
 
-- [ ] backend（routers / services / models / migrations）
-- [ ] frontend
-- [ ] collector / simulator
-- [ ] 脚本 / CI / 文档
+- [ ] 对应测试通过，失败和未验证项已说明
+- [ ] 文档与入口更新，`python scripts/check_docs.py` 通过
+- [ ] `git diff --check` 通过
+- [ ] 新增文件已审查，无凭据、数据库、私钥或虚拟磁盘
 
-## 测试
+## 运行影响
 
-- [ ] 常规回归（CI 口径：`pytest -q --ignore=tests/test_iot_device_upgrade.py --ignore=tests/test_scan_runs.py --ignore=tests/test_scan_targets.py --ignore=tests/test_mqtt_remediation_workflow.py`）
-- [ ] 本次变更的专项测试（列名）
-
-## 安全检查单
-
-- [ ] 未引入真实凭据/Token/私钥/未脱敏环境标识
-- [ ] 未触碰 backend/.env、backend/data/、reports/、asset_inventory.json
-- [ ] 未扩大授权网段、未开启自动修复
-- [ ] 数据库变更为兼容性增量迁移（如有）
+<!-- 如需迁移、服务重启、设备授权或回退步骤，在此说明。低影响修改可省略。 -->

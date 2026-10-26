@@ -36,6 +36,50 @@ def trace(db, kind, role, seq, seconds, trace_id="trace-own", **detail):
     db.commit()
 
 
+def test_activity_distinguishes_queue_from_model_and_does_not_change_output(session_factory):
+    from app.services.unified.read_model import project_activity
+    with session_factory() as db:
+        row = seed(db)
+        trace(db, "model_waiting", RUNTIME, 1, 1, phase="queue", request_id="req")
+        agents = {RUNTIME: {"status": "running"}}
+        queued = project_activity(db, row, agents)
+        assert queued["roles"][0]["phase"] == "queue"
+        trace(db, "model_started", RUNTIME, 2, 2, phase="model", request_id="req")
+        trace(db, "model_failed", RUNTIME, 3, 3, trace_id="different", phase="failed")
+        active = project_activity(db, row, agents)
+        assert active["roles"][0]["phase"] == "model"
+        assert len(active["timeline"]) == 2
+        assert "usage" not in active and not db.dirty
+        trace(db, "model_finished", RUNTIME, 4, 8, phase="validating", request_id="req")
+        totals = project_activity(db, row, agents)["totals"]
+        assert totals["model_requests"] == totals["model_responses"] == 1
+        assert totals["queue_seconds"] == 1 and totals["model_seconds"] == 6
+        row.status = "completed"
+        db.commit()
+        finished = project_activity(db, row, {RUNTIME: {"status": "degraded", "error": "context_budget_exceeded"}})
+        assert "phase" not in finished["roles"][0]
+        assert finished["roles"][0]["failure_category"] == "context_limit"
+
+
+def test_waiting_on_shared_report_is_visible_without_inventing_model_calls(session_factory):
+    from app.services.unified.read_model import project_activity
+    with session_factory() as db:
+        row = seed(db)
+        trace(db, "task_waiting", VULN, 1, 1, phase="shared_report")
+        detail = get_run(row.run_id, db)
+        assert detail["agents"][VULN]["status"] == "running"
+        waiting = project_activity(db, row, detail["agents"])
+        assert next(role for role in waiting["roles"] if role["role"] == VULN)["phase"] == "shared_report"
+        assert detail["usage"] == {"llm_calls": 4, "total_tokens": 120}
+
+
+def test_reasoning_exhaustion_is_not_mislabeled_as_local_budget_failure():
+    from app.services.unified.read_model import failure_category
+    assert failure_category("ModelResponseError: model_output_truncated: reasoning_only_output_budget_exhausted") == "reasoning_output_exhausted"
+    assert failure_category("context_budget_exceeded") == "context_limit"
+    assert failure_category("task_request_budget_exhausted") == "budget_limit"
+
+
 def test_get_shows_real_parallel_failure_and_running_without_state_or_usage_write(session_factory):
     with session_factory() as db:
         row = seed(db)

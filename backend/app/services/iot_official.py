@@ -8,6 +8,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from datetime import datetime, timezone
 from urllib.parse import urlsplit
 
 from app import models
@@ -107,7 +108,9 @@ def assess_snapshot(db, ecosystem, version):
     if ecosystem not in REPOSITORIES:
         raise ValueError("Unsupported ecosystem")
     if ecosystem == "openwrt":
-        return _assess_openwrt(db, version)
+        result = _assess_openwrt(db, version)
+        result["snapshot"] = snapshot_freshness(db, ecosystem)
+        return result
     results = []
     for record in db.query(models.IotOfficialAdvisory).filter_by(ecosystem=ecosystem).all():
         row = json.loads(record.payload_json)
@@ -127,7 +130,35 @@ def assess_snapshot(db, ecosystem, version):
                         "snapshot_sha256": record.content_sha256,
                         "reason": "Version metadata only; component, build and reachability review required."})
     return {"ecosystem": ecosystem, "version": version, "count": len(results),
-            "coverage_status": "partial" if results else "unassessed", "results": results}
+            "coverage_status": "partial" if results else "unassessed", "results": results,
+            "snapshot": snapshot_freshness(db, ecosystem)}
+
+
+def snapshot_freshness(db, ecosystem):
+    """Describe local content age, never infer a successful remote fetch."""
+    records = db.query(models.IotOfficialAdvisory).filter_by(ecosystem=ecosystem).all()
+    if not records:
+        return {"status": "unavailable", "advisory_count": 0,
+                "oldest_content_updated_at": None, "latest_content_updated_at": None,
+                "age_seconds": None, "sha256": None, "remote_freshness": "unverified"}
+    stamps = [item.updated_at.replace(tzinfo=timezone.utc) if item.updated_at.tzinfo is None
+              else item.updated_at.astimezone(timezone.utc)
+              for item in records if item.updated_at is not None]
+    now = datetime.now(timezone.utc)
+    unknown_time = len(stamps) != len(records) or any(stamp > now for stamp in stamps)
+    age = None if unknown_time else int((now - min(stamps)).total_seconds())
+    manifest = sorted((item.advisory_id, item.content_sha256) for item in records)
+    digest = hashlib.sha256(json.dumps(manifest, separators=(",", ":")).encode()).hexdigest()
+    integrity = all(hashlib.sha256(item.payload_json.encode()).hexdigest() == item.content_sha256
+                    for item in records)
+    return {"status": "invalid" if not integrity else "unknown" if unknown_time else
+            "recent" if age <= 86400 else "stale",
+            "advisory_count": len(records),
+            "oldest_content_updated_at": min(stamps).isoformat() if stamps else None,
+            "latest_content_updated_at": max(stamps).isoformat() if stamps else None,
+            "age_seconds": age, "sha256": digest, "integrity_verified": integrity,
+            "remote_freshness": "unverified",
+            "note": "本地内容更新时间范围；年龄按最早记录计算。未验证远端最新性，在线失败不会刷新此时间。"}
 
 
 def _assess_openwrt(db, version):

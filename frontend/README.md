@@ -27,38 +27,31 @@ Vue 3 + Vite 的桌面安全控制台。只保留一套 Console 视觉系统，�
 
 ## 开发
 
+在项目根目录执行：
+
 ```powershell
-# frontend 目录
-Copy-Item .env.example .env
-npm ci
-npm run dev
-npm run build
-npm run test:e2e
+Copy-Item frontend/.env.example frontend/.env
+npm --prefix frontend ci
+npm --prefix frontend run dev
+npm --prefix frontend run build
+node --test frontend/tests/*.test.js
+npm --prefix frontend run test:e2e
 ```
 
-开发入口 <http://localhost:5173>。
+开发入口 <http://localhost:5173>。页面始终请求同源 `/api`，Vite 转发到本机 API 8000；Docker nginx 转发到内部 backend，浏览器不直连后端端口。配置见 `frontend/.env.example`。
 
-`VITE_API_BASE` 默认 `http://localhost:8000/api`（本地 uvicorn）。如果只启动 Docker Compose 的 backend，使用 `http://127.0.0.1:18000/api`；生产镜像由 nginx 将 `/api` 反向代理到 backend，构建时 `VITE_API_BASE=/api`。
+## 控制请求与数据
 
-## 令牌与数据
+Docker 与配置齐全的本地代理在服务端注入控制令牌，浏览器通过会话状态识别 managed 模式；没有托管代理时，手动令牌只保存在页面内存，刷新即清除，不写入 localStorage、URL 或报告。服务端仍校验控制请求，设备写入另有作用域与审批门禁。
 
-- 只读页面不需要令牌；审批、设备写、存档与清理需要顶栏“操作令牌”。
-- 令牌只保存在当前页面内存中，刷新即清除，不写入 localStorage、URL 或报告。
-- 数据来自现有 FastAPI 接口；接口超时或未配置时页面显示错误/空态，不伪造数值。
+接口超时、模型缺失、无传感器或未完成状态如实显示。流程进度、运行角色、预算和耗时来自后端数据；不根据 `completed` 推断四角色均成功。
 
-## 本轮实验与存档
+## 本轮流程
 
-- 侧栏“本轮实验 → 管理与新一轮”打开生命周期面板，先展示保留项与将清理项。
-- **保留**：资产、组件、服务、设备连接、发现记录、传感器、采集配置、扫描目标、策略与官方公告。
-- **归档并清理**：漏洞情报、匹配、风险、研判运行、修复任务、运行时事件、追踪与审计记录；全局 CVE 情报缓存保留以加速下一轮。
-- “仅归档结果”只写快照；“归档并开始新一轮”会先写归档，再清理衍生数据，然后回到安全总览。页面刷新不会自动清空，避免误删。
-- 后端 `LINUXGUARD_ARCHIVE_ON_STARTUP=1` 时，服务启动会先写结果存档再清理；本地 `scripts/run_local_backend.py` 强制为 0。
-- 接口：`GET /api/experiment/state`、`POST /api/experiment/archive`、`POST /api/experiment/reset`、`GET /api/experiment/archives/{filename}`。存档默认写入 `backend/data/archives`（或 `REPORT_ARCHIVE_DIR`）。
+“开始”执行情报、匹配、风险、四角色研判及逐项审核，复用持久化控制台流程。“刷新本轮”需无活动任务，按专门契约清理本轮数据；旧归档 API 仍兼容，但控制台不再展示旧归档面板。完整语义见 [控制台流程](../docs/architecture/console-workflow.md)。
 
-## 测试
+## 测试与维护
 
-`shell.spec.js` 使用 Playwright 路由拦截 API，验证 shell、导航、KPI、下线路由重定向、实验生命周期面板和风险裁决页。Windows 可设置 `$env:PLAYWRIGHT_CHANNEL='msedge'` 使用 Edge。
+Playwright 启动隔离 Vite 并拦截 API，验证导航、状态展示与操作契约；Windows 可设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。Node 测试验证状态、时间和请求逻辑。它们不证明现场设备或模型质量已通过。
 
-## 设计参考
-
-`mockups/v2/` 保留早期方向的静态设计稿，仅作历史参考；实际页面以 `src/views` 与 `src/styles/console.css` 为准。六页总览截图见 `reports/ui/final-sixpage.jpg`。
+当前页面以 `src/views/` 和 `src/styles/console.css` 为准，已移除不参与构建的历史多主题静态原型。入口与规则见 [部署指南](../docs/guides/deployment.md)、[验证方法](../docs/validation/testing.md)及[文档导航](../docs/README.md)。

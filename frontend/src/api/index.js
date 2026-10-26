@@ -1,7 +1,7 @@
 import axios from "axios";
 import { controlRequest, controlSession } from "./controlSession";
 
-export const API_BASE = import.meta.env.VITE_API_BASE || (import.meta.env.PROD ? "/api" : "http://localhost:8000/api");
+export const API_BASE = "/api";
 
 export const api = axios.create({
   baseURL: API_BASE,
@@ -10,6 +10,11 @@ export const api = axios.create({
 
 // The Ubuntu collection profile protects readback as well as mutations.
 api.interceptors.request.use(config => {
+  if (controlSession.managed) {
+    config.headers["X-Console-Request"] = "1";
+    delete config.headers["X-Control-Token"];
+    return config;
+  }
   if (controlSession.token) config.headers["X-Control-Token"] = controlSession.token;
   return config;
 });
@@ -34,6 +39,19 @@ api.interceptors.response.use(
   }
 );
 
+export async function initializeConsoleSession() {
+  controlSession.managed = true;
+  try {
+    // Protected, read-only endpoint verifies proxy and backend authorization.
+    await api.get("/experiment/archives", { timeout: 15000 });
+    controlSession.token = "console-authorized";
+    controlSession.error = "";
+  } catch {
+    controlSession.token = "";
+    controlSession.error = "控制台授权未就绪，请检查 Docker 前后端的 LINUXGUARD_CONTROL_TOKEN 配置并重建服务。";
+  }
+}
+
 export const fetchSummary = () => api.get("/dashboard/summary").then((res) => res.data);
 export const fetchHealth = () => api.get("/health", { timeout: 10000 }).then((res) => res.data);
 export const fetchVulnerabilities = (params) => api.get("/vulnerabilities", { params }).then((res) => res.data);
@@ -55,7 +73,7 @@ export const uploadAsset = (file) => {
 export const runMatching = assetId => api.post("/matching/run", null, { ...controlRequest(), params: typeof assetId === "number" ? { asset_id: assetId } : {} }).then((res) => res.data);
 export const fetchMatches = () => api.get("/matching/results").then((res) => res.data);
 export const calculateRisk = () => api.post("/risk/calculate").then((res) => res.data);
-export const fetchRiskRanking = () => api.get("/risk/ranking").then((res) => res.data);
+export const fetchRiskRanking = () => api.get("/risk/ranking", { params: { include_details: false } }).then((res) => res.data);
 export const generateRemediation = () => api.post("/remediation/generate").then((res) => res.data);
 export const fetchRemediationTasks = () => api.get("/remediation/tasks").then((res) => res.data);
 export const updateTaskStatus = (id, status) => api.patch(`/remediation/tasks/${id}`, { status }, controlRequest()).then((res) => res.data);

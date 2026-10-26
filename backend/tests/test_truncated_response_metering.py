@@ -69,6 +69,7 @@ def fake_anthropic(stop_reason="max_tokens", usage=True):
     client._timeout = 60
     client._max_tokens = 100
     client._thinking = None
+    client._reasoning_effort = None
     client._client = sdk
     return client
 
@@ -193,11 +194,14 @@ class TruncatedResponseMeteringTests(unittest.TestCase):
         self.assertEqual(result.llm_usage, {"completion_tokens": 7})
         self.assertEqual(meter.usage, {"completion_tokens": 7})
 
-    def test_role_budget_blocks_retry_but_other_role_keeps_budget(self):
+    def test_truncation_charges_role_budget_and_blocks_the_next_dispatch(self):
         client = LegacyClient(rejection(), normal_response())
         meter = UsageMeter(role_token_limits={"asset": 18})
         result = agent(client, meter, retries=1).run(None, "test")
-        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "max_tokens")
+        next_result = agent(client, meter).run(None, "another investigation")
+        self.assertEqual(next_result.status, "degraded")
         self.assertIsNone(result.output)
         self.assertEqual(client.calls, 1)
         self.assertEqual((result.llm_calls, meter.requests), (1, 1))
@@ -207,35 +211,52 @@ class TruncatedResponseMeteringTests(unittest.TestCase):
             meter.reserve_request("asset")
         meter.ensure_budget("runtime")
 
-    def test_run_token_budget_blocks_retry(self):
+    def test_truncation_charges_run_token_budget_and_blocks_next_dispatch(self):
         client = LegacyClient(rejection(), normal_response())
         meter = UsageMeter(max_tokens=18)
         result = agent(client, meter, retries=1).run(None, "test")
-        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "max_tokens")
+        self.assertEqual(agent(client, meter).run(None, "next").status, "degraded")
         self.assertIsNone(result.output)
         self.assertEqual(client.calls, 1)
         self.assertEqual(meter.as_dict()["budget_exhausted_kind"], "tokens")
         with self.assertRaises(BudgetExceeded):
             meter.ensure_budget("runtime")
 
-    def test_run_call_budget_still_blocks_retry(self):
+    def test_run_call_budget_still_blocks_dispatch_after_truncation(self):
         client = LegacyClient(rejection(), normal_response())
         meter = UsageMeter(max_llm_calls=1)
         result = agent(client, meter, retries=1).run(None, "test")
-        self.assertEqual(result.status, "degraded")
+        self.assertEqual(result.status, "failed")
+        self.assertEqual(result.stop_reason, "max_tokens")
+        self.assertEqual(agent(client, meter).run(None, "next").status, "degraded")
         self.assertEqual((client.calls, meter.calls, meter.requests), (1, 1, 1))
         self.assertEqual(meter.as_dict()["budget_exhausted_kind"], "calls")
 
-    def test_retry_semantics_preserved_and_each_real_response_counted_once(self):
+    def test_truncation_is_terminal_even_with_retry_allowance(self):
         client = LegacyClient(rejection(), normal_response())
+        meter = UsageMeter()
+        runner = agent(client, meter, retries=1)
+        result = runner.run(None, "test")
+        self.assertEqual(result.status, "failed")
+        self.assertIsNone(result.output)
+        self.assertEqual(result.stop_reason, "max_tokens")
+        self.assertEqual(result.attempts, 1)
+        self.assertEqual((client.calls, result.llm_calls, meter.calls, meter.requests), (1, 1, 1, 1))
+        self.assertEqual(meter.usage, USAGE)
+        self.assertEqual([r["status"] for r in runner.request_log], ["failed"])
+
+    def test_transport_retry_preserves_unknown_usage_and_counts_actual_response_once(self):
+        client = LegacyClient(TimeoutError("transient timeout"), normal_response())
         meter = UsageMeter()
         runner = agent(client, meter, retries=1)
         result = runner.run(None, "test")
         self.assertEqual(result.status, "succeeded")
         self.assertEqual(result.output, {"answer": "ok"})
         self.assertEqual(result.attempts, 2)
-        self.assertEqual((client.calls, result.llm_calls, meter.calls, meter.requests), (2, 2, 2, 2))
-        self.assertEqual(meter.usage, {key: value * 2 for key, value in USAGE.items()})
+        self.assertEqual((client.calls, result.llm_calls, meter.calls, meter.requests), (2, 1, 1, 2))
+        self.assertEqual(meter.usage, USAGE)
         self.assertEqual([r["status"] for r in runner.request_log], ["failed", "succeeded"])
 
     def test_legacy_client_without_usage_remains_compatible(self):

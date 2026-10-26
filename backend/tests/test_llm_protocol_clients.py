@@ -24,6 +24,16 @@ def make_client() -> AnthropicProtocolChatClient:
 
 
 class TestMessageConversion:
+    def test_tool_result_and_followup_text_share_one_user_turn(self):
+        client = make_client()
+        _, turns = client._convert_messages([
+            {"role": "assistant", "tool_calls": [{"id": "c", "function": {"name": "read", "arguments": "{}"}}]},
+            {"role": "tool", "tool_call_id": "c", "content": '{"value":1}'},
+            {"role": "user", "content": "Now give the final JSON."},
+        ])
+        assert [turn["role"] for turn in turns] == ["assistant", "user"]
+        assert [block["type"] for block in turns[-1]["content"]] == ["tool_result", "text"]
+
     def test_system_extracted_and_turns_alternate(self):
         client = make_client()
         system, turns = client._convert_messages([
@@ -71,18 +81,86 @@ class TestMessageConversion:
         assert [r["tool_use_id"] for r in results] == ["a", "b"]
         assert json.loads(results[0]["content"]) == {"ok": 1}
 
-    def test_malformed_tool_arguments_fall_back_to_empty_object(self):
+    def test_malformed_history_tool_arguments_are_rejected(self):
         client = make_client()
-        _, turns = client._convert_messages([
-            {"role": "user", "content": "x"},
-            {"role": "assistant", "content": "", "tool_calls": [
-                {"id": "c", "type": "function",
-                 "function": {"name": "t", "arguments": "{broken json"}}]},
-        ])
-        assert turns[-1]["content"][0]["input"] == {}
+        with pytest.raises(ValueError, match="invalid_tool_arguments_in_history"):
+            client._convert_messages([
+                {"role": "user", "content": "x"},
+                {"role": "assistant", "content": "", "tool_calls": [
+                    {"id": "c", "type": "function",
+                     "function": {"name": "t", "arguments": "{broken json"}}]},
+            ])
 
 
 class TestCompleteParsing:
+    def test_reasoning_only_cap_is_attributed_and_not_retried_unchanged(self):
+        from pydantic import BaseModel
+        from app.services.agent_infra import AgentSpec
+        from app.services.unified.agent_base import UnifiedToolLoopAgent, UsageMeter
+        class Report(BaseModel):
+            answer: int
+        calls=[]
+        class SDK:
+            def __init__(self): self.messages=self
+            def with_options(self, **kwargs): return self
+            def create(self, **kwargs):
+                calls.append(kwargs)
+                return SimpleNamespace(model="glm-5.3-flash", stop_reason="max_tokens",
+                    content=[SimpleNamespace(type="thinking",thinking="opaque private content")],
+                    usage=SimpleNamespace(input_tokens=9165,output_tokens=8192))
+        client=make_client();client._client=SDK();client._max_tokens=8192
+        meter=UsageMeter(max_llm_calls=8)
+        agent=UnifiedToolLoopAgent(AgentSpec("role","role",Report,llm_retries=2),client,meter=meter)
+        result=agent.run(None,"actual material",deadline_s=3)
+        assert result.status=="failed" and result.stop_reason=="max_tokens"
+        assert len(calls)==1 and meter.calls==1 and meter.usage["total_tokens"]==17357
+        record=agent.request_log[0]
+        assert record["failure_source"]=="provider_response"
+        assert record["response_metadata"]["text_chars"]==0
+        assert record["response_metadata"]["truncation_kind"]=="reasoning_only_output_budget_exhausted"
+        assert "opaque private content" not in json.dumps(record)
+
+    def test_agent_preserves_signed_thinking_blocks_across_tool_roundtrip(self):
+        from copy import deepcopy
+        from pydantic import BaseModel
+        from app.services.agent_infra import AgentSpec, AgentTool
+        from app.services.unified.agent_base import UnifiedToolLoopAgent
+        class Report(BaseModel):
+            answer: int
+        captured = []
+        blocks = [SimpleNamespace(type="thinking", thinking="opaque", signature="signature-do-not-change"),
+                  SimpleNamespace(type="tool_use", id="read-1", name="read", input={})]
+        class SDK:
+            def __init__(self):
+                self.messages = self
+            def with_options(self, **options):
+                return self
+            def create(self, **kwargs):
+                captured.append(deepcopy(kwargs))
+                return SimpleNamespace(content=blocks if len(captured) == 1 else [SimpleNamespace(type="text", text='{"answer":42}')],
+                    usage=SimpleNamespace(input_tokens=10, output_tokens=5), stop_reason="tool_use" if len(captured) == 1 else "end_turn")
+        client = make_client()
+        client._client = SDK()
+        spec = AgentSpec("role", "role", Report, tools=[AgentTool("read", "read", {}, lambda db: {"value":42})], max_tool_rounds=2, llm_retries=0)
+        result = UnifiedToolLoopAgent(spec, client).run(None, "Read then answer", deadline_s=3)
+        assert result.status == "succeeded" and result.output == {"answer":42}
+        assistant = next(turn for turn in captured[1]["messages"] if turn["role"] == "assistant")
+        assert assistant["content"] == [vars(block) for block in blocks]
+        assert captured[1]["messages"][-1]["content"][0]["tool_use_id"] == "read-1"
+
+    @pytest.mark.parametrize("stop_reason", ["refusal", "pause_turn"])
+    def test_unfinished_or_refused_response_is_not_accepted_as_report(self, stop_reason):
+        from app.services.agent_infra import ModelResponseError
+        client = make_client()
+        class Messages:
+            def create(self, **kwargs):
+                return SimpleNamespace(content=[SimpleNamespace(type="text", text='{"answer":42}')],
+                    usage=SimpleNamespace(input_tokens=10, output_tokens=5), stop_reason=stop_reason)
+        client._client = SimpleNamespace(messages=Messages())
+        with pytest.raises(ModelResponseError) as failure:
+            client.complete([{"role":"user", "content":"test"}])
+        assert failure.value.stop_reason == stop_reason and failure.value.usage["total_tokens"] == 15
+
     def _patch_create(self, client, blocks, usage):
         class _Messages:
             def create(self, **kwargs):
@@ -117,14 +195,14 @@ class TestCompleteParsing:
         assert captured["max_tokens"] > 0
         assert captured["tools"][0]["input_schema"] == {"type": "object", "properties": {}}
 
-    def test_all_text_empty_returns_none_content(self):
+    def test_thinking_only_response_is_explicit_protocol_failure(self):
         client = make_client()
         self._patch_create(client, blocks=[SimpleNamespace(type="thinking", thinking="only")],
                            usage=None)
-        response = client.complete([{"role": "user", "content": "u"}])
-        assert response["content"] is None
-        assert response["tool_calls"] == []
-        assert response["usage"] is None
+        from app.services.agent_infra import ModelResponseError
+        with pytest.raises(ModelResponseError, match="no_actionable_content") as failure:
+            client.complete([{"role": "user", "content": "u"}])
+        assert failure.value.response_received and failure.value.usage is None
 
 
 class TestDispatchFactory:
@@ -156,3 +234,45 @@ class TestDispatchFactory:
         monkeypatch.setattr(config, "DEEPSEEK_API_KEY", "")
         with pytest.raises(RuntimeError, match="DEEPSEEK_API_KEY"):
             build_llm_client()
+
+
+def test_glm_openai_thinking_and_reasoning_fields_are_transported():
+    captured = {}
+    client = DeepSeekChatClient(model="glm-5.3-flash", api_key="test", base_url="https://example.invalid/v4")
+    client._thinking = {"type": "enabled"}
+    def create(**kwargs):
+        captured.update(kwargs)
+        return SimpleNamespace(model="glm-5.3-flash", usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            choices=[SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(content=None, reasoning_content="opaque", tool_calls=[
+                SimpleNamespace(id="t", function=SimpleNamespace(name="read", arguments='{"q":1}'))]))])
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    result = client.complete([{"role":"user", "content":"test"}])
+    assert captured["extra_body"]["thinking"] == {"type":"enabled"}
+    assert result["reasoning_content"] == "opaque" and result["stop_reason"] == "tool_calls"
+    assert result["tool_calls"][0]["arguments"] == {"q":1}
+
+
+def test_bounded_glm53_profile_uses_supported_thinking_controls():
+    from app.services.agent_infra import configure_bounded_model_profile
+    client = make_client()
+    configure_bounded_model_profile(client)
+    assert client._thinking == {"type":"enabled"} and client._reasoning_effort == "low"
+    captured = TestCompleteParsing()._patch_create(client,
+        blocks=[SimpleNamespace(type="text",text='{"ok":true}')], usage=None)
+    client.complete([{"role":"user","content":"test"}])
+    assert captured["thinking"] == {"type":"enabled"}
+    assert captured["extra_body"] == {"reasoning_effort":"low"}
+
+
+@pytest.mark.parametrize("arguments", ['{broken', '[1,2]'])
+def test_glm_openai_invalid_tool_arguments_never_become_empty_invocation(arguments):
+    from app.services.agent_infra import ModelResponseError
+    client = DeepSeekChatClient(model="glm-5.3-flash", api_key="test", base_url="https://example.invalid/v4")
+    def create(**kwargs):
+        return SimpleNamespace(usage=SimpleNamespace(prompt_tokens=10, completion_tokens=5, total_tokens=15),
+            choices=[SimpleNamespace(finish_reason="tool_calls", message=SimpleNamespace(content=None, tool_calls=[
+                SimpleNamespace(id="t", function=SimpleNamespace(name="read", arguments=arguments))]))])
+    client._client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=create)))
+    with pytest.raises(ModelResponseError, match="model_tool_call_invalid") as failure:
+        client.complete([{"role":"user", "content":"test"}])
+    assert failure.value.usage["total_tokens"] == 15

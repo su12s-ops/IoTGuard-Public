@@ -63,9 +63,11 @@ def _get_http_opener() -> object:
         or ""
     ).strip()
     if proxy_url:
-        _HTTP_OPENER = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}))
+        from app.services.intel_transport import verified_https_handler
+        _HTTP_OPENER = build_opener(ProxyHandler({"https": proxy_url, "http": proxy_url}), verified_https_handler())
     else:
-        _HTTP_OPENER = build_opener()
+        from app.services.intel_transport import verified_https_handler
+        _HTTP_OPENER = build_opener(verified_https_handler())
     return _HTTP_OPENER
 
 

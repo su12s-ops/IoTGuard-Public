@@ -1,4 +1,10 @@
-# SmartCam-X1 智能摄像头模拟器（阶段一测试设备）
+# IoT 设备模拟器
+
+## 多设备 OpenWrt LAN 实验
+
+新增 `lan_device.py` 与 `openwrt_lan.py`：两台摄像头、一个温湿度传感器、一个智能插座，分别运行在独立网络命名空间，通过 veth 接入 OpenWrt LAN，拥有独立 MAC 和 DHCP 地址。摄像头提供真实 HTTP MJPEG 测试画面，传感器和插座提供 MQTT 遥测，插座可通过 HTTP/MQTT 切换模拟状态。身份端点明确标记 simulation。
+
+部署、端口、验证与停止方式见 [OpenWrt 多设备接入记录](../docs/guides/openwrt-lan.md)。`lan_devices.json` 是本地实验的四设备示例配置，使用前核对网关及地址冲突。RTSP 只实现发现控制面，实际画面使用 HTTP MJPEG，不提供 RTP 视频。
 
 一个只依赖 Python 标准库的智能摄像头设备模拟器，真实监听四个服务，
 供 IoTGuard 后端做在线发现与服务识别（不是 mock：所有识别都来自真实协议交互）。
@@ -16,8 +22,8 @@
 ## 本地运行
 
 ```bash
-python 代码/simulator/smartcam_x1.py                       # 标准端口
-python 代码/simulator/smartcam_x1.py --http-port 8080 --ssh-port 22022 --mqtt-port 21883 --rtsp-port 28554
+python simulator/smartcam_x1.py                       # 标准端口
+python simulator/smartcam_x1.py --http-port 8080 --ssh-port 22022 --mqtt-port 21883 --rtsp-port 28554
 ```
 
 后端发现该设备需要（`backend/.env`）：
@@ -27,12 +33,11 @@ LINUXGUARD_CONTROL_TOKEN=<操作令牌>
 LINUXGUARD_DISCOVERY_CIDRS=127.0.0.0/8
 ```
 
-然后在前端「智能设备中心」输入 `127.0.0.1` 与对应端口执行发现。
+然后在前端「资产与发现」输入 `127.0.0.1` 与对应端口执行发现。
 
 ## Docker 运行
 
-`Docker配置/docker-compose.yml` 已内置 `smartcam` 服务（固定 IP `172.28.0.20`，
-后端默认允许 `172.28.0.0/24`）。`docker compose up --build` 后在「智能设备中心」发现 `172.28.0.20`。
+当前根目录 Compose 仅启动平台后端与前端，不自动启动设备模拟器。接入 OpenWrt LAN 的多设备实验使用上面的独立网络命名空间方案；后端扫描范围须显式加入对应设备地址。
 
 ## 测试
 

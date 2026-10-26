@@ -84,10 +84,10 @@ Falco 按 [官方安装说明](https://falco.org/docs/setup/)安装；检查 `/s
 
 既有 Falco 服务默认使用 `/opt/linuxguard` 和 `/etc/linuxguard/falco.env`，与新模板 `/opt/iotguard` 不同：部署前编辑服务的 `ExecStart` / `ExecStartPre` 或使用 systemd override 指向实际仓库，勿直接混用路径。Falco 需要相应内核权限；不在后端容器内启动。环境文件填写含 `/api` 的 API_BASE、登记资产 ID 与控制令牌，并设为 `0600`。
 
-API、nginx、模型提供方、授权范围和令牌配置见 [部署说明](../DEPLOYMENT.md)及 `backend/.env.example`。模型配置保留兼容变量前缀 `DEEPSEEK_*`，不要求固定提供方；真实密钥只在本地注入。
+API、nginx、模型提供方、授权范围和令牌配置见 [部署说明](../docs/guides/deployment.md)及 `backend/.env.example`。模型配置保留兼容变量前缀 `DEEPSEEK_*`，不要求固定提供方；真实密钥只在本地注入。
 
 ## 6. 重建后验证
 
-分别核对 API / 数据库、采集节点心跳、Falco / logread 状态与证据新鲜度；再验证设备身份、完整组件、公告覆盖、风险与复采。重建会产生新的设备身份，需要重新登记及钉扎。无需导入原数据库或模型输出即可启动代码；完整现场验收需按 [产品状态](../docs/STATUS.md)补齐。
+分别核对 API / 数据库、采集节点心跳、Falco / logread 状态与证据新鲜度；再验证设备身份、完整组件、公告覆盖、风险与复采。重建会产生新的设备身份，需要重新登记及钉扎。无需导入原数据库或模型输出即可启动代码；完整现场验收需按 [产品状态](../docs/status.md)补齐。
 
 这些模板经静态与本地工具验证；尚未在全新 VMware / Ubuntu 宿主执行端到端重建。

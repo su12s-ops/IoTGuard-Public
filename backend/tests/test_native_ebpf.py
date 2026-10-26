@@ -14,6 +14,37 @@ def payload(**changes):
             "retval": -13, "errno": 13, "raw": {"flags": 2}, **changes}
 
 
+def test_live_ingestion_and_analysis_ledger_can_write_concurrently(session_factory, tmp_path, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from sqlalchemy import text
+    monkeypatch.setattr(events, "EVENT_FILE", tmp_path / "events.jsonl")
+    with session_factory() as db:
+        db.execute(text("PRAGMA journal_mode=WAL"))
+        db.add(models.AnalysisBudget(batch_id="concurrent-review"))
+        db.commit()
+
+    def ingest():
+        for index in range(12):
+            with session_factory() as db:
+                events.append_events([payload(process_id=100 + index)], db=db)
+
+    def account():
+        for index in range(40):
+            with session_factory() as db:
+                row = db.get(models.AnalysisBudget, "concurrent-review")
+                row.requests = index + 1
+                db.commit()
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        futures = [workers.submit(ingest), workers.submit(account)]
+        for future in futures:
+            future.result(timeout=15)
+    with session_factory() as db:
+        assert db.query(models.RuntimeEvent).count() == 12
+        assert db.query(models.RuntimeEvidenceJob).count() == 12
+        assert db.get(models.AnalysisBudget, "concurrent-review").requests == 40
+
+
 def test_native_ack_is_durable_and_evidence_recovers_after_restart(session_factory, tmp_path, monkeypatch):
     monkeypatch.setattr(events, "EVENT_FILE", tmp_path / "events.jsonl")
     with session_factory() as db:

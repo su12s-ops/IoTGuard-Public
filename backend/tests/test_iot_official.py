@@ -30,6 +30,9 @@ def test_import_is_idempotent_and_does_not_claim_fix(session_factory):
         import_snapshot(db, "zephyr", [ROW])
         assert db.query(models.IotOfficialAdvisory).count() == 1
         result = assess_snapshot(db, "zephyr", "4.4.2")
+        assert result["snapshot"]["status"] == "recent"
+        assert result["snapshot"]["advisory_count"] == 1
+        assert len(result["snapshot"]["sha256"]) == 64
         assert result["results"][0]["status"] == "potentially_affected"
         assert db.query(models.DeviceVulnerabilityMatch).count() == 0
         assert assess_snapshot(db, "zephyr", "4.5.0")["results"][0]["status"] == "not_in_reported_range"
@@ -42,6 +45,43 @@ def test_invalid_batch_makes_no_partial_writes(session_factory):
         with pytest.raises(ValueError):
             import_snapshot(db, "zephyr", [ROW, bad])
         assert db.query(models.IotOfficialAdvisory).count() == 0
+
+
+def test_snapshot_freshness_distinguishes_stale_and_naive_utc(session_factory):
+    from datetime import datetime, timedelta, timezone
+    from app.services.iot_official import snapshot_freshness
+    with session_factory() as db:
+        import_snapshot(db, "zephyr", [ROW])
+        record = db.query(models.IotOfficialAdvisory).one()
+        record.updated_at = (datetime.now(timezone.utc) - timedelta(days=2)).replace(tzinfo=None)
+        db.commit()
+        snapshot = snapshot_freshness(db, "zephyr")
+        assert snapshot["status"] == "stale"
+        assert snapshot["age_seconds"] >= 172800
+        assert snapshot["oldest_content_updated_at"].endswith("+00:00")
+        assert snapshot["remote_freshness"] == "unverified"
+
+
+def test_snapshot_uses_oldest_content_and_whole_manifest_hash(session_factory):
+    from datetime import datetime, timedelta, timezone
+    from app.services.iot_official import snapshot_freshness
+    with session_factory() as db:
+        import_snapshot(db, "zephyr", [ROW])
+        original = snapshot_freshness(db, "zephyr")
+        db.query(models.IotOfficialAdvisory).one().updated_at = datetime.now(timezone.utc) - timedelta(days=3)
+        other = {**ROW, "ghsa_id": "GHSA-2345-2345-2345",
+                 "html_url": "https://github.com/zephyrproject-rtos/zephyr/security/advisories/GHSA-2345-2345-2345"}
+        import_snapshot(db, "zephyr", [other])
+        mixed = snapshot_freshness(db, "zephyr")
+        assert mixed["status"] == "stale" and mixed["age_seconds"] >= 259200
+        assert mixed["sha256"] != original["sha256"]
+        newest = db.query(models.IotOfficialAdvisory).filter_by(advisory_id=other["ghsa_id"]).one()
+        newest.updated_at = datetime.now(timezone.utc) + timedelta(days=1)
+        db.flush()
+        assert snapshot_freshness(db, "zephyr")["status"] == "unknown"
+        newest.payload_json = '{}'
+        db.flush()
+        assert snapshot_freshness(db, "zephyr")["status"] == "invalid"
 
 
 def test_openwrt_does_not_compare_release_with_package_range(session_factory):
@@ -58,6 +98,7 @@ def test_coverage_endpoint_is_read_only_and_reports_empty_snapshot(client):
     assert response.status_code == 200
     assert response.json()["coverage_status"] == "unassessed"
     assert response.json()["count"] == 0
+    assert response.json()["snapshot"]["status"] == "unavailable"
     assert client.get("/api/devices/official-coverage/ubuntu?version=24.04.0").status_code == 422
 
 

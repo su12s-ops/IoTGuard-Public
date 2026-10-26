@@ -1,6 +1,6 @@
 """唯一正式编排器：LangGraph StateGraph（Stage 9B）。
 
-图结构（TECHNICAL_ARCHITECTURE.md）：
+图结构（docs/architecture/overview.md）：
 
     START → prepare → prepare_evidence → investigate_asset
           → {analyze_vulnerability ∥ analyze_runtime}
@@ -43,6 +43,7 @@ from app.services.unified import (
     harness_bridge,
 )
 from app.services.unified import context_budget
+from app.services.unified.prompt_views import inventory_provenance as _inventory_prompt_view
 from app.services.unified.agent_base import (
     BudgetExceeded,
     UnifiedToolLoopAgent,
@@ -121,6 +122,8 @@ class RunContext:
     strategy: str = "four_agents"
     replay_parent: dict[str, Any] = field(default_factory=dict)
     snapshot_id: str = ""
+    batch_runtime: Any = None
+    task_receipts: dict[str, Any] = field(default_factory=dict)
 
     def session(self) -> Session:
         return self.db_factory()
@@ -155,6 +158,19 @@ def _agent_deadline(ctx: RunContext, role: str = "") -> float:
 def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                     validate_fn: Callable[[dict[str, Any]], list[str]] | None = None,
                     extra_instruction: str = "", state=None) -> tuple[dict[str, Any] | None, str]:
+    if ctx.batch_runtime is not None and state is not None:
+        from app.services.unified import task_reports
+        spec = task_reports.scoped_spec(spec, state)
+        task_deadline = time.monotonic() + min(240, _agent_deadline(ctx, spec.name), ctx.batch_runtime.remaining())
+        return task_reports.execute(ctx, state, spec, context_text, validate_fn,
+            lambda text, scoped, validator, task_id: _run_specialist_impl(
+                ctx, spec, text, validator, extra_instruction, scoped, task_id, task_deadline),
+            deadline=task_deadline)
+    return _run_specialist_impl(ctx, spec, context_text, validate_fn, extra_instruction, state)
+
+
+def _run_specialist_impl(ctx: RunContext, spec: AgentSpec, context_text: str,
+                    validate_fn=None, extra_instruction="", state=None, task_id="", task_deadline=None):
     """执行一个专家：结构化输出 → 证据事实校验（一次带反馈重试）→ 失败降级。
 
     返回 (output_dict | None, degraded_reason)。None 表示该角色降级，
@@ -162,6 +178,11 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
     """
     db = ctx.session()
     try:
+        if ctx.batch_runtime is not None and state is not None and spec.name == AGENT_RUNTIME:
+            from app.services.unified.prompt_views import bind_runtime_snapshot
+            bind_runtime_snapshot(db, state.evidence_snapshot)
+            context_text += ("\n本轮取证工具限定在本次已登记快照；随后到达的新事件留到下一轮。"
+                             "工具返回空或样例不含某行为，只表示本快照未取得该证据，不表示行为未发生。")
         if state is not None and state.evidence_snapshot:
             context_text += "\n共享协作状态：" + json.dumps(collaboration_mod.compact_context(
                 spec.name, state.evidence_snapshot, state.shared_findings, state.collaboration_messages), ensure_ascii=False)
@@ -196,9 +217,34 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
                           "prompt_chars": prompt_budget["chars"]}, started_at=started_at)
         agent_started = time.monotonic()
         role_deadline = agent_started + _agent_deadline(ctx, spec.name)
-        agent = UnifiedToolLoopAgent(spec, ctx.client_factory(), meter=ctx.meter,
+        if task_deadline is not None:
+            role_deadline = min(role_deadline, task_deadline)
+        if ctx.batch_runtime is not None:
+            spec = replace(spec, max_tool_rounds=2, llm_retries=0, finalize_on_tool_limit=True)
+            context_text += ("\n本模式不开展消息循环，messages 请留空。若引用已有 finding_id，"
+                             "只能使用共享区实际提供的 ID，不得自行命名。")
+        def observer(kind, detail):
+            # Observation only: no model text/arguments or graph writes. Each
+            # callback owns its session; the HTTP worker never shares agent DB.
+            try:
+                with ctx.session() as observation_db:
+                    ctx.emit(observation_db, kind, actor=spec.name, status="observed", payload=detail)
+            except Exception:
+                import logging
+                logging.getLogger(__name__).warning("Agent activity persistence failed", exc_info=True)
+        client = ctx.batch_runtime.client(task_id, spec.name, observer=observer,
+            review_id=state.run_id if state is not None else "") if ctx.batch_runtime is not None else ctx.client_factory()
+        normalizer = None
+        if ctx.batch_runtime is not None and state is not None and spec.name == AGENT_RUNTIME:
+            from app.services.unified.prompt_views import conservative_runtime_status
+            normalizer = lambda report: conservative_runtime_status(report, state.evidence_snapshot)
+        agent = UnifiedToolLoopAgent(spec, client, meter=ctx.meter,
                                      tool_cache=ctx.tool_cache, snapshot_id=ctx.snapshot_id,
                                      role=spec.name,
+                                     tool_result_max_chars=4000 if ctx.batch_runtime is not None else 8000,
+                                     observer=observer if ctx.batch_runtime is not None else None,
+                                     output_normalizer=normalizer,
+                                     collaboration_messages=ctx.batch_runtime is None,
                                      context_token_budgets=ctx.context_token_budgets)
         with ctx._lock:
             ctx.first_contexts.setdefault(spec.name, context_text)
@@ -292,6 +338,7 @@ def _run_specialist(ctx: RunContext, spec: AgentSpec, context_text: str,
             "prompt_estimated_tokens": prompt_budget["estimated_tokens"],
             "prompt_chars": prompt_budget["chars"],
             "requests": list(agent.request_log),
+            "normalized_reports": list(agent.normalized_reports),
             "output": result.output,
             "tool_calls": [{"name": call["name"], "ok": call.get("ok", False),
                             "cached": call.get("cached", False),
@@ -478,7 +525,7 @@ def _asset_prep_context(state: UnifiedAnalysisState) -> str:
     return (
         f"{_prep_header(state)}"
         f"资产画像: {json.dumps(facts.get('profile') or {}, ensure_ascii=False)}\n"
-        f"真实清单身份与原始证据: {json.dumps(facts.get('inventory_provenance') or {}, ensure_ascii=False)}\n"
+        f"真实清单身份与原始证据: {json.dumps(_inventory_prompt_view(facts.get('inventory_provenance') or {}), ensure_ascii=False)}\n"
         f"服务暴露面: {json.dumps(facts.get('services') or [], ensure_ascii=False)}\n"
         f"组件清单(截断={facts.get('components_truncated')}): "
         f"{json.dumps((facts.get('components') or [])[:20], ensure_ascii=False)}\n"
@@ -763,7 +810,7 @@ def node_analyze_vulnerability(ctx: RunContext):
                 f"os={investigation.get('os')} 组件数={len(investigation.get('components') or [])} "
                 f"证据质量={investigation.get('evidence_quality')}\n"
                 f"已调查组件及版本（最多20项，非完整性证明）: {json.dumps((investigation.get('components') or [])[:20], ensure_ascii=False)}\n"
-                f"原始清单来源: {json.dumps(((_prep(state).get('asset_facts') or {}).get('inventory_provenance') or {}), ensure_ascii=False)}\n"
+                f"原始清单来源: {json.dumps(_inventory_prompt_view(((_prep(state).get('asset_facts') or {}).get('inventory_provenance') or {})), ensure_ascii=False)}\n"
                 "候选为空仅表示现有匹配范围内零命中，不得虚构 CVE，亦不得将画像显示截断误认为原始清单不完整。")
         context_text = (
             f"分析目标: {state.target_ref} 的候选 CVE 适用性。\n"
@@ -771,8 +818,9 @@ def node_analyze_vulnerability(ctx: RunContext):
             f"候选清单（规则命中，供核查——规则结论本身可能误报）:\n"
             f"{json.dumps(state.candidate_context, ensure_ascii=False)}"
             f"{asset_summary}\n"
-            "要求：用 query_version_impact 做真实版本比较；用 query_intelligence_sources 核对"
-            "厂商/NVD/KEV/EPSS 各源状态是否互相矛盾；输入故意不包含规则分数，不要猜测基线结论；"
+            "要求：优先使用下方程序预取的版本核验与多源情报，核对厂商/NVD/KEV/EPSS 各源状态。"
+            "只有缺项、来源冲突或版本语义歧义时才调用 query_version_impact / query_intelligence_sources；"
+            "已取得的相同事实不重复查询。输入故意不包含规则分数，不要猜测基线结论；"
             "适用分支与装机版本不符时明确判 not_affected 并说明理由（E3 类假阳性识别）。\n"
             "适用性专业维度（M4.2，逐 finding 如实填写，不得留 unknown 而给出高置信结论）：\n"
             "- version_range_relation：装机版本与公告受影响区间的关系（区间语义独立于"
@@ -812,6 +860,17 @@ def node_analyze_runtime(ctx: RunContext):
         if reuse is not None:
             return reuse
         routing = state.routing
+        if ctx.batch_runtime is not None:
+            runtime_facts = (state.evidence_prep or {}).get("runtime_facts") or {}
+            categories = (state.evidence_snapshot.get("categories") or {}).get("runtime") or {}
+            if not categories.get("events"):
+                return {"runtime_program_fallback": {
+                    "behavior_level": "NORMAL", "runtime_status": "unavailable",
+                    "capability_limited": True, "evidence_freshness": "none",
+                    "exploitation_relation": "monitoring_unavailable", "evidence_ids": [], "findings": [],
+                    "coverage": runtime_facts.get("coverage"),
+                    "note": "当前快照没有可逐条核验的运行时证据；历史汇总和采集缺口不代表安全"},
+                    "stage_status": state.record_stage("analyze_runtime", "skipped")}
         if not routing.include_runtime:
             capability_limited = routing_mod._runtime_capability_unsupported(state.capability_marks)
             fallback = {
@@ -857,6 +916,16 @@ def node_analyze_runtime(ctx: RunContext):
             "监控缺失/能力受限时如实标注 monitoring_missing/monitoring_unavailable。"
             + _runtime_prep_context(state)
         )
+        if ctx.batch_runtime is not None:
+            from app.services.unified.prompt_views import runtime_observations
+            from app.services.unified.agent_base import bounded_tool_result
+            with ctx.session() as evidence_db:
+                observations = runtime_observations(evidence_db, state.evidence_snapshot)
+            context_text += ("\n程序已查询本快照的真实逐条证据（含原时间与注册ID）："
+                + bounded_tool_result(observations, max_chars=6000)
+                + "\n上面已提供数据质量与原始行为，无需再次查询相同事实。"
+                  "可以直接生成最终报告；仅有具体缺口需要核查时使用工具。"
+                  "样例不覆盖全量，不能据此宣告设备安全或不存在利用。")
         output, degraded = _run_specialist(ctx, RUNTIME_ANALYST_SPEC, context_text,
                                            validate_fn=_runtime_evidence_validator(ctx, state), state=state)
         update: dict[str, Any] = {"stage_status": state.record_stage(
@@ -1531,6 +1600,10 @@ def node_finalize(ctx: RunContext):
                 for role in (AGENT_ASSET, AGENT_VULNERABILITY, AGENT_RUNTIME, AGENT_DECISION))}
         if state.task_type == TASK_RISK_REVIEW:
             policy = audit_policy.apply_unified_audit_policy(snapshot)
+            if ctx.batch_runtime is not None:
+                policy.status = "pending_human_review"
+                policy.final_score = policy.final_level = None
+                policy.reasons.append("task_graph_quality_validation_required")
             if state.mode == "historical":
                 policy.status = "pending_human_review"
                 policy.final_score = policy.final_level = None
@@ -1563,6 +1636,12 @@ def node_finalize(ctx: RunContext):
                 final["policy"]["final_score"] = final["policy"]["final_level"] = None
                 final["policy"]["reasons"].append("collaboration_requires_human_review")
         final["usage"] = ctx.meter.as_dict()
+        if ctx.batch_runtime is not None:
+            from app.services.unified.task_runtime import VERSION
+            final["pipeline_version"] = f"{PIPELINE_VERSION}+{VERSION}"
+            final["execution_profile"] = "task_graph"
+            final["task_receipts"] = dict(ctx.task_receipts)
+            final["batch_budget"] = ctx.batch_runtime.snapshot()
         final["degraded_roles"] = list(dict.fromkeys(state.degraded_roles))
         db = ctx.session()
         try:

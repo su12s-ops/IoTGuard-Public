@@ -52,6 +52,11 @@ def get_job(job_id: str) -> dict[str, Any] | None:
         return _copy_job(job) if job else None
 
 
+def has_active_jobs() -> bool:
+    with _lock:
+        return any(job["status"] in ("pending", "running") for job in _jobs.values())
+
+
 def update_job(job_id: str, **fields: Any) -> dict[str, Any] | None:
     with _lock:
         job = _jobs.get(job_id)

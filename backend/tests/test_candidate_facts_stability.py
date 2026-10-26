@@ -61,9 +61,10 @@ def test_recollect_without_fact_change_preserves_conclusion(session_factory):
         # 模拟一次「事实完全一致」的重新采集：清单哈希变化、资产行更新时间
         # 前进、清单采集时间前进——组件版本/配置/情报/覆盖均不变。
         asset.inventory_sha256 = "bb" * 32
-        from datetime import datetime, timedelta
-        asset.updated_at = (asset.updated_at or datetime.utcnow()) + timedelta(hours=1)
-        asset.inventory_collected_at = datetime.utcnow()
+        from datetime import datetime, timedelta, timezone
+        now = datetime.now(timezone.utc)
+        asset.updated_at = (asset.updated_at or now) + timedelta(hours=1)
+        asset.inventory_collected_at = now
         db.commit()
 
         assert calculate_risk(db) == 1

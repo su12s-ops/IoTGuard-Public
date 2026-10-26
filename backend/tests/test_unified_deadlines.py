@@ -108,7 +108,7 @@ def test_sdk_timeout_is_capped_and_internal_retries_disabled(kind):
     def create(**kwargs):
         if kind is DeepSeekChatClient:
             return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content='{}', tool_calls=[]))])
-        return SimpleNamespace(content=[], usage=None)
+        return SimpleNamespace(content=[SimpleNamespace(type="text", text='{}')], usage=None)
 
     def with_options(**kwargs):
         options.update(kwargs)

@@ -205,7 +205,7 @@ def recover_stale_running(max_minutes: int = 30) -> int:
             db.query(models.RiskAssessment)
             .filter(
                 models.RiskAssessment.review_status.in_([
-                    "running", "evidence_preparing", "agent_reviewing", "conflict_review", "coordinator_review"
+                    "queued", "running", "evidence_preparing", "agent_reviewing", "conflict_review", "coordinator_review"
                 ]),
                 (
                     models.RiskAssessment.review_completed_at.is_(None)
@@ -247,6 +247,26 @@ def init_db():
     added = _migrate_sqlite_schema()
     added.extend(_migrate_ebpf_p0())
     added.extend(_ensure_query_indexes())
+    added.extend(_ensure_runtime_time_indexes())
+    return added
+
+
+def _ensure_runtime_time_indexes() -> list[str]:
+    if engine.dialect.name != "sqlite":
+        return []
+    added = []
+    with engine.begin() as conn:
+        if not _sqlite_table_exists(conn, "runtime_event"):
+            return []
+        for name, columns in (
+            ("ix_runtime_event_occurred_at", "occurred_at"),
+            ("ix_runtime_event_asset_time", "asset_id, occurred_at"),
+            ("ix_runtime_event_sensor_time", "sensor_id, occurred_at"),
+        ):
+            if not conn.execute(text("SELECT 1 FROM sqlite_master WHERE type='index' AND name=:name"),
+                                {"name": name}).scalar():
+                conn.execute(text(f"CREATE INDEX {name} ON runtime_event ({columns})"))
+                added.append("index: " + name)
     return added
 
 
@@ -385,6 +405,7 @@ def _migrate_sqlite_schema():
         return added_columns
     with engine.begin() as conn:
         for table_name, migrations in [
+            ("console_workflow", {"round_ids_json": "TEXT DEFAULT '[]'", "pipeline_done": "BOOLEAN DEFAULT 0"}),
             ("demo_target", {"credential_env": "VARCHAR(128) DEFAULT ''"}),
             ("linux_asset", ASSET_COLUMN_MIGRATIONS),
             ("device_connection", DEVICE_CONNECTION_COLUMN_MIGRATIONS),

@@ -31,6 +31,8 @@ services:
         required: false
     environment:
       LINUXGUARD_DATA_DIR: /app/data
+      LINUXGUARD_ARCHIVE_ON_STARTUP: "0"
+      LINUXGUARD_REVIEW_EXECUTION: ${IOTGUARD_REVIEW_EXECUTION:-task_graph}
       LINUXGUARD_DEPLOYMENT_MODE: standard
       LINUXGUARD_ENABLE_DEVICE_REPAIR: "0"
       LINUXGUARD_ENABLE_UBUNTU_LAB_REPAIR: "0"
@@ -38,14 +40,21 @@ services:
       LINUXGUARD_OPENWRT_LAB_ASSET_SCOPE: ""
     volumes:
       - linuxguard-data:/app/data
-    ports:
-      - "127.0.0.1:${IOTGUARD_BACKEND_PORT:-18000}:8000"
+    # Backend is internal; browser and clients use the frontend's /api proxy.
+    expose:
+      - "8000"
     security_opt:
       - no-new-privileges:true
     cap_drop: [ALL]
     restart: unless-stopped
 
   frontend:
+    # Server-side console authorization; never compiled into browser assets.
+    env_file:
+      - path: ./backend/.env.docker
+        required: false
+    environment:
+      NGINX_ENVSUBST_FILTER: "^LINUXGUARD_CONTROL_TOKEN$$"
     build:
       context: ./frontend
       args:

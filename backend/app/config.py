@@ -30,10 +30,17 @@ DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-v4-flash")
 # LLM 端点协议：openai（OpenAI 兼容 /chat/completions）| anthropic（Messages 协议，
 # 如 BigModel GLM 套餐计费端点 /api/anthropic）。变量名沿用 DEEPSEEK_* 保持零迁移成本。
 DEEPSEEK_API_PROTOCOL = os.getenv("DEEPSEEK_API_PROTOCOL", "openai")
-# 可选：anthropic 协议下关闭模型思考（off=禁用；默认空=沿用模型默认行为）
+# 兼容旧配置；task_graph 按模型支持设置控制参数，GLM-5.3 使用 enabled/low。
 DEEPSEEK_THINKING = os.getenv("DEEPSEEK_THINKING", "")
 
 # M5：唯一四智能体；on 为正式入口，off/shadow 禁止正式任务，无旧 LLM fallback。
 UNIFIED_PIPELINE_MODE = os.getenv("LINUXGUARD_UNIFIED_PIPELINE", "off").strip().lower()
 if UNIFIED_PIPELINE_MODE not in {"off", "shadow", "on"}:
     UNIFIED_PIPELINE_MODE = "off"
+
+# Explicit rollout: task_graph writes through the same formal sink and requires
+# human review until paired quality validation is completed. Existing deployments
+# retain their chosen mode; no running worker changes mode mid-flight.
+REVIEW_EXECUTION_MODE = os.getenv("LINUXGUARD_REVIEW_EXECUTION", "legacy").strip().lower()
+if REVIEW_EXECUTION_MODE not in {"legacy", "task_graph"}:
+    raise ValueError("LINUXGUARD_REVIEW_EXECUTION must be legacy or task_graph")

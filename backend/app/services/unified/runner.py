@@ -78,7 +78,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
                      investigation_goal: str = "",
                      replay_from_run_id: str = "",
                      budgets: dict | None = None,
-                     strategy: str = "four_agents") -> models.UnifiedAnalysisRun:
+                     strategy: str = "four_agents", batch_runtime=None) -> models.UnifiedAnalysisRun:
     """同步执行一次统一编排（worker 线程/测试/实验共用）。
 
     ablation_mask（M4.2 实验专用，生产恒空）：被列入的角色报告不进入决策
@@ -91,6 +91,9 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         from app.services.unified.adapter import formal_sink
         if config.UNIFIED_PIPELINE_MODE != "on" or sink is not formal_sink:
             raise ValueError("unique_formal_sink_required")
+        if batch_runtime is None and config.REVIEW_EXECUTION_MODE == "task_graph":
+            from app.services.unified.task_runtime import for_review
+            batch_runtime = for_review(db, run_row.run_id, SessionLocal, client_factory)
     state = empty_state(
         run_row.run_id, run_row.task_type, run_row.target_ref,
         run_row.target_type, run_row.mode)
@@ -99,6 +102,19 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         from app.services.unified.state import BudgetState
         state.budgets = BudgetState.model_validate({**state.budgets.model_dump(), **budgets})
     state.investigation_goal = investigation_goal
+    if batch_runtime is not None:
+        from app.services.unified.task_runtime import VERSION
+        run_row.pipeline_version = f"{PIPELINE_VERSION}+{VERSION}"
+        state.execution_profile = "task_graph"
+        state.budgets.agent_deadline_s = 240
+        state.budgets.run_deadline_s = min(480, batch_runtime.remaining())
+        state.budgets.max_llm_calls = 16
+        # Includes the output schema, instructions and accumulated tool results.
+        # Live v2 traces reached 12.3k before finalization; 8k rejected valid work.
+        state.budgets.context_token_budgets = {role: 16000 for role in state.budgets.context_token_budgets}
+        state.budgets.message_rounds = state.budgets.rereview_rounds = 0
+        state.budgets.follow_up_rounds = state.budgets.plan_feedback_rounds = 0
+        run_deadline_s = state.budgets.run_deadline_s
     parent = {}
     if replay_from_run_id:
         parent_row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=replay_from_run_id).one_or_none()
@@ -114,6 +130,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
             state.object_id = f"risk-{risk.id}"
 
     def persist_snapshot(current: UnifiedAnalysisState) -> None:
+        current.task_receipts = dict(ctx.task_receipts)
         run_row.state_json = current.model_dump_json()
         run_row.agents_json = json.dumps(ctx.agent_logs, ensure_ascii=False, default=str)
         run_row.usage_json = json.dumps(ctx.meter.as_dict(), ensure_ascii=False)
@@ -129,7 +146,7 @@ def run_unified_sync(db: Session, run_row: models.UnifiedAnalysisRun,
         ablation_mask=frozenset(ablation_mask), force_full_review=force_full_review or (run_row.mode == "formal" and not parent),
         replay_parent=parent, agent_budget_s=state.budgets.agent_deadline_s,
         context_token_budgets=state.budgets.context_token_budgets,
-        strategy=strategy)
+        strategy=strategy, batch_runtime=batch_runtime)
     if risk is not None:
         baseline_ids = json.loads(risk.evidence_packet_json or "{}") if risk.evidence_packet_json else {}
         ctx.packet_evidence_ids = {

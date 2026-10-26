@@ -25,13 +25,23 @@ def substantive_change(before, current):
     return fingerprint(before) != fingerprint({key: current.get(key) for key in before})
 
 
-def evidence_view(db, asset_id):
+def evidence_view(db, asset_id, *, compact_runtime=False):
     asset = db.get(models.LinuxAsset, asset_id)
     if asset is None:
         raise ValueError("asset_missing")
     # Ignore receipt timestamps and new INV identifiers: identical facts are not
     # substantive updates. Retain complete runtime payloads, not only row IDs.
-    runtime = db.query(models.SecurityEvidence).filter_by(asset_id=asset_id).order_by(models.SecurityEvidence.id).all()
+    runtime = db.query(models.SecurityEvidence).filter_by(asset_id=asset_id).order_by(models.SecurityEvidence.id)
+    if compact_runtime:
+        content, count = hashlib.sha256(), 0
+        for row in runtime.yield_per(256):
+            raw = {c.name: getattr(row, c.name) for c in row.__table__.columns}
+            content.update(encode(raw).encode())
+            content.update(b"\n")
+            count += 1
+        runtime_view = {"count": count, "sha256": content.hexdigest(), "basis": "ordered_full_evidence_content"}
+    else:
+        runtime_view = [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in runtime]
     cves = {r.cve_id.split(":")[0] for r in db.query(models.RiskAssessment).filter_by(asset_id=asset_id)}
     official = {}
     for row in db.query(models.OfficialCveRecord).filter(models.OfficialCveRecord.cve_id.in_(cves)).order_by(models.OfficialCveRecord.id):
@@ -46,7 +56,7 @@ def evidence_view(db, asset_id):
             "distribution": asset.distribution, "os_version": asset.os_version,
             "official": official,
             "inventory_complete": asset.inventory_complete,
-            "runtime": [{c.name: getattr(r, c.name) for c in r.__table__.columns} for r in runtime]}
+            "runtime": runtime_view}
 
 
 def propose(db, run_id, request):

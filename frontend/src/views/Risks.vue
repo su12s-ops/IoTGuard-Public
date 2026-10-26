@@ -10,7 +10,7 @@
       </template>
       <template #actions>
         <button class="btn" type="button" :disabled="calculating" @click="calculate"><Icon name="refresh" :size="15" />{{ calculating ? "计算中…" : "重新计算" }}</button>
-        <button class="btn primary" type="button" :disabled="!rows.length" @click="openFirst"><Icon name="shield" :size="15" />进入风险审查</button>
+        <button class="btn primary" type="button" :disabled="!filteredRows.length" @click="openFirst"><Icon name="shield" :size="15" />进入风险审查</button>
       </template>
     </PageHeader>
 
@@ -117,7 +117,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { consoleState } from "../stores/consoleWorkflow";
 import { useRoute, useRouter } from "vue-router";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
@@ -260,7 +261,7 @@ async function load() {
   loading.value = true;
   error.value = "";
   try {
-    const ranking = await api.get("/risk/ranking", { timeout: 25000 });
+    const ranking = await api.get("/risk/ranking", { params: { include_details: false }, timeout: 25000 });
     rows.value = (ranking.data || []).map((row) => {
       const level = row.has_final_conclusion ? row.risk_level : row.preliminary_level;
       return {
@@ -288,6 +289,7 @@ async function load() {
 }
 
 onMounted(load);
+watch(() => `${consoleState.workflow?.id}:${consoleState.workflow?.progress_percent}:${consoleState.workflow?.status}`, load);
 </script>
 
 <style scoped>

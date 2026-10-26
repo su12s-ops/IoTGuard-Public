@@ -5,6 +5,7 @@ evidence and never counts as an operator decision.
 """
 import hashlib
 import json
+from sqlalchemy.orm import load_only
 
 from app import models
 
@@ -105,13 +106,18 @@ def reconcile_official_record(db, official):
     return results
 
 
-def explanation(db, risk):
+def explanation(db, risk, *, include_payloads=True):
     from app.services.remediation_engine import _authorized
-    events = db.query(models.RiskGovernanceEvent).filter_by(risk_id=risk.id).order_by(models.RiskGovernanceEvent.id).all()
+    query = db.query(models.RiskGovernanceEvent).filter_by(risk_id=risk.id)
+    if not include_payloads:
+        query = query.options(load_only(models.RiskGovernanceEvent.id, models.RiskGovernanceEvent.kind,
+            models.RiskGovernanceEvent.actor, models.RiskGovernanceEvent.created_at))
+    events = query.order_by(models.RiskGovernanceEvent.id).all()
     native = [e for e in events if e.kind == "native_assessment"]
     adjudications = [e for e in events if e.kind == "historical_adjudication"]
     run_id = json.loads(risk.device_context_json or "{}").get("unified_run_id")
-    current = db.query(models.UnifiedAnalysisRun).filter_by(run_id=run_id, risk_id=risk.id, mode="formal").first() if run_id else None
+    current = db.query(models.UnifiedAnalysisRun).options(load_only(models.UnifiedAnalysisRun.run_id,
+        models.UnifiedAnalysisRun.plan_json)).filter_by(run_id=run_id, risk_id=risk.id, mode="formal").first() if run_id else None
     return {"contract_version": CONTRACT, "risk_direction_semantics": DIRECTION_MEANING if native else "legacy_unverified",
         "raw_risk_direction": risk.risk_direction,
         "current_formal_run_id": current.run_id if current else None,
@@ -119,7 +125,8 @@ def explanation(db, risk):
         "historical_review_state": json.loads(adjudications[-1].payload_json)["decision"] if adjudications else "awaiting_operator",
         "execution_eligible": execution_allowed(db, risk) and _authorized(risk),
         "events": [{"id": e.id, "kind": e.kind, "actor": e.actor, "created_at": e.created_at,
-                    "payload": json.loads(e.payload_json)} for e in events]}
+                    **({"payload": json.loads(e.payload_json)} if include_payloads else {"payload_available": True})}
+                   for e in events], "event_payloads_included": include_payloads}
 
 
 def assessment_record(db, risk, run, state):
@@ -127,7 +134,19 @@ def assessment_record(db, risk, run, state):
     prep = state.evidence_prep or {}
     # Facts, not the receipt id or model output, identify repeated reasoning.
     from app.services.unified.investigation import evidence_view
-    identity = {"asset_facts": evidence_view(db, risk.asset_id),
+    evidence_snapshot = state.evidence_snapshot or {}
+    if evidence_snapshot:
+        # These immutable facts were actually presented to this run. New
+        # telemetry arriving during reasoning must not change its audit basis.
+        asset_facts = {"asset_id": risk.asset_id,
+            "category_hashes": evidence_snapshot.get("categories_hashes") or {},
+            "registry_sha256": hashlib.sha256(encode(evidence_snapshot.get("evidence_registry") or {}).encode()).hexdigest()}
+        receipt = {"run_id": run.run_id, "snapshot_id": evidence_snapshot.get("snapshot_id"),
+                   "content_sha256": evidence_snapshot.get("content_sha256"), "storage": "UnifiedAnalysisRun.state_json"}
+    else:
+        asset_facts = evidence_view(db, risk.asset_id, compact_runtime=True)
+        receipt = {"storage": "database_content_fingerprint", "legacy_without_snapshot": True}
+    identity = {"asset_facts": asset_facts,
         "candidate": {key: (state.baseline or {}).get(key) for key in
             ("preliminary_score", "preliminary_level", "match_status", "installed_version", "fixed_version")}}
     facts_hash = hashlib.sha256(encode(identity).encode()).hexdigest()
@@ -135,7 +154,7 @@ def assessment_record(db, risk, run, state):
         "run_id": run.run_id, "previous": previous,
         "risk_direction_semantics": DIRECTION_MEANING, "baseline": state.baseline,
         "facts_hash": facts_hash, "model_outputs_preserved": True,
-        "facts_schema": "m5-facts-v2", "facts": identity,
+        "facts_schema": "m5-facts-v3", "facts": identity, "evidence_receipt": receipt,
         "confidence_dimensions": {"static_applicability": state.vulnerability,
             "runtime_quality": state.runtime or state.runtime_program_fallback,
             "official_coverage": [c.get("source_bundle") for c in prep.get("candidates", [])],

@@ -8,7 +8,6 @@
           <div class="brand-name">IoTGuard</div>
           <div class="brand-sub">Security Console</div>
         </div>
-        <Icon name="menu" :size="17" style="margin-left: auto; color: #6f83a0" />
       </router-link>
 
       <div class="ws" :title="workspaceSub">
@@ -17,7 +16,6 @@
           <div class="ws-name">物联网实验室</div>
           <div class="ws-sub">{{ workspaceSub }}</div>
         </div>
-        <Icon name="chev-down" :size="13" />
       </div>
 
       <nav class="nav">
@@ -34,13 +32,9 @@
         </router-link>
       </nav>
 
-      <div class="rail-lifecycle" role="button" tabindex="0" @click="ui.experimentOpen = true" @keydown.enter="ui.experimentOpen = true" @keydown.space.prevent="ui.experimentOpen = true">
-        <div class="rl-head"><Icon name="archive" :size="14" />本轮实验</div>
-        <p class="rl-note">设备保留 · 结果可归档<br />清理后可开始新一轮</p>
-        <button class="rl-btn" type="button" @click.stop="ui.experimentOpen = true">
-          <Icon name="sliders" :size="13" />管理与新一轮
-        </button>
-      </div>
+      <button class="rl-btn" style="margin: auto 12px 16px; width: calc(100% - 24px)" type="button" :disabled="refreshingRound || consoleState.starting || consoleState.workflow?.status === 'running'" @click="refreshRound">
+        <Icon name="refresh" :size="14" />{{ refreshingRound ? "清理中…" : "刷新本轮" }}
+      </button>
 
       <div class="rail-foot">
         <div class="user">
@@ -49,7 +43,6 @@
             <div class="user-name">admin</div>
             <div class="user-role">安全管理员</div>
           </div>
-          <Icon name="chev-right" :size="13" />
         </div>
         <div class="rail-meta"><span>v0.2.0</span><span>{{ buildLabel }}</span></div>
       </div>
@@ -57,14 +50,14 @@
 
     <div class="frame">
       <main class="main">
+        <div v-if="controlSession.error" class="error-banner" role="alert">{{ controlSession.error }}</div>
         <router-view />
       </main>
     </div>
   </div>
 
-  <ExperimentModal :open="ui.experimentOpen" @close="ui.experimentOpen = false" />
 
-  <Modal :open="ui.tokenOpen" title="操作令牌" description="令牌只保存在当前页面内存中，刷新即清除；不会写入本地存储。" @close="ui.tokenOpen = false">
+  <Modal :open="ui.tokenOpen && !controlSession.managed" title="操作令牌" description="令牌只保存在当前页面内存中，刷新即清除；不会写入本地存储。" @close="ui.tokenOpen = false">
     <label class="field-label" for="control-token">LINUXGUARD_CONTROL_TOKEN</label>
     <input id="control-token" v-model="tokenDraft" class="input" type="password" autocomplete="off" placeholder="粘贴后端控制令牌" @keyup.enter="saveToken" />
     <p class="field-hint">设备写、审批、存档与清理需要令牌；令牌值见后端 <span class="mono">backend/.env</span> 的 <span class="mono">LINUXGUARD_CONTROL_TOKEN</span>。只读页面不需要。</p>
@@ -84,13 +77,32 @@ import { useRoute } from "vue-router";
 import AppSprite from "./components/AppSprite.vue";
 import Icon from "./components/Icon.vue";
 import Modal from "./components/Modal.vue";
-import ExperimentModal from "./components/ExperimentModal.vue";
 import ToastHost from "./components/ToastHost.vue";
 import { api } from "./api";
 import { controlSession } from "./api/controlSession";
 import { notify, ui } from "./stores/ui";
+import { consoleState, pollWorkflow } from "./stores/consoleWorkflow";
 
 const route = useRoute();
+const refreshingRound = ref(false);
+let stopWorkflowPolling = null;
+
+async function refreshRound() {
+  if (refreshingRound.value) return;
+  refreshingRound.value = true;
+  consoleState.resetting = true;
+  try {
+    await api.post("/experiment/refresh", null, {
+      headers: { "X-Experiment-Action": "refresh" }, timeout: 180000
+    });
+    window.location.assign("/");
+  } catch (cause) {
+    notify(cause?.response?.data?.detail || "清理失败，请稍后重试", "error");
+  } finally {
+    refreshingRound.value = false;
+    consoleState.resetting = false;
+  }
+}
 const tokenDraft = ref("");
 const summary = ref({});
 const buildLabel = ref("working-tree");
@@ -153,11 +165,13 @@ function clearToken() {
 }
 
 onMounted(() => {
+  stopWorkflowPolling = pollWorkflow();
   loadSummary();
   timer = window.setInterval(loadSummary, 30000);
 });
 
 onUnmounted(() => {
+  stopWorkflowPolling?.();
   window.clearInterval(timer);
 });
 </script>

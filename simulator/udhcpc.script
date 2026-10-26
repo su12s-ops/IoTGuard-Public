@@ -1,0 +1,17 @@
+#!/bin/sh
+# Executed inside one device's network namespace; never touches root LAN routes.
+case "$1" in
+    bound|renew)
+        export IOTGUARD_DHCP_IP="$ip" IOTGUARD_DHCP_MASK="$subnet"
+        prefix=$(/usr/bin/python3 -c 'import os,ipaddress; print(ipaddress.ip_network("0.0.0.0/"+os.environ.get("IOTGUARD_DHCP_MASK","255.255.255.0")).prefixlen)') || exit 1
+        /sbin/ip addr replace "$ip/$prefix" dev "$interface" || exit 1
+        for gateway in $router; do
+            /sbin/ip route replace default via "$gateway" dev "$interface"
+            break
+        done
+        logger -t iotguard-lan "simulation lease $interface $ip"
+        ;;
+    deconfig)
+        /sbin/ip -4 addr flush dev "$interface" scope global
+        ;;
+esac

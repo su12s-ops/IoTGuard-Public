@@ -1,6 +1,6 @@
 """统一四智能体（Stage 9B）的结构化输入/输出 Schema。
 
-设计约束（见 docs/SECURITY_MODEL.md）：
+设计约束（见 docs/reference/security-model.md）：
 - 每个 Agent 有唯一命名、明确输出 Schema、只读工具边界；
 - 顶层多余字段由程序「预分拣」进 notes（CF6 修复：Zephyr 场景不再因
   多余说明字段整体失败），必填字段/类型/枚举仍然强制校验；

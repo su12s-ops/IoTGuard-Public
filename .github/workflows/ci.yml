@@ -7,6 +7,16 @@ on:
     branches: [main]
 
 jobs:
+  docs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check published Markdown links
+        run: python scripts/check_docs.py
+
   backend:
     strategy:
       fail-fast: false
@@ -38,7 +48,10 @@ jobs:
         run: python -m pytest -q --tb=short
 
   frontend:
-    runs-on: ubuntu-latest
+    # GitHub-hosted Windows images include Microsoft Edge. Keep browser
+    # validation aligned with the supported local browser and avoid installing
+    # a separate Chromium binary.
+    runs-on: windows-latest
     defaults:
       run:
         working-directory: frontend
@@ -53,9 +66,11 @@ jobs:
         run: npm ci
       - name: Production build
         run: npm run build
-      - name: Install browser
-        run: npx playwright install --with-deps chromium
+      - name: Frontend state and contract tests
+        run: node --test tests/*.test.js
       - name: Isolated browser regression
+        env:
+          PLAYWRIGHT_CHANNEL: msedge
         run: npm run test:e2e
       - name: Upload browser failure evidence
         if: failure()

@@ -3,14 +3,12 @@
     <PageHeader
       title="智能研判中心"
       subtitle="Analysis Rounds"
-      description="按轮次运行：接入设备 → 匹配与风险计算 → 四智能体研判；归档在「本轮实验与存档」"
+      description="自动运行：情报获取 → 版本匹配 → 风险计算 → 四智能体研判 → 审核"
     >
       <template #meta>
-        <span>本轮 {{ runs.length }} 条运行</span><i class="sep" /><span>候选 {{ round?.active?.candidates ?? "—" }} 项</span><i class="sep" /><span>存档 {{ round?.archives?.count ?? 0 }} 份</span>
+        <span>本轮 {{ runs.length }} 条运行</span><i class="sep" /><span>候选 {{ round?.active?.candidates ?? "—" }} 项</span>
       </template>
       <template #actions>
-        <button v-if="hasActiveResults" class="btn" type="button" @click="openArchive"><Icon name="archive" :size="15" />归档并重新开始</button>
-        <button class="btn primary" type="button" :disabled="starting || runningActive" @click="startRound"><Icon name="play" :size="15" />{{ starting ? "启动中…" : "开始执行" }}</button>
         <button class="btn" type="button" @click="refreshAll"><Icon name="refresh" :size="15" />刷新</button>
       </template>
     </PageHeader>
@@ -25,7 +23,8 @@
       <div class="card-foot"><span>{{ reviewError || reviewRun?.error || reviewRun?.termination_reason || "任务完成仅表示流程结束，不代表自动研判成功；修复仍需人工审批。" }}</span><span>已处理 {{ reviewRun?.processed_object_count ?? "—" }} / {{ reviewRun?.selected_object_count ?? "—" }} · 待人工 {{ reviewRun?.human_review_object_count ?? "—" }}</span></div>
     </div>
 
-    <section class="card recover-card">
+    <details class="card recover-card">
+      <summary class="card-head">维护工具：中断恢复</summary>
       <div class="card-head">
         <div>
           <div class="card-title">中断恢复（维护操作）</div>
@@ -45,7 +44,7 @@
         </div>
         <div v-else class="recover-note ok">没有存活报告引用的中断对象；被重置的对象已回到「待重新分析」，可在风险队列或资产面板重新发起。</div>
       </div>
-    </section>
+    </details>
 
     <Modal :open="recoverOpen" title="恢复中断遗留对象" description="维护操作：把未被存活报告引用的「研判中」风险重置回「待重新分析」，并把孤儿子运行标记为中断。" @close="recoverOpen = false">
       <ul class="recover-facts">
@@ -63,7 +62,7 @@
       <div class="card-head">
         <div>
           <div class="card-title">开始新一轮分析</div>
-          <div class="card-desc">当前工作台没有运行结果{{ round?.archives?.latest ? `；上一轮已存档（${round.archives.latest.label || round.archives.latest.filename}）` : "" }}</div>
+          <div class="card-desc">选择本轮分析范围，然后点击上方“开始”；无需手动同步情报。</div>
         </div>
         <span class="chip info"><i class="dot" />等待开始</span>
       </div>
@@ -90,8 +89,7 @@
           </button>
         </div>
         <div class="card-foot">
-          <span>开始执行 = 匹配 → 风险计算 → 四智能体研判（后台）；写操作需控制令牌。</span>
-          <button class="btn primary" type="button" :disabled="starting || runningActive" @click="startRound"><Icon name="play" :size="15" />{{ starting ? "启动中…" : "开始执行" }}</button>
+          <span>情报准备、匹配和研判由后端按顺序执行，当前阶段显示在上方进度条。</span>
         </div>
       </template>
     </section>
@@ -177,6 +175,14 @@
             <div class="an-foot"><span>{{ agent.output }}</span><em>{{ agent.statusLabel }}</em></div>
           </div>
         </div>
+        <div v-if="detail?.activity?.roles?.length" style="padding: 0 18px 12px" aria-live="polite">
+          <p v-if="detail.activity.totals?.observed">{{ detail.activity.totals.partial ? '近期记录：' : '' }}模型请求 {{ detail.activity.totals.model_requests }} 次，已返回 {{ detail.activity.totals.model_responses }} 次
+            · 累计排队 {{ detail.activity.totals.queue_seconds }} 秒 · 模型等待 {{ detail.activity.totals.model_seconds }} 秒（并行时间可重叠）</p>
+          <p v-for="role in detail.activity.roles" :key="role.role">
+            <b>{{ activityRoleLabels[role.role] || role.role }}</b>：{{ role.error || activityPhaseLabels[role.phase] || statusLabel(role.status) }}
+            <span v-if="role.elapsed_seconds != null"> · 当前步骤 {{ role.elapsed_seconds }} 秒</span>
+          </p>
+        </div>
         <div class="card-foot"><span>共享证据与确定性协调；每步结论都可回溯。</span><span class="num">{{ selectedRun?.trace_id?.slice(-12) || "Trace 未记录" }}</span></div>
       </section>
 
@@ -223,16 +229,7 @@
       </div>
     </section>
 
-    <section class="card">
-      <div class="card-head">
-        <div>
-          <div class="card-title">历史存档</div>
-          <div class="card-desc">{{ archiveDesc }}</div>
-        </div>
-        <button class="btn" type="button" @click="openArchive"><Icon name="archive" :size="15" />本轮实验与存档</button>
-      </div>
-      <div class="card-foot"><span>归档先写结果存档（可下载），再清理衍生数据、保留设备与采集配置。</span></div>
-    </section>
+
   </div>
 </template>
 
@@ -246,6 +243,7 @@ import { api, recoverInterrupted } from "../api";
 import { controlSession } from "../api/controlSession";
 import { notify, ui } from "../stores/ui";
 import { shortTime, statusLabel, statusTone } from "../utils/format";
+import { consoleState } from "../stores/consoleWorkflow";
 
 const runs = ref([]);
 const selectedRun = ref(null);
@@ -256,7 +254,10 @@ const error = ref("");
 const round = ref(null);
 const devices = ref([]);
 const selectedAssetId = ref(0);
-const starting = ref(false);
+watch(selectedAssetId, (value) => {
+  consoleState.selectedAssetId = value;
+  consoleState.selectedAssetLabel = devices.value.find(item => item.asset_id === value)?.hostname || "全部接入设备";
+});
 
 const reviewRunId = ref("");
 const reviewRun = ref(null);
@@ -294,23 +295,14 @@ let refreshing = false;
 let disposed = false;
 
 const reviewPending = computed(() => Boolean(reviewRunId.value) && !terminalReviewStatuses.has(reviewRun.value?.status));
-const runningActive = computed(() => reviewPending.value || Boolean(round.value?.active?.running));
+const runningActive = computed(() => reviewPending.value || Boolean(round.value?.active?.running) || consoleState.workflow?.status === "running");
 const hasActiveResults = computed(() => runs.value.length > 0 || runningActive.value);
-
-const archiveDesc = computed(() => {
-  const archives = round.value?.archives;
-  if (!archives || !archives.count) return "暂无历史存档；归档上一轮后这里会显示存档概况。";
-  const latest = archives.latest || {};
-  const when = latest.archived_at ? shortTime(latest.archived_at) : "";
-  const label = latest.label || latest.filename || "";
-  return `已归档 ${archives.count} 份 · 最近：${label} ${when} · 风险 ${latest.summary?.risks ?? "—"} 条`;
-});
 
 const pipelineNote = computed(() => {
   if (!round.value) return "";
   const intelCount = round.value.intel?.vulnerability_count;
   if (Number(intelCount) === 0) {
-    return "漏洞情报库为空：本轮匹配结果将为 0。请先在「漏洞与风险」同步官方情报，或从存档恢复后再开始执行。";
+    return "本轮尚无漏洞情报，点击上方“开始”后自动获取。";
   }
   const pipeline = round.value.pipeline || {};
   if (pipeline.mode !== "on") {
@@ -338,9 +330,17 @@ const agents = computed(() => {
 });
 
 const agentSteps = computed(() => agents.value);
+const activityRoleLabels = { asset_investigator: '资产调查', vulnerability_analyst: '漏洞分析', runtime_analyst: '运行时分析', decision_planner: '决策规划' };
+const activityPhaseLabels = { shared_report: '等待同设备共享报告（不会重复调用模型）', queue: '等待模型槽位（最多 2 个并发请求）', model: '等待模型生成并返回', tool: '正在查询原始证据', validating: '响应已返回，正在处理与校验', failed: '请求失败' };
+const activityEventLabels = { task_waiting: '等待同设备共享报告', model_waiting: '进入模型请求队列', model_started: '模型请求已发出', model_finished: '模型响应已返回', model_failed: '模型请求失败', tool_started: '开始查询证据', tool_finished: '证据查询结束' };
 
 const timeline = computed(() => {
   if (!selectedRun.value) return [];
+  const activity = detail.value?.activity?.timeline;
+  if (activity?.length) return [...activity].reverse().map(event => ({
+    time: shortTime(event.at), actor: activityRoleLabels[event.role] || event.role,
+    action: activityEventLabels[event.event] || event.event, tone: event.event === 'model_failed' ? 'warn' : 'muted', icon: iconFor(activityRoleLabels[event.role])
+  }));
   const events = detail.value?.events || [];
   if (Array.isArray(events) && events.length) {
     return events.slice(0, 6).map((event) => ({
@@ -378,20 +378,6 @@ function iconFor(actor) {
   return "bot";
 }
 
-function openArchive() {
-  ui.experimentOpen = true;
-}
-
-function handleWriteFailure(cause, fallback) {
-  const status = cause?.response?.status;
-  const detailMessage = cause?.response?.data?.detail || fallback;
-  if (status === 401 || status === 503) {
-    ui.tokenOpen = true;
-    notify("需要控制令牌：请在弹窗中配置后重试。", "error");
-  }
-  return detailMessage;
-}
-
 async function select(run) {
   selectedRun.value = run;
   detail.value = null;
@@ -409,6 +395,11 @@ async function loadRound() {
     const result = await api.get("/rounds/current", { timeout: 20000 });
     round.value = result.data || null;
     devices.value = round.value?.devices || [];
+    const review = consoleState.workflow?.round?.review_run;
+    if (review?.run_id && reviewRunId.value !== review.run_id) {
+      reviewRunId.value = review.run_id;
+      reviewRun.value = review;
+    }
   } catch (cause) {
     error.value = cause?.response?.data?.detail || "轮次状态读取失败。";
   }
@@ -429,40 +420,6 @@ async function load() {
   }
 }
 
-async function startRound() {
-  starting.value = true;
-  error.value = "";
-  try {
-    const result = await api.post("/rounds/start", {
-      asset_id: selectedAssetId.value || 0,
-      // 0 = 范围内全部符合条件风险（受批次上限约束），不再固定为 1 条。
-      batch_size: 0
-    }, { timeout: 120000 });
-    const body = result.data || {};
-    const review = body.review;
-    const round = body.round || null;
-    const counts = round?.counts || {};
-    if (review && review.run_id) {
-      reviewRunId.value = review.run_id;
-      reviewRun.value = null;
-      reviewError.value = "";
-      notify(`新一轮已启动：匹配 ${body.match_count} 项，风险 ${body.risk_count} 项，候选 ${counts.candidates ?? review.candidate_count ?? 0} 条，研判 ${review.run_id}`, "success");
-    } else if (round?.status === "no_candidates" || (review && review.status === "no_candidates")) {
-      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；候选 0 条，未调用模型。`, "info");
-    } else if (body.reused) {
-      notify(`已恢复运行中的轮次 ${round?.round_id || ""}，未重复创建任务。`, "info");
-      if (round?.review_run_id) reviewRunId.value = round.review_run_id;
-    } else {
-      notify(`本轮完成匹配 ${body.match_count} 项、风险 ${body.risk_count} 项；研判未启动：${round?.blocked_reason || body.review_unavailable_reason || "未知原因"}`, "error");
-    }
-    if (!reviewRunId.value && round?.review_run_id) reviewRunId.value = round.review_run_id;
-    await refreshAll();
-  } catch (cause) {
-    error.value = handleWriteFailure(cause, "新一轮启动失败。");
-  } finally {
-    starting.value = false;
-  }
-}
 
 async function loadReview() {
   if (!reviewRunId.value || (reviewRun.value && !reviewPending.value)) return;
@@ -504,6 +461,7 @@ onMounted(async () => {
   syncPolling();
 });
 watch(runningActive, syncPolling);
+watch(() => `${consoleState.workflow?.status}:${consoleState.workflow?.progress_percent}:${consoleState.workflow?.round?.review_run_id}`, refreshAll);
 onUnmounted(() => {
   disposed = true;
   if (pollTimer) window.clearInterval(pollTimer);

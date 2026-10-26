@@ -30,9 +30,9 @@ import paramiko
 from dotenv import dotenv_values
 
 ROOT = Path(__file__).resolve().parents[1]
-BASE = "http://127.0.0.1:18000"
+BASE = "http://127.0.0.1:18080"
 # Operator-declared backend allowlist for this local lab script: the Docker API
-# is loopback-only by design (docker-compose binds 127.0.0.1:18000). Any other
+# is loopback-only by design (the frontend proxies /api on 127.0.0.1:18080). Any other
 # host — private, public or otherwise — is refused before a request is made.
 ALLOWED_BACKEND_HOSTS = {"127.0.0.1"}
 
@@ -107,7 +107,8 @@ def open_pinned_session(env):
 
     def forward(channel):
         import socket as socket_module
-        sock = socket_module.create_connection(("127.0.0.1", 18000), timeout=15)
+        backend_url = urlparse(BASE)
+        sock = socket_module.create_connection((backend_url.hostname, backend_url.port or 80), timeout=15)
         try:
             while True:
                 ready, _, _ = select.select([sock, channel], [], [], 1)
@@ -139,7 +140,6 @@ def open_pinned_session(env):
     # Load the unmodified collector functions without invoking its general queue loop.
     bootstrap = "import os,sys\nos.environ.update(" + repr(remote_env) + ")\n"
     bootstrap += "os.environ['LINUXGUARD_DEVICE_OPENWRT_KEY']=os.path.expanduser('~/.ssh/iotguard_ed25519')\n"
-    bootstrap += "os.environ['LINUXGUARD_DEVICE_OPENWRT_LAB_KEY']=os.path.expanduser('~/.ssh/iotguard_lab_ed25519')\n"
     bootstrap += source.replace("from __future__ import annotations", "").replace('if __name__ == "__main__":', 'if False:')
     # Unbounded claim loop: transient claim failures (status 0 = tunnel/backend
     # hiccup, 5xx) back off in-loop instead of exiting; only authorization
@@ -161,7 +161,7 @@ while True:
     if assignment:
         target = assignment.get("connection", {})
         asset_id = assignment.get("asset", {}).get("id")
-        allowed = {1: ("192.168.183.129", "SHA256:9iQisJ+wzFGKcY1RW3UOW/SYEIqW33selbbK8mW8N8s"), 2: ("192.168.100.1", "SHA256:+CaFHIb60hY7jtvKJNU0uZnnJ0rHyiBCzFLsfqNMKAU"), 4: ("192.168.206.2", "SHA256:+ptdJBsAAHu7hJ9j0Oytyaw4XI7IMVTW/DHnVybqevU")}
+        allowed = {1: ("192.168.183.129", "SHA256:9iQisJ+wzFGKcY1RW3UOW/SYEIqW33selbbK8mW8N8s"), 2: ("192.168.100.1", "SHA256:+CaFHIb60hY7jtvKJNU0uZnnJ0rHyiBCzFLsfqNMKAU")}
         identity = allowed.get(asset_id)
         if assignment.get("harness_adapter") or not identity or (target.get("host"), target.get("host_key_sha256")) != identity or assignment.get("collector_type") not in ("linux_ssh", "openwrt_ssh", "openwrt_logread"):
             raise SystemExit("Refusing assignment outside authorized read-only inventory/log scope")
@@ -176,6 +176,26 @@ while True:
 
 
 def main():
+    # Keep the handle alive for the entire supervisor lifetime. A second logon
+    # launcher must not contend for the pinned remote forwarding port.
+    lock_dir = ROOT / "reports/collection-node"
+    lock_dir.mkdir(parents=True, exist_ok=True)
+    if sys.stdout is None or sys.stderr is None:
+        stream = (lock_dir / "supervisor.log").open("a", encoding="utf-8", buffering=1)
+        sys.stdout = sys.stderr = stream
+    singleton = (lock_dir / "collection-supervisor.lock").open("a+b")
+    if os.name == "nt":
+        import msvcrt
+        if singleton.seek(0, 2) == 0:
+            singleton.write(b"0")
+            singleton.flush()
+        singleton.seek(0)
+        try:
+            msvcrt.locking(singleton.fileno(), msvcrt.LK_NBLCK, 1)
+        except OSError:
+            print("Existing collection supervisor holds the runtime lock; exiting.", flush=True)
+            singleton.close()
+            return
     env = dotenv_values(ROOT / "backend/.env.docker")
     session_no = 0
     backoff = RECONNECT_BACKOFF_S

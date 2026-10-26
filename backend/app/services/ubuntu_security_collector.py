@@ -111,6 +111,7 @@ def _fetch_ubuntu_cves_for_package(package_name: str, limit: int) -> tuple[list[
                 f"{UBUNTU_CVE_API}?{urlencode(params)}",
                 headers={"User-Agent": "LinuxGuard/0.1"},
                 timeout=20,
+                retries=1,
             )
         except Exception as exc:
             warning = f"Ubuntu Security API 请求失败 ({package_name}): {exc}"
@@ -374,7 +375,8 @@ def sync_ubuntu_asset_intelligence(
                 fetch_cache[cache_key] = _fetch_ubuntu_cves_for_package(package_name, limit=limit_per_package)
             cve_list, fetch_warning = fetch_cache[cache_key]
             if fetch_warning:
-                result.warnings.append(fetch_warning)
+                if fetch_warning not in result.warnings:
+                    result.warnings.append(fetch_warning)
                 saved_cves.update(
                     _restore_cached_canonical_package(db, package_name, codename, fetch_warning)
                 )

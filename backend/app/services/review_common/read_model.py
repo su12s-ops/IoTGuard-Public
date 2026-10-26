@@ -26,6 +26,7 @@ def latest_analysis(db):
 def review_status():
     from app.services.unified.agents_def import specs_summary
     return {"configured": bool(config.DEEPSEEK_API_KEY), "model": config.DEEPSEEK_MODEL,
+        "execution_profile": config.REVIEW_EXECUTION_MODE,
         "mode": config.UNIFIED_PIPELINE_MODE, "pipeline_version": PIPELINE_VERSION,
         # Protocol and endpoint host are operational facts; the key and any
         # authorization header are never returned.

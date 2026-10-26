@@ -9,8 +9,8 @@ const script = source.match(/<script setup>([\s\S]*?)<\/script>/)[1].replace(/^i
 function mount(api) {
   const intervals = new Map();
   const window = { setInterval(fn) { intervals.set(1, fn); return 1; }, clearInterval(id) { intervals.delete(id); } };
-  const create = new Function('computed', 'ref', 'onMounted', 'onUnmounted', 'watch', 'api', 'notify', 'ui', 'shortTime', 'statusLabel', 'statusTone', 'window', `${script}\nreturn { runs, selectedRun, detail, agents, agentSteps, timeline, gateChecks, reviewRunId, reviewRun, reviewPending, runningActive, startRound, refreshAll, syncPolling };`);
-  const state = create(computed, ref, () => {}, () => {}, () => {}, api, () => {}, {}, (x) => x || '—', (x) => x || '未知', () => 'muted', window);
+  const create = new Function('computed', 'ref', 'onMounted', 'onUnmounted', 'watch', 'api', 'notify', 'ui', 'shortTime', 'statusLabel', 'statusTone', 'consoleState', 'window', `${script}\nreturn { runs, selectedRun, detail, agents, agentSteps, timeline, gateChecks, reviewRunId, reviewRun, reviewPending, runningActive, refreshAll, syncPolling };`);
+  const state = create(computed, ref, () => {}, () => {}, () => {}, api, () => {}, {}, (x) => x || '—', (x) => x || '未知', () => 'muted', { workflow: null }, window);
   return { ...state, intervals };
 }
 
@@ -48,7 +48,8 @@ test('batch review is polled to terminal without any unified run rows', async ()
       throw new Error(`unexpected read ${path}`);
     }
   });
-  await vm.startRound();
+  vm.reviewRunId.value = 'batch-fixture';
+  await vm.refreshAll();
   assert.equal(vm.reviewRunId.value, 'batch-fixture');
   assert.equal(vm.reviewPending.value, true);
   assert.equal(vm.intervals.size, 1);

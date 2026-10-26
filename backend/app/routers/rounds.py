@@ -38,7 +38,7 @@ ROUND_TERMINAL_STATUSES = frozenset(
 )
 REVIEWABLE_STATUSES = frozenset({"candidate", "reanalysis_required"})
 IN_PROGRESS_STATUSES = frozenset(
-    {"running", "evidence_preparing", "agent_reviewing", "conflict_review", "coordinator_review"}
+    {"queued", "running", "evidence_preparing", "agent_reviewing", "conflict_review", "coordinator_review"}
 )
 
 
@@ -274,7 +274,9 @@ def _sync_round_from_report(db: Session, row: models.AnalysisRound) -> None:
 
     selected = int(report.selected_object_count or len(ids) or row.selected_object_count or 0)
     processed = int(report.processed_object_count or 0)
-    if report.status in ("completed", "partial", "human_review", "no_candidates"):
+    window_exhausted = report.termination_reason in {
+        "analysis_window_exhausted", "analysis_budget_insufficient_for_review"}
+    if report.status in ("completed", "partial", "human_review", "no_candidates") and not window_exhausted:
         processed = max(processed, selected)
     row.selected_object_count = selected
     row.processed_object_count = min(processed, selected) if selected else processed
@@ -286,7 +288,10 @@ def _sync_round_from_report(db: Session, row: models.AnalysisRound) -> None:
     row.completed_at = report.completed_at or row.completed_at or datetime.now(timezone.utc)
     row.error = report.error or row.error
 
-    if report.status in ("failed", "interrupted"):
+    if window_exhausted:
+        row.status = "partial"
+        row.blocked_reason = report.termination_reason
+    elif report.status in ("failed", "interrupted"):
         row.status = "failed"
         row.blocked_reason = (report.error or report.termination_reason
                               or "formal_review_failed_before_terminal_conclusion")[:2000]
@@ -597,6 +602,10 @@ class RoundStartInput(BaseModel):
 
 @router.post("/start", dependencies=[Depends(require_control)])
 def start_round(payload: RoundStartInput, db: Session = Depends(get_db)):
+    return execute_round(payload, db)
+
+
+def execute_round(payload: RoundStartInput, db: Session, progress=None):
     """发起一轮：匹配 → 风险计算 → 对范围内全部符合条件风险发起研判。
 
     语义：
@@ -690,12 +699,16 @@ def start_round(payload: RoundStartInput, db: Session = Depends(get_db)):
     risk_count = 0
     selection: dict = {}
     try:
+        if progress:
+            progress("matching", "正在匹配设备软件版本与官方情报")
         match_count = run_matching(db, asset_id=payload.asset_id or None,
                                    openwrt_stats=openwrt_stats)
         row.match_count = match_count
         row.stage = "risk_calculation"
         db.commit()
 
+        if progress:
+            progress("risk", f"匹配完成（{match_count} 项），正在计算风险")
         risk_count = calculate_risk(db, asset_id=payload.asset_id or None)
         row.risk_count = risk_count
         row.stage = "candidate_selection"
@@ -800,6 +813,8 @@ def start_round(payload: RoundStartInput, db: Session = Depends(get_db)):
 
     review = None
     review_unavailable_reason = ""
+    if progress:
+        progress("agents", f"风险计算完成（{risk_count} 项），正在提交四智能体研判")
     if config.UNIFIED_PIPELINE_MODE != "on":
         review_unavailable_reason = "formal_unified_mode_required; legacy LLM retired"
     elif not getattr(config, "DEEPSEEK_API_KEY", ""):

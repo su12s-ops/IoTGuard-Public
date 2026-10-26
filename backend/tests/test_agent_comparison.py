@@ -45,3 +45,14 @@ def test_unlabelled_triples_never_become_paired_accuracy():
     assert result["paired_cases"] == 0
     assert all(metric["accuracy_including_failures"] is None
                for metric in result["metrics"].values())
+
+
+def test_truth_cannot_change_across_repeats_and_facts_drift_blocks_sampling_gate():
+    rows = samples()
+    changed = [{**item, "repeat": 2, "expected": {"impact": "affected"}} for item in samples()]
+    with pytest.raises(ValueError, match="ground truth"):
+        module.evaluate(rows + changed)
+    changed = [{**item, "repeat": 2, "facts_sha256": "changed"} for item in samples()]
+    gate = module.evaluate(rows + changed)["quality_gate"]
+    assert not gate["fixed_facts_across_repeats"]
+    assert not gate["ready"] and not gate["claims_allowed"]

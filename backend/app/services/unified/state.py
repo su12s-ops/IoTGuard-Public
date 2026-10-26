@@ -117,6 +117,8 @@ class UnifiedAnalysisState(BaseModel):
     target_type: str = "linux_host"
     mode: Literal["shadow", "formal", "historical"] = "shadow"
     investigation_goal: str = ""
+    execution_profile: str = "legacy"
+    task_receipts: Annotated[dict[str, Any], merge_dict] = Field(default_factory=dict)
 
     routing: RoutingDecision = Field(default_factory=RoutingDecision)
     capability_marks: dict[str, Any] = Field(default_factory=dict)

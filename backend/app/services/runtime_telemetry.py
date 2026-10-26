@@ -60,6 +60,41 @@ def event_time(value):
 EVIDENCE_FRESH_WINDOW_S = 900
 
 
+def sensor_health(sensor, now=None):
+    now = now or datetime.now(timezone.utc)
+    timestamp = sensor.last_heartbeat_at
+    timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp and timestamp.tzinfo is None else timestamp
+    age = round(max(0, (now - timestamp).total_seconds())) if timestamp else None
+    try:
+        capabilities = json.loads(sensor.capabilities_json or "{}")
+    except (ValueError, TypeError):
+        capabilities = {}
+    if not isinstance(capabilities, dict):
+        capabilities = {}
+    status = sensor.status
+    if status in {"running", "reporting", "stopped"} and capabilities.get("mode") == "pull":
+        status = "reporting" if age is not None and age <= 120 else "stale"
+    elif status in {"running", "reporting"} and (age is None or age > 120):
+        status = "stale"
+    if status in {"running", "reporting"} and sensor.dropped_events:
+        status = "degraded"
+    return status, age, capabilities
+
+
+def sensor_summary(db):
+    order = {"running": 0, "reporting": 0, "degraded": 1, "stale": 2,
+             "stopped": 3, "failed": 4, "unknown": 4, "none": 5}
+    details = []
+    now = datetime.now(timezone.utc)
+    for sensor in db.query(models.RuntimeSensor).all():
+        status, age, _ = sensor_health(sensor, now)
+        details.append({"sensor_id": sensor.sensor_id, "asset_id": sensor.asset_id,
+                        "source": sensor.source, "status": status, "heartbeat_age_seconds": age})
+    worst = max((item["status"] for item in details), key=lambda s: order.get(s, 9), default="none")
+    return {"status": worst, "healthy": sum(item["status"] in {"running", "reporting"} for item in details),
+            "total": len(details), "sensors": details}
+
+
 def evidence_freshness(db, asset_id=None):
     """Whether any real runtime event arrived recently — deliberately separate
     from sensor heartbeat status and from backend liveness."""
@@ -82,17 +117,9 @@ def coverage(db, asset_id):
     sensors = db.query(models.RuntimeSensor).filter_by(asset_id=asset_id).all()
     rows = []
     for sensor in sensors:
-        timestamp = sensor.last_heartbeat_at
-        timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp.tzinfo is None else timestamp
-        age = max(0, (now - timestamp).total_seconds())
-        capabilities = json.loads(sensor.capabilities_json or "{}")
-        # Pull collectors stop after a bounded snapshot. A recent successful
-        # report is not a stopped sensor, nor a continuously running probe.
-        status = "stale" if age > 120 else ("reporting" if capabilities.get("mode") == "pull" and sensor.status == "stopped" else sensor.status)
-        if status == "running" and sensor.dropped_events:
-            status = "degraded"
+        status, age, capabilities = sensor_health(sensor, now)
         rows.append({"sensor_id": sensor.sensor_id, "source": sensor.source, "status": status,
-                     "age_seconds": round(age), "dropped_events": sensor.dropped_events,
+                     "age_seconds": age, "dropped_events": sensor.dropped_events,
                      "capabilities": capabilities, "detail": sensor.detail})
     states = {r["status"] for r in rows}
     healthy_states = {"running", "reporting"}
@@ -368,35 +395,39 @@ def reliability_snapshot(db) -> dict:
       仅在使用 P0 转发器（批量确认协议）时存在，否则 "unknown"。
     """
     sensors = db.query(models.RuntimeSensor).order_by(models.RuntimeSensor.id).all()
-    attributed = dict(
-        db.query(models.RuntimeEvent.sensor_id, func.count(models.RuntimeEvent.id))
+    attributed = {(asset_id, sensor_id): count for asset_id, sensor_id, count in
+        db.query(models.RuntimeEvent.asset_id, models.RuntimeEvent.sensor_id, func.count(models.RuntimeEvent.id))
         .filter(models.RuntimeEvent.sensor_id != "")
-        .group_by(models.RuntimeEvent.sensor_id).all())
+        .group_by(models.RuntimeEvent.asset_id, models.RuntimeEvent.sensor_id).all()}
     times = {}
-    for sensor_id, first_at, last_at in (
-            db.query(models.RuntimeEvent.sensor_id,
+    for asset_id, sensor_id, first_at, last_at in (
+            db.query(models.RuntimeEvent.asset_id, models.RuntimeEvent.sensor_id,
                      func.min(models.RuntimeEvent.occurred_at),
                      func.max(models.RuntimeEvent.occurred_at))
             .filter(models.RuntimeEvent.sensor_id != "")
-            .group_by(models.RuntimeEvent.sensor_id).all()):
-        times[sensor_id] = (first_at, last_at)
+            .group_by(models.RuntimeEvent.asset_id, models.RuntimeEvent.sensor_id).all()):
+        times[(asset_id, sensor_id)] = (first_at, last_at)
     rows = []
     for sensor in sensors:
         try:
             capabilities = json.loads(sensor.capabilities_json or "{}")
         except ValueError:
             capabilities = {}
+        status, age, capabilities = sensor_health(sensor)
         metrics = capabilities.get("metrics")
-        first_at, last_at = times.get(sensor.sensor_id, (None, None))
+        first_at, last_at = times.get((sensor.asset_id, sensor.sensor_id), (None, None))
         rows.append({
             "asset_id": sensor.asset_id,
             "sensor_id": sensor.sensor_id,
             "source": sensor.source,
-            "status": sensor.status,
+            "status": status,
+            "reported_status": sensor.status,
+            "heartbeat_age_seconds": age,
             "dropped_events": sensor.dropped_events if sensor.dropped_events is not None else "unavailable",
             "self_reported_metrics": metrics if isinstance(metrics, dict) else "unknown",
+            "collection_window": _collection_window(sensor, capabilities),
             "server_observed": {
-                "stored_events": attributed.get(sensor.sensor_id, 0),
+                "stored_events": attributed.get((sensor.asset_id, sensor.sensor_id), 0),
                 "first_event_at": first_at or "unknown",
                 "last_event_at": last_at or "unknown",
             },
@@ -415,4 +446,32 @@ def reliability_snapshot(db) -> dict:
             "dropped_events_source": "仅采集器如实上报（探针 supervisor 健康文件或转发器指标）",
             "note": "P0 之前入库的历史事件可能缺少 sensor_id 归属，计入 events_without_sensor_attribution",
         },
+    }
+
+
+def _collection_window(sensor, capabilities):
+    """Expose source-side completeness separately from server ingest counts."""
+    if sensor.source != "logread":
+        return "not_applicable"
+    window = capabilities.get("last_window")
+    if not isinstance(window, dict):
+        return {"status": "unavailable", "reason": "no_completed_window"}
+    total = window.get("lines_total")
+    built = window.get("events_built")
+    year_missing = window.get("year_missing_lines", 0)
+    unparseable = window.get("unparseable_lines", 0)
+    parsed = all(isinstance(value, int) and not isinstance(value, bool)
+                 for value in (total, built, year_missing, unparseable))
+    skipped = year_missing + unparseable if parsed else "unknown"
+    return {
+        "status": "truncated" if window.get("truncated") else "bounded_window",
+        "lines_total": total if parsed else "unknown",
+        "events_built": built if parsed else "unknown",
+        "skipped_lines": skipped if parsed else "unknown",
+        "stored_new": window.get("stored_new", "unknown"),
+        "duplicates": window.get("duplicates", "unknown"),
+        "ring_loss": "unavailable",
+        "window_first": window.get("window_first") or "unknown",
+        "window_last": window.get("window_last") or "unknown",
+        "boot_id": window.get("boot_id") or "unknown",
     }

@@ -1,4 +1,5 @@
 import json
+import pytest
 from pathlib import Path
 
 from app import models
@@ -79,15 +80,26 @@ def test_archive_keeps_results_but_not_raw_runtime_events(client, session_factor
     assert (archive_path.parent / f"{archive_path.stem}.meta.json").is_file()
 
 
-def test_reset_archives_then_clears_derived_data_and_keeps_devices(client, session_factory, control_headers):
+@pytest.mark.parametrize("console_refresh", [False, True, "proxy"])
+def test_reset_archives_then_clears_derived_data_and_keeps_devices(client, session_factory, control_headers, console_refresh):
     db = session_factory()
     _seed(db)
     db.close()
 
-    response = client.post("/api/experiment/reset", json={"label": "新一轮"}, headers=control_headers)
+    response = client.post(
+        "/api/experiment/refresh" if console_refresh else "/api/experiment/reset",
+        json={"label": "新一轮", "archive": False} if console_refresh else {"label": "新一轮"},
+        headers={"X-Experiment-Action": "refresh",
+                 "Host": "127.0.0.1:18080" if console_refresh == "proxy" else "testserver",
+                 "Origin": "http://127.0.0.1:18080" if console_refresh == "proxy" else "http://testserver"}
+        if console_refresh else control_headers,
+    )
     assert response.status_code == 200, response.text
     body = response.json()
-    assert body["archive"]["filename"].startswith("exp-")
+    if not console_refresh:
+        assert body["archive"]["filename"].startswith("exp-")
+    else:
+        assert "archive" not in body
     assert body["kept"]["assets"] == 1
     assert body["kept"]["iot_devices"] == 1
 
@@ -128,14 +140,19 @@ def test_reset_requires_control_token(client, session_factory):
         db.close()
 
 
-def test_reset_refuses_while_unified_run_active(client, session_factory, control_headers):
+@pytest.mark.parametrize("console_refresh", [False, True])
+def test_reset_refuses_while_unified_run_active(client, session_factory, control_headers, console_refresh):
     db = session_factory()
     _seed(db)
     db.add(models.UnifiedAnalysisRun(run_id="UA-RUNNING", target_ref="lifecycle-host", status="running"))
     db.commit()
     db.close()
 
-    response = client.post("/api/experiment/reset", json={"label": "运行中"}, headers=control_headers)
+    response = client.post(
+        "/api/experiment/refresh" if console_refresh else "/api/experiment/reset",
+        json={"label": "运行中"},
+        headers={"X-Experiment-Action": "refresh"} if console_refresh else control_headers,
+    )
     assert response.status_code == 409
     db = session_factory()
     try:
@@ -143,3 +160,47 @@ def test_reset_refuses_while_unified_run_active(client, session_factory, control
         assert db.query(models.UnifiedAnalysisRun).filter_by(status="running").count() == 1
     finally:
         db.close()
+
+
+@pytest.mark.parametrize("headers", [{}, {"X-Experiment-Action": "refresh", "Origin": "https://other.example"}])
+def test_console_refresh_rejects_unintended_requests(client, headers):
+    assert client.post("/api/experiment/refresh", headers=headers).status_code == 403
+
+
+def test_legacy_reset_preserves_data_when_archive_fails(client, session_factory, monkeypatch, control_headers):
+    db = session_factory()
+    _seed(db)
+    db.close()
+
+    def fail_archive(*args, **kwargs):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(result_archive, "write_result_archive", fail_archive)
+    response = client.post("/api/experiment/reset", json={}, headers=control_headers)
+    assert response.status_code == 507
+    db = session_factory()
+    try:
+        assert db.query(models.RiskAssessment).count() == 1
+        assert db.query(models.LinuxAsset).count() == 1
+    finally:
+        db.close()
+
+
+def test_console_refresh_deletes_intelligence_rounds_and_archives(client, session_factory):
+    db = session_factory()
+    _seed(db)
+    db.add(models.VulnerabilityIntelligenceSource(cve_id="CVE-2099-1", source="nvd"))
+    db.add(models.AnalysisRound(round_id="RND-OLD", status="completed"))
+    db.add(models.ConsoleWorkflow(id="FLOW-OLD", status="completed"))
+    db.commit()
+    archive = result_archive.write_result_archive(db)
+    db.close()
+    response = client.post("/api/experiment/refresh", headers={"X-Experiment-Action": "refresh"})
+    assert response.status_code == 200
+    assert not (result_archive.archive_dir() / archive["filename"]).exists()
+    with session_factory() as db:
+        assert db.query(models.VulnerabilityIntelligenceSource).count() == 0
+        assert db.query(models.AnalysisRound).count() == 0
+        assert db.query(models.ConsoleWorkflow).count() == 0
+        assert db.query(models.LinuxAsset).count() == 1
+        assert db.query(models.AssetPackage).count() == 1

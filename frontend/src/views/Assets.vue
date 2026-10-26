@@ -90,7 +90,7 @@
             <thead><tr><th>设备</th><th>生态</th><th>系统 / 固件</th><th>组件</th><th>身份可信</th><th>漏洞命中</th></tr></thead>
             <tbody>
               <tr v-for="device in filteredDevices" :key="device.key" style="cursor: pointer" tabindex="0" role="button" @click="openDetail(device)" @keydown.enter="openDetail(device)">
-                <td class="name">{{ device.name || device.key }}<small>{{ device.ip_address || device.key }}</small></td>
+                <td class="name">{{ device.name || device.key }} <span v-if="device.simulation" class="chip muted">模拟设备</span><small>{{ device.ip_address || device.key }}</small></td>
                 <td><span class="chip" :class="ecoClass(device.ecosystem)"><i class="dot" />{{ ecosystemLabel(device.ecosystem) }}</span></td>
                 <td><span class="mono">{{ device.version || "未识别" }}</span><small>{{ device.inventory_complete === false ? "清单待补" : "清单完整" }}</small></td>
                 <td class="num">{{ device.component_count ?? "—" }}</td>
@@ -155,6 +155,9 @@
       <div v-if="selected && detailTab === 'overview'" class="detail-grid">
         <div><span>台账键</span><b class="mono">{{ selected.key }}</b></div>
         <div><span>IP 地址</span><b class="mono">{{ selected.ip_address || "—" }}</b></div>
+        <div v-if="selected.simulation"><span>设备性质</span><b>实验模拟 · 独立 IP / MAC</b></div>
+        <div v-if="selected.simulation && selected.gateway"><span>接入网关</span><b class="mono">{{ selected.gateway }}</b></div>
+        <div v-if="selected.simulation && selected.ip_address"><span>设备页面</span><a :href="`http://${selected.ip_address}/`" target="_blank" rel="noopener noreferrer">打开模拟设备</a></div>
         <div><span>生态</span><b>{{ ecosystemLabel(selected.ecosystem) }}</b></div>
         <div><span>版本</span><b class="mono">{{ selected.version || "未识别" }}</b></div>
         <div><span>组件</span><b>{{ selected.component_count ?? "—" }}</b></div>
@@ -615,8 +618,8 @@ async function load() {
         ...device,
         asset_id: Number.isFinite(keyedId) && keyedId > 0 ? keyedId : null,
         distribution: extra.distribution || (device.ecosystem === "openwrt" ? "openwrt" : ""),
-        identity_source: extra.identity_source || "",
-        ip_address: extra.ip_address || "",
+        identity_source: extra.identity_source || device.identity_source || "",
+        ip_address: extra.ip_address || device.ip_address || "",
         inventory_collected_at: extra.inventory_collected_at || "",
         os_name: extra.os_name || "",
         repair_domain: extra.repair_domain || "unassigned",

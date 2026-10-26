@@ -512,7 +512,8 @@ def fetch_advisory_rows(token: str | None = None, timeout: int = 20,
                "User-Agent": "iotguard-openwrt-intel"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    opener = build_opener(_NoRedirect)
+    from app.services.intel_transport import verified_https_handler
+    opener = build_opener(_NoRedirect, verified_https_handler())
     rows: list[dict] = []
     url: str | None = "https://api.github.com" + path + "?per_page=100"
     seen = set()

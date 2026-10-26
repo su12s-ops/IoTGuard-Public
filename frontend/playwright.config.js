@@ -7,7 +7,9 @@ const localNoProxy = ["localhost", "127.0.0.1", "::1", process.env.NO_PROXY, pro
   .join(",");
 process.env.NO_PROXY = localNoProxy;
 process.env.no_proxy = localNoProxy;
-const browserChannel = process.env.PLAYWRIGHT_CHANNEL;
+// Use the already-installed Microsoft Edge for local and CI browser checks.
+// This avoids downloading a separate Chromium browser.
+const browserChannel = process.env.PLAYWRIGHT_CHANNEL || "msedge";
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -34,8 +36,8 @@ export default defineConfig({
   },
   projects: [
     {
-      name: browserChannel || "chromium",
-      use: { ...devices["Desktop Chrome"], ...(browserChannel ? { channel: browserChannel } : {}) }
+      name: browserChannel,
+      use: { ...devices["Desktop Chrome"], channel: browserChannel }
     }
   ]
 });

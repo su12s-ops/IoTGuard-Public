@@ -16,7 +16,7 @@ from sqlalchemy import text
 from app.config import API_TITLE, API_VERSION, DATABASE_URL, DEEPSEEK_MODEL
 from app.database import SessionLocal, init_db
 from app.routers import analysis, assets, dashboard, demo, matching, remediation, reports, risk, runtime, vulnerabilities, workflow, traces
-from app.routers import iot, harness, devices, remediation_workflow, scans, unified, experiment, rounds
+from app.routers import iot, harness, devices, remediation_workflow, scans, unified, experiment, rounds, console
 
 
 # ── 启动时记录的诊断信息 ──
@@ -242,40 +242,7 @@ def _runtime_layers():
     return layers
 
 
-def sensor_summary(db):
-    import json as _json
-    from datetime import datetime, timezone
-    from app import models
-    now = datetime.now(timezone.utc)
-    sensors = db.query(models.RuntimeSensor).all()
-    healthy = 0
-    worst = "none" if not sensors else "running"
-    details = []
-    for sensor in sensors:
-        timestamp = sensor.last_heartbeat_at
-        timestamp = timestamp.replace(tzinfo=timezone.utc) if timestamp and timestamp.tzinfo is None else timestamp
-        age = round(max(0, (now - timestamp).total_seconds())) if timestamp else None
-        capabilities = {}
-        try:
-            capabilities = _json.loads(sensor.capabilities_json or "{}")
-        except ValueError:
-            pass
-        if capabilities.get("mode") == "pull":
-            # Pull sensors are not resident processes: honest health is "did a
-            # recent window succeed", never a fabricated constant "running".
-            status = sensor.status if sensor.status in {"failed", "degraded", "unknown"} else ("reporting" if age is not None and age <= 120 else "stale")
-        else:
-            status = sensor.status if sensor.status != "running" or (age is not None and age <= 120) else "stale"
-            if status == "running" and sensor.dropped_events:
-                status = "degraded"
-        healthy += 1 if status in {"running", "reporting"} else 0
-        worst = status if _WORST_ORDER.get(status, 9) > _WORST_ORDER.get(worst, 9) else worst
-        details.append({"sensor_id": sensor.sensor_id, "asset_id": sensor.asset_id,
-                        "source": sensor.source, "status": status, "heartbeat_age_seconds": age})
-    return {"status": worst, "healthy": healthy, "total": len(sensors), "sensors": details}
-
-
-_WORST_ORDER = {"running": 0, "reporting": 0, "degraded": 1, "stale": 2, "stopped": 3, "failed": 4, "unknown": 4, "none": 5}
+from app.services.runtime_telemetry import sensor_summary
 
 
 @app.get("/api/diagnostics")
@@ -347,3 +314,4 @@ app.include_router(traces.router, prefix="/api")
 app.include_router(unified.router, prefix="/api")
 app.include_router(rounds.router, prefix="/api")
 app.include_router(experiment.router, prefix="/api")
+app.include_router(console.router, prefix="/api")

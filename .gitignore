@@ -41,6 +41,8 @@ frontend/test-results/
 frontend/dist/
 frontend/node_modules/
 node_modules/
+.venv/
+venv/
 backend/package-lock.json
 # 本地构建/测试临时目录（docker 构建日志、隔离测试库）
 .dsh-tmp/
@@ -50,3 +52,12 @@ collector/sample_asset_outputs/
 # 原生 eBPF 传感器本地编译产物（guard.bpf.o / vmlinux.h / iotguard-sensor）
 collector/native/build/
 *.log
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.apk
+*.vmsn
+*.vmss
+*.nvram

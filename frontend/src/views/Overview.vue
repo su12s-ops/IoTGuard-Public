@@ -8,11 +8,6 @@
       <template #meta>
         <span>数据读取于 {{ updated || "尚未读取" }}</span><i class="sep" /><span>{{ num(summary.asset_count) }} 台资产</span><i class="sep" /><span>{{ num(summary.total_vulnerabilities) }} 条情报</span>
       </template>
-      <template #actions>
-        <span class="range-chip"><Icon name="calendar" :size="14" />{{ today }} · 最近 7 天<Icon name="chev-down" :size="13" /></span>
-        <button class="btn" type="button" @click="refresh"><Icon name="refresh" :size="15" />刷新</button>
-        <router-link class="btn primary" to="/agents"><Icon name="rocket" :size="15" />发起研判</router-link>
-      </template>
     </PageHeader>
 
     <div v-if="error" class="error-banner" role="alert"><Icon name="alert" :size="15" />{{ error }}</div>
@@ -149,7 +144,8 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
+import { consoleState } from "../stores/consoleWorkflow";
 import { useRouter } from "vue-router";
 import PageHeader from "../components/PageHeader.vue";
 import Icon from "../components/Icon.vue";
@@ -285,6 +281,7 @@ async function refresh() {
 }
 
 onMounted(refresh);
+watch(() => `${consoleState.workflow?.id}:${consoleState.workflow?.progress_percent}:${consoleState.workflow?.status}`, refresh);
 </script>
 
 <style scoped>

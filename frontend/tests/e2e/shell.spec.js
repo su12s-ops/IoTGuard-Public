@@ -88,7 +88,8 @@ test.beforeEach(async ({ page }) => {
     if (!url.pathname.startsWith("/api/")) return route.continue();
     const path = url.pathname.replace(/^\/api/, "");
     let body = {};
-    if (path === "/health") body = health;
+    if (path === "/console/current") body = { workflow: null };
+    else if (path === "/health") body = health;
     else if (path === "/dashboard/summary") body = summary;
     else if (path === "/devices/business/overview") body = { devices };
     else if (path === "/risk/ranking") body = risks;
@@ -101,6 +102,7 @@ test.beforeEach(async ({ page }) => {
     else if (path === "/runtime/ebpf/status") body = { matched_asset_count: 1, matched_asset_ratio: 33, latest_event_at: "2026-10-21T10:24:00" };
     else if (path === "/runtime/ebpf/summary") body = { total: 2, high_value_count: 1, observation_mode_counts: { ebpf: 2, sensor: 0 } };
     else if (path === "/runtime/ebpf/events") body = { events: [] };
+    else if (path === "/runtime/ebpf/reliability") body = { sensors: [{ asset_id: 2, sensor_id: "router-logread", source: "logread", status: "running", dropped_events: "unavailable", server_observed: { stored_events: 92 }, collection_window: { status: "truncated", lines_total: 100, skipped_lines: 8, ring_loss: "unavailable" } }] };
     else if (path === "/experiment/state") body = {
       summary: { assets: 3, iot_devices: 1, risks: 1, high_risks: 1, runtime_events: 2 },
       kept: { linux_asset: 3, asset_package: 1, asset_service: 1, iot_device: 1 },
@@ -118,7 +120,7 @@ test("shell renders and navigation stays inside the new app", async ({ page }) =
   await page.goto("/");
   await expect(page.locator("h1")).toHaveText("安全总览");
   await expect(page.locator(".rail")).toBeVisible();
-  await expect(page.locator(".top-actions")).toBeVisible();
+  await expect(page.locator(".top-actions")).toHaveCount(0);
   await expect(page.locator(".kpi-row .kpi")).toHaveCount(4);
 
   await page.getByRole("link", { name: "资产与发现" }).click();
@@ -145,21 +147,106 @@ test("retired reports and SOC entries redirect to the live workspace", async ({ 
   await expect(page.getByRole("link", { name: "SOC 态势大屏" })).toHaveCount(0);
 });
 
-test("experiment lifecycle shows kept devices and derived data before a new round", async ({ page }) => {
-  await page.goto("/");
-  await page.locator(".rl-btn").click();
-  await expect(page.getByRole("heading", { name: "本轮实验与存档" })).toBeVisible();
-  await expect(page.getByText("保留 · 设备与配置")).toBeVisible();
-  await expect(page.getByText("归档并清理 · 运行产物")).toBeVisible();
-  await expect(page.getByRole("button", { name: "归档并开始新一轮" })).toBeVisible();
-  await expect(page.getByText("需要操作令牌")).toBeVisible();
-  await expect(page.locator(".exp-token-box input")).toBeVisible();
-});
-
 test("risk detail renders the decision layout", async ({ page }) => {
   await page.goto("/risks/CVE-2026-63073");
   await expect(page.locator("h1")).toHaveText("CVE-2026-63073");
   await expect(page.getByText("判定依据")).toBeVisible();
   await expect(page.getByText("人工裁决")).toBeVisible();
   await expect(page.getByRole("button", { name: "确认受影响" })).toBeVisible();
+});
+
+test("one start drives durable stages, survives reload and waits for human audit", async ({ page }) => {
+  let flow = null;
+  let starts = 0;
+  const steps = ['intelligence', 'matching', 'risk', 'agents', 'audit'].map(key => ({ key, label: key, status: 'pending' }));
+  await page.route("**/api/console/current", route => route.fulfill({ json: { workflow: flow } }));
+  await page.route("**/api/console/start", route => {
+    starts++;
+    flow = { id: 'FLOW-TEST', status: 'running', stage: 'intelligence', progress_percent: 0, message: 'Fetching official intelligence', steps };
+    return route.fulfill({ json: { workflow: flow } });
+  });
+  await page.goto('/');
+  await expect(page.getByRole('button', { name: '开始', exact: true })).toBeVisible();
+  await expect(page.getByRole('search')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: '管理与新一轮' })).toHaveCount(0);
+  await page.getByRole('button', { name: '开始', exact: true }).click();
+  await expect(page.getByRole('button', { name: '正在执行' })).toBeDisabled();
+  expect(starts).toBe(1);
+  flow = { ...flow, stage: 'agents', progress_percent: 60, message: 'Four agents running' };
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '60');
+  await page.reload();
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '60');
+  flow = { ...flow, status: 'awaiting_review', stage: 'audit', progress_percent: 80, message: 'Human audit required' };
+  await expect(page.getByRole('link', { name: '进入人工审核' })).toBeVisible();
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '80');
+  flow = { ...flow, status: 'completed', progress_percent: 100, message: 'Review completed' };
+  await expect(page.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '100');
+});
+
+test("live analysis distinguishes active work, queue, reuse and partial results", async ({ page }) => {
+  const flow = { id: "FLOW-task-graph", status: "running", stage: "agents", progress_percent: 63,
+    message: "分析窗口结束", steps: [],
+    round: { counts: { matches: 29, risks_calculated: 29, processed: 6, selected: 20, remaining: 23 } },
+    execution: { profile: "task_graph", queued_objects: 12, reused_reports: 5,
+      active: [{ object_id: "risk-7", roles: ["vulnerability_analyst"], elapsed_seconds: 125,
+        activity: { roles: [{role: "vulnerability_analyst", status: "running", phase: "queue", elapsed_seconds: 7}],
+          timeline: [{role: "vulnerability_analyst", event: "model_waiting", at: "2026-10-25T11:20:00Z"}] } }],
+      recent_results: [{object_id: "risk-6", run_id: "old-failed", roles: [{role: "runtime_analyst", status: "degraded", failure_category: "context_limit", error: "context_budget_exceeded"}]}] } };
+  await page.route("**/api/console/current", route => route.fulfill({ json: { workflow: flow } }));
+  await page.goto("/agents");
+  const panel = page.getByRole("region", { name: "本轮自动流程" });
+  await expect(panel).toContainText("本批实际运行 1 项 · 排队 12 项 · 复用报告 5 份");
+  await expect(panel).toContainText("risk-7 · 漏洞分析 · 已耗时 2 分 5 秒");
+  await expect(panel).toContainText("进度比例不代表剩余时间");
+  await expect(panel).toContainText("等待模型槽位");
+  await panel.getByText("本批最近完成结果与失败原因").click();
+  await expect(panel).toContainText("上下文超限：context_budget_exceeded");
+  flow.execution.active[0].activity.roles[0].phase = "model";
+  await page.reload();
+  await expect(panel).toContainText("等待模型生成并返回");
+  flow.status = "partial";
+  flow.execution.active = [];
+  await page.reload();
+  await expect(panel).toContainText("未完成项仍需继续分析");
+});
+
+test("refresh is one action without archival or token dialogs", async ({ page }) => {
+  let resets = 0;
+  await page.route('**/api/experiment/refresh', route => {
+    resets++;
+    expect(route.request().headers()['x-experiment-action']).toBe('refresh');
+    return route.fulfill({ json: { cleared: { risk_assessment: 2 }, kept: { assets: 3 } } });
+  });
+  await page.goto('/agents');
+  await page.getByRole('button', { name: '刷新本轮', exact: true }).click();
+  await expect(page).toHaveURL(/\/$/);
+  expect(resets).toBe(1);
+  await expect(page.locator('input[type=password]:visible')).toHaveCount(0);
+});
+
+test("runtime exposes unknown losses and clears stale reliability on request failure", async ({ page }) => {
+  await page.goto('/runtime');
+  const table = page.locator('.sensor-reliability');
+  await expect(table).toContainText('router-logread');
+  await expect(table).toContainText('不可用');
+  await expect(table).toContainText('truncated');
+  await expect(table).toContainText('跳过 8');
+  await page.route('**/api/runtime/ebpf/reliability', route => route.fulfill({ status: 503, json: { detail: 'unavailable' } }));
+  await page.reload();
+  await expect(page.getByRole('alert')).toContainText('部分运行时接口暂时不可用');
+  await expect(table).not.toContainText('router-logread');
+});
+
+test("console snapshot age never promises current remote intelligence", async ({ page }) => {
+  await page.route('**/api/console/current', route => route.fulfill({ json: { workflow: {
+    id: 'snapshot-test', status: 'partial', steps: [], progress_percent: 20,
+    intelligence_snapshots: { openwrt: { status: 'stale', advisory_count: 2,
+      oldest_content_updated_at: '2026-10-20T00:00:00+00:00', latest_content_updated_at: '2026-10-26T00:00:00+00:00', sha256: 'a'.repeat(64) } }
+  } } }));
+  await page.goto('/');
+  await page.getByText('官方情报快照与时效').click();
+  const panel = page.getByRole('region', { name: '本轮自动流程' });
+  await expect(panel).toContainText('含超过一天的本地内容');
+  await expect(panel).toContainText('远端最新性未验证');
+  await expect(panel).toContainText('a'.repeat(64));
 });

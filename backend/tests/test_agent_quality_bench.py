@@ -37,6 +37,27 @@ def test_unlabelled_rows_count_for_success_but_never_for_accuracy():
     assert result["observations"]["four_agents"]["runs"] == 2
     assert result["observations"]["four_agents"]["labelled_runs"] == 1
     assert result["observations"]["four_agents"]["success_rate"] == 1.0
+    assert not result["quality_gate"]["ready"]
+    assert not result["quality_gate"]["claims_allowed"]
+
+
+def test_quality_gate_requires_five_cases_three_repeats_and_reports_paired_ci():
+    rows = []
+    for case_index in range(5):
+        case = f"C-{case_index}"
+        for repeat in range(1, 4):
+            rows.extend(_row(strategy, repeat,
+                {"impact_status": "confirmed_affected"}, case=case,
+                facts=f"facts-{case}") for strategy in
+                ("rules", "single_agent", "four_agents"))
+    result = comparison.evaluate(rows)
+    assert result["quality_gate"]["ready"]
+    assert not result["quality_gate"]["claims_allowed"]
+    interval = result["pairwise_accuracy_difference"]["four_agents_minus_rules"]
+    assert interval["paired_n"] == 5
+    assert result["quality_gate"]["bootstrap_unit"] == "independent_case_cluster"
+    assert interval["mean_accuracy_difference"] == 0
+    assert interval["ci_95"] == [0, 0]
 
 
 def test_repeat_statistics_expose_instability_and_latency_spread():

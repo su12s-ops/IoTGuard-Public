@@ -14,9 +14,23 @@ their own attach and behavior verification. Missing required hooks fail startup.
 
 Field testing on 2026-10-20 found controlled-event gaps on two Linux 7.0.0-38
 nodes despite successful loading. That version is **not behavior-validated**.
-See [the platform report](../../docs/EBPF_PLATFORM_STABILITY_20261020.md) for the
+See [the platform report](../../docs/archive/2026-10-21-ebpf-stability.md) for the
 failure evidence and ongoing endurance tests; successful CO-RE load alone is
 insufficient to claim kernel compatibility.
+
+### Support status
+
+| Kernel/platform | Status | Evidence required to change status |
+| --- | --- | --- |
+| x86-64 WSL2 Linux 6.6.87.2 | Build/attach and controlled behavior tested | Repeat the verifier after any probe/loader change; this is not a 24-hour pipeline result |
+| Linux 7.0.0-38, two tested nodes | **Unsupported for behavior claims** | Resolve controlled-event gaps and pass `verify.py` on each architecture/configuration |
+| OpenWrt 25.12.6 / Linux 6.12.112 | **Not validated; use logread fallback** | Confirm BTF, required hooks and privileges, then pass build/attach/controlled-event tests on the actual target |
+| Other kernels, architectures and firmware | **Unknown** | Inventory prerequisites, then execute behavior and transport tests on the exact target |
+
+`compatibility.sh` is a read-only prerequisite inventory. BTF/hook presence is necessary,
+not sufficient. A version string or successful load never promotes an unknown target;
+only controlled records reconciled against generated events do. Keep the result JSON and
+raw verifier diagnostics tied to kernel build ID, architecture and sensor SHA256.
 
 ```bash
 bash deploy/linux/install-ebpf-deps.sh

@@ -223,7 +223,7 @@ const verificationChecks = computed(() => {
   return [
     { label: "计划哈希锁定", ok: Boolean(run.plan_hash), value: run.plan_hash ? "已锁定" : "缺失" },
     { label: "资产作用域", ok: Boolean(run.asset_id), value: run.asset_id ? `asset ${run.asset_id}` : "未记录" },
-    { label: "操作令牌", ok: Boolean(controlSession.token), value: controlSession.token ? "已设置" : "未设置" },
+    { label: controlSession.managed ? "控制台授权" : "操作令牌", ok: Boolean(controlSession.token), value: controlSession.token ? "已就绪" : "未就绪" },
     { label: "人工签收", ok: Boolean(run.approved_by), value: run.approved_by || "待审批" },
     { label: "机器复验", ok: run.status === "verified", value: run.status === "verified" ? "通过" : "待执行" }
   ];

@@ -388,7 +388,9 @@ def _build_snapshot(db, packet: dict, run_id: str, risk_id=None, previous=None, 
     summarized: list[tuple[str, Any]] = []
     now = datetime.now(timezone.utc)
     match_pattern = _candidate_match_pattern(packet, risk)
-    for row in query.order_by(models.SecurityEvidence.id).all():
+    # Preserve the complete eligibility/summary calculation without holding
+    # every historical raw payload and ORM instance in memory at once.
+    for row in query.order_by(models.SecurityEvidence.id).yield_per(256):
         fresh = _runtime_row_fresh(row.timestamp, now)
         related = _runtime_row_related(row, match_pattern)
         if not fresh and not related:

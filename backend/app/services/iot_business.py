@@ -1,5 +1,6 @@
 """Read-only business view over the two existing IoT inventory models."""
 from collections import Counter
+import json
 
 from app import models
 
@@ -26,9 +27,14 @@ def overview(db):
                         "next_action": "collect_inventory" if not asset.inventory_complete else "review_applicability",
                         "detail_path": "/iot", "task_path": f"/device-tasks?asset={asset.id}"})
     for device in db.query(models.IotDevice).all():
+        metadata = json.loads(device.metadata_json or "{}")
         zephyr = (device.os or "").lower().startswith("zephyr")
         rows = db.query(models.DeviceVulnerabilityMatch).filter_by(device_row_id=device.id, active=True).all()
         devices.append({"key": f"device:{device.device_id}", "name": device.device_name or device.device_id,
+                        "ip_address": device.ip, "device_type": device.device_type,
+                        "identity_source": device.identity_source,
+                        "simulation": metadata.get("simulation") is True,
+                        "gateway": metadata.get("gateway"),
                         "ecosystem": "zephyr" if zephyr else "other_iot",
                         "version": device.os if zephyr else device.firmware_version,
                         "inventory_complete": None, "identity_confidence": device.identity_confidence,

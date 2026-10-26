@@ -10,6 +10,56 @@ def utcnow():
     return datetime.now(timezone.utc)
 
 
+class AnalysisBudget(Base):
+    __tablename__ = "analysis_budget"
+    batch_id = Column(String(48), primary_key=True)
+    workflow_id = Column(String(48), default="", index=True)
+    charged_tokens = Column(Integer, default=0)
+    reserved_tokens = Column(Integer, default=0)
+    requests = Column(Integer, default=0)
+    unknown_usage_requests = Column(Integer, default=0)
+    updated_at = Column(DateTime, default=utcnow)
+
+
+class AnalysisTask(Base):
+    """Durable scoped report; analysis receipts never grant execution authority."""
+    __tablename__ = "analysis_task"
+    id = Column(String(48), primary_key=True)
+    task_key = Column(String(64), unique=True, nullable=False, index=True)
+    batch_id = Column(String(48), default="", index=True)
+    asset_id = Column(Integer, nullable=False, index=True)
+    role = Column(String(48), nullable=False)
+    status = Column(String(24), default="running", index=True)
+    owner = Column(String(48), nullable=False)
+    origin_run_id = Column(String(48), default="")
+    origin_snapshot_id = Column(String(48), default="")
+    dependencies_json = Column(Text, default="{}")
+    report_json = Column(Text, default="{}")
+    history_json = Column(Text, default="[]")
+    error = Column(Text, default="")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow)
+    expires_at = Column(DateTime, nullable=False)
+
+
+class ConsoleWorkflow(Base):
+    __tablename__ = "console_workflow"
+    id = Column(String(48), primary_key=True)
+    asset_id = Column(Integer, default=0)
+    status = Column(String(32), default="running", index=True)
+    stage = Column(String(32), default="intelligence")
+    steps_json = Column(Text, default="[]")
+    message = Column(Text, default="")
+    warnings_json = Column(Text, default="[]")
+    error = Column(Text, default="")
+    round_id = Column(String(48), default="")
+    round_ids_json = Column(Text, default="[]")
+    pipeline_done = Column(Boolean, default=False)
+    owner = Column(String(48), default="")
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
+
+
 class VulnerabilityInfo(Base):
     __tablename__ = "vulnerability_info"
 
@@ -166,6 +216,11 @@ class AssetService(Base):
 
 class RuntimeEvent(Base):
     __tablename__ = "runtime_event"
+    __table_args__ = (
+        Index("ix_runtime_event_occurred_at", "occurred_at"),
+        Index("ix_runtime_event_asset_time", "asset_id", "occurred_at"),
+        Index("ix_runtime_event_sensor_time", "sensor_id", "occurred_at"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     asset_id = Column(Integer, ForeignKey("linux_asset.id"), index=True, nullable=True)

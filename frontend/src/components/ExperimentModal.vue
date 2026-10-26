@@ -43,7 +43,7 @@
       <label class="field-label" for="experiment-label">存档备注（可选）</label>
       <input id="experiment-label" v-model="label" class="input" maxlength="80" placeholder="例如：第一轮回归 / 演示前快照" />
 
-      <div v-if="!tokenReady" class="exp-token-box">
+      <div v-if="!tokenReady && !controlSession.managed" class="exp-token-box">
         <div class="exp-token-title"><Icon name="lock" :size="14" />需要操作令牌</div>
         <div class="exp-token-row">
           <input
@@ -59,7 +59,7 @@
         </div>
         <p class="exp-token-hint">令牌只保存在当前页面内存；保存后会自动继续刚才的操作。</p>
       </div>
-      <div v-else class="exp-token ok">
+      <div v-else-if="!controlSession.managed" class="exp-token ok">
         <i class="dot" />
         <span>操作令牌已设置</span>
         <button class="link" type="button" @click="clearInlineToken">清除</button>

@@ -53,9 +53,11 @@ def prepare(ctx, state, db, packet):
 def publish(ctx, state, role, output, *, reused=False):
     if not state.evidence_snapshot:
         return {}
+    receipt = ctx.task_receipts.get(role, {})
+    reused = reused or bool(receipt.get("reused"))
     findings = protocol.build_findings(role, output, state.evidence_snapshot, state.shared_findings)
     now = datetime.now(timezone.utc)
-    previous = (ctx.replay_parent or {}).get("role_provenance", {}).get(role, {})
+    previous = receipt if receipt.get("reused") else (ctx.replay_parent or {}).get("role_provenance", {}).get(role, {})
     provenance = {"status": "reused" if reused else "executed", "run_id": state.run_id,
         "snapshot_id": state.evidence_snapshot_id,
         "origin_run_id": previous.get("origin_run_id", previous.get("run_id")) if reused else state.run_id,

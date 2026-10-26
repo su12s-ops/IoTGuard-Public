@@ -1,7 +1,7 @@
 import json
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, defer
 
 from app import models
 from app.database import get_db
@@ -29,9 +29,14 @@ def calculate(asset_id: int = Query(default=0, ge=0), db: Session = Depends(get_
 
 @router.get("/ranking")
 def ranking(asset_id: int = Query(default=0, ge=0),
+            include_details: bool = True,
             db: Session = Depends(get_db)):
     rows = []
     query = db.query(models.RiskAssessment)
+    if not include_details:
+        query = query.options(defer(models.RiskAssessment.evidence_packet_json),
+                              defer(models.RiskAssessment.agent_results_json),
+                              defer(models.RiskAssessment.conflict_result_json))
     if asset_id:
         query = query.filter(models.RiskAssessment.asset_id == asset_id)
     for item in query.order_by(models.RiskAssessment.priority_rank, models.RiskAssessment.id).all():
@@ -107,10 +112,11 @@ def ranking(asset_id: int = Query(default=0, ge=0),
                 "recommended_priority": item.recommended_priority,
                 "recommended_action": item.recommended_action,
                 "risk_direction": item.risk_direction,
-                "governance": explanation(db, item),
-                "evidence_packet": json.loads(item.evidence_packet_json or "{}"),
-                "agent_results": json.loads(item.agent_results_json or "{}"),
-                "conflict_result": json.loads(item.conflict_result_json or "{}"),
+                "governance": explanation(db, item, include_payloads=False),
+                "details_included": include_details,
+                **({"evidence_packet": json.loads(item.evidence_packet_json or "{}"),
+                    "agent_results": json.loads(item.agent_results_json or "{}"),
+                    "conflict_result": json.loads(item.conflict_result_json or "{}")} if include_details else {}),
                 # 最终结论（仅研判完成并校验通过后有效；人工复核为 null）
                 "final_score": item.final_score,
                 "risk_level": item.risk_level,

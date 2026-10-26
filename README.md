@@ -1,136 +1,86 @@
 # IoTGuard
 
-**面向多类型物联网设备的多智能体漏洞检测、动态风险研判与受控修复平台。**
+面向 OpenWrt 与物联网设备的资产发现、漏洞匹配、四智能体研判和受控修复平台。
 
-IoTGuard 围绕设备身份、软件组件、官方漏洞公告和运行时证据组织安全检测，通过四智能体进行风险研判，再以审批、审计和复验约束修复。当前主要研究对象为 OpenWrt 与 Zephyr RTOS；Ubuntu 用作采集节点、构建宿主和对照环境。
+IoTGuard 将设备身份、软件清单、官方公告和运行时证据关联到同一风险对象，由资产调查、漏洞分析、运行时分析、决策规划四个角色生成可追踪的研判结果，再进入人工审核、修复审批与复验。后端使用 FastAPI、SQLAlchemy 和 LangGraph，前端使用 Vue 3 与 Vite。
 
-> 当前阶段：平台可运行，两类 IoT 虚拟实例已接入；OpenWrt-Lab 已完成 cgi-io 修复、复验和快照恢复实验。2026-10-20 已修复证据引用、写权限域及凭据问题，并通过真实隔离 QEMU 的宿主签名发布和失败恢复检查，详见 [本轮交付](docs/DELIVERY_20261020.md)。当前验收仅覆盖虚拟设备；宿主签名更新不等于设备侧 OTA/安全启动。逐公告适用性、人工业务签收和长期稳定性仍有开放项；无匹配、无告警或证据不足均不代表设备安全。
+[文档导航](docs/README.md) · [部署指南](docs/guides/deployment.md) · [技术架构](docs/architecture/overview.md) · [当前状态](docs/status.md)
 
-## 功能
+## 主要能力
 
-| 能力 | 实现内容 |
-|---|---|
-| 设备发现 | 授权网段探测，SSH / HTTP(S) / MQTT / RTSP 指纹，设备身份与组件台账 |
-| 情报与匹配 | NVD、CISA KEV、EPSS、Canonical、麒麟情报；OpenWrt / Zephyr 官方公告快照与保守版本范围查询 |
-| 四智能体 | 资产调查 → 漏洞分析与运行时分析 → 决策规划；只读补证、证据引用和对象级人审 |
-| 运行时取证 | Linux Falco/eBPF、OpenWrt logread；分别展示节点在线、传感器健康与证据新鲜度 |
-| 受控修复 | Harness 计划哈希审批、身份校验、资产锁、工具预算、回滚与复验入口；设备写默认关闭 |
-| 工作台与审计 | 安全总览、资产与发现、漏洞与风险、智能研判、修复与验证、运行监控与审计 |
-| 实验生命周期 | 保留设备、连接、传感器与采集配置；运行结果压缩存档；清理漏洞/风险/研判/修复/事件后开始新一轮 |
+| 能力 | 内容 |
+| --- | --- |
+| 设备发现与台账 | 授权目标探测，SSH、HTTP、MQTT、RTSP 身份与服务识别，组件清单 |
+| 官方情报与匹配 | OpenWrt、Zephyr、Ubuntu 等生态公告与版本匹配，区分候选、证据不足与已确认结论 |
+| 四智能体研判 | 有界任务图、同设备报告复用、模型预算与耗时记录、证据引用校验、逐项人审 |
+| 运行时取证 | Linux Falco/eBPF 与 OpenWrt logread，分别展示节点、传感器、证据新鲜度 |
+| 修复与复验 | 计划绑定、作用域与审批检查、受控执行、回滚及修复后复采；设备写默认关闭 |
+| 实验工作台 | 安全总览、资产发现、风险详情、智能研判、修复验证、运行监控 |
+| 多设备模拟 | 一台 OpenWrt 内运行两台摄像头、温湿度传感器和插座模拟器，LAN 下独立 IP/MAC |
 
-## 系统结构
+## 当前实验基线
 
-```mermaid
-flowchart LR
-    UI[Vue 3 · IoT 工作台] --> API[FastAPI · 业务与授权]
-    API --> DB[(SQLite · 台账与证据)]
-    API --> AG[LangGraph · 四智能体]
-    AG --> H[Harness · 补证与受控执行]
-    H --> NODE[外部 Linux 采集节点]
-    NODE --> OW[OpenWrt · VMware]
-    API --> Z[Zephyr · QEMU]
-    F[Falco / eBPF / logread] --> API
-```
+截至 2026-10-26，当前平台仅登记一台 OpenWrt 实验网关，其 LAN 下四台模拟设备已通过 DHCP、HTTP 身份、MQTT 和摄像头画面检查。模拟器共享网关内核，身份明确标记 `simulation`，不代表四台独立虚拟机或真实固件。部署方式见 [OpenWrt LAN 实验](docs/guides/openwrt-lan.md)。
 
-后端容器不加载 eBPF，不持有设备私钥。Linux 传感器和采集节点独立部署；Zephyr 的 SSH、包管理和 eBPF 能力标为不支持。
+Zephyr QEMU 保留构建、身份识别与宿主固件切换能力；Ubuntu 承担 Linux 采集节点和对照环境。旧 OpenWrt-Lab 已关机、移出平台，其磁盘删除尚未完成。历史实验结论不替代当前运行验证，详见 [状态与开放问题](docs/status.md)。
 
-## 设备与实现状态
-
-| 对象 | 已有实现与验证 | 主要边界 |
-|---|---|---|
-| OpenWrt | 原机 25.12.6、Lab 25.12.4；各 182 包；Lab cgi-io 机器修复、复验和快照恢复已完成 | 其他候选、配置条件与运行时覆盖待核验；人工业务签收未完成 |
-| Zephyr | QEMU `qemu_cortex_a9`，RTOS 4.4.2，应用 0.3.0；构建、HTTP 身份、固件切换、回退与崩溃恢复 | 尚非签名 OTA；无实体板验收；温湿度为模拟数据，熵通道仅适用于受信任 QEMU |
-| Ubuntu | Linux 采集节点、Falco、Zephyr 构建宿主及独立克隆修复实验 | 基础设施与对照验证不替代 IoT 设备验收 |
-
-官方公告快照已支持 Zephyr 281 条、OpenWrt 9 条导入与查询；不表示全部依赖 CVE 覆盖或设备漏洞已确认。详见 [产品状态](docs/STATUS.md)。
-
-最终虚拟设备验收结论见 [IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md](IOTGUARD_VIRTUAL_IOT_FINAL_ACCEPTANCE_REPORT.md)，其中明确 CI、Zephyr 125 条开放复核项、运行时长及人工签署边界。
+本项目当前以模拟实验设备验证为主：模拟器覆盖 HTTP/MJPEG、MQTT、有限 RTSP、SSH/设备身份和 LAN 多设备隔离。现阶段没有真实硬件验收，也没有完成 24 小时连续运行验收；相关结论会在证据具备后单独更新，不从短时测试推导长期稳定性。
 
 ## 快速启动
 
-需要 Git、Docker Engine / Docker Desktop 与 Docker Compose v2。在项目根目录执行：
+需要 Git、Docker Engine / Docker Desktop 和 Docker Compose v2。在项目根目录执行：
 
 ```powershell
 git clone https://github.com/su12s-ops/IoTGuard-Public.git
 cd IoTGuard-Public
 Copy-Item backend/.env.example backend/.env.docker
-# 本地填写控制令牌；使用模型时配置模型接口与密钥。三个修复开关保持 0。
-$env:IOTGUARD_BUILD_REVISION = git rev-parse HEAD
-$env:IOTGUARD_BUILD_DATE = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+# 编辑 backend/.env.docker：填写控制令牌，需要模型时配置接口与密钥。
 docker compose up -d --build
+docker compose ps
+Invoke-RestMethod http://127.0.0.1:18080/api/health
 ```
 
-- 工作台：<http://127.0.0.1:18080>
-- API 健康状态：<http://127.0.0.1:18000/api/health>
-- API 文档：<http://127.0.0.1:18000/docs>
+打开工作台：<http://127.0.0.1:18080>。浏览器通过同源 `/api` 访问后端；后端端口只在 Compose 网络内使用。
 
-首次启动创建空业务库；设备、节点、情报与模型服务需自行配置。Compose 只启动 API 和前端，外部采集节点和传感器须另行部署。镜像拉取需要可用镜像源。
+首次启动为空库，需要配置设备连接、授权目标、采集节点和模型服务。Compose 启动平台前后端；设备、Linux 采集节点和内核传感器按 [部署指南](docs/guides/deployment.md)独立接入。真实密钥、数据库和虚拟磁盘不随仓库发布。
 
-本地开发使用 Python 3.12+ 和 Node.js 24：
-
-```powershell
-Copy-Item backend/.env.example backend/.env
-Copy-Item frontend/.env.example frontend/.env
-python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
-python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
-# 另一终端：
-cd frontend
-npm ci
-npm run dev
-```
-
-开发入口为 <http://localhost:5173>。Docker 与本地开发默认使用不同数据库，数据不会自动同步。详见 [部署说明](DEPLOYMENT.md)。
-
-## 虚拟机与软件环境重建
-
-[环境重建指南](deploy/README.md)提供 OpenWrt / Ubuntu 脱敏 VMware 参数、VMX 生成工具、Ubuntu 依赖安装、Zephyr 构建，以及采集节点和 QEMU 的 systemd 模板。
-
-```powershell
-# 使用自己的、已校验的 VMDK；仅生成配置，不启动或修改虚拟磁盘。
-python scripts/create_vm_config.py --role openwrt --disk "D:/lab/openwrt.vmdk" --output-dir "D:/lab/iotguard-openwrt"
-```
-
-仓库发布源码、脱敏参数与重建入口。虚拟磁盘、镜像、数据库、私钥、真实令牌、运行日志和本地备份独立保存；克隆本仓库不会复制原设备的身份和数据。
-
-## 项目目录
+## 项目结构
 
 ```text
-backend/       FastAPI、业务服务、智能体、Harness、迁移与回归测试
-frontend/      Vue 3 安全控制台、Playwright 测试
-collector/     Linux / OpenWrt 采集、Falco 规则与部署脚本
-firmware/      Zephyr 源码、Kconfig、设备树与 QEMU 启动脚本
-simulator/     SmartCam 多协议模拟器，供发现联调
-deploy/        脱敏虚拟机参数、环境与服务模板
-scripts/       本地辅助工具与虚拟机配置生成工具
-docs/          产品状态、权限与治理规范
+backend/       FastAPI、数据模型、四智能体、Harness 与后端测试
+frontend/      Vue 3 控制台与浏览器测试
+collector/     SSH 清单、logread、Falco 与原生 eBPF 采集
+simulator/     单设备协议模拟与 OpenWrt LAN 多设备模拟
+firmware/      Zephyr 应用、板级配置与 QEMU 启动入口
+deploy/        虚拟机参数、依赖安装与系统服务模板
+scripts/       本地启动、检查和维护工具
+docs/          使用指南、架构、验证方法与历史记录
 ```
 
-## 验证与文档
+## 开发与验证
+
+本地开发需要 Python 3.12+ 和 Node.js 24，启动方式见 [部署指南](docs/guides/deployment.md#本地开发)。
 
 ```powershell
+python -m pip install -r backend/requirements.txt -r backend/requirements-test.txt
 python -m pytest -q
-cd frontend
-npm run build
-npm run test:e2e
+npm --prefix frontend ci
+npm --prefix frontend run build
+node --test frontend/tests/*.test.js
+# 使用本机已安装的 Microsoft Edge，不下载 Chromium 或其他浏览器
+$env:PLAYWRIGHT_CHANNEL='msedge'
+npm --prefix frontend run test:e2e
 ```
 
-浏览器测试默认使用 Playwright Chromium，首次运行前执行 `npx playwright install chromium`；Windows 已安装 Edge 时可先设置 `$env:PLAYWRIGHT_CHANNEL='msedge'`。构建通过不代表现场设备连通、全部漏洞已修复或完整安全审计通过。
+截至 2026-10-26，模拟设备关键测试 27 项、任务图测试 29 项、Edge 前端测试 8 项通过；前端构建、Node 测试和文档链接检查通过。完整后端回归为 1277 项通过、1 项并发调度测试在整套件中偶发波动，单独及文件级重跑通过。无告警、无匹配或任务 `completed` 均不能单独证明设备安全；eBPF 覆盖、设备漏洞适用性、真实硬件、长时间稳定性和人工业务接受仍需独立验证。
 
-- [2026-10-23 质量收敛与运行验收](docs/QUALITY_20261023.md)
-- [隔离生产控制台启动与真实 HTTP 复验](docs/LOCAL_RUNTIME.md)
-- [产品状态与待完成工作](docs/STATUS.md)
-- [Console 前端设计系统](frontend/README.md)
-- [前端演进记录（历史）](docs/FRONTEND_EDITORIAL_20261021.md)
-- [环境重建与软件配置](deploy/README.md)
-- [部署说明](DEPLOYMENT.md)
-- [技术架构](TECHNICAL_ARCHITECTURE.md)
-- [权限与风险治理](docs/SECURITY_MODEL.md)
-- [构建与验证](docs/VALIDATION.md)
-- [智能体与 Harness 黑盒闭环检测](docs/AGENT_BLACKBOX.md)
-- [设备验收与收尾边界](docs/DEVICE_ACCEPTANCE.md)
+## 继续阅读
 
-本项目用于授权环境中的安全研究与教学。扫描仅面向显式授权目标；设备写须另行完成身份、作用域、审批和恢复准备。
+- [文档总览](docs/README.md)：按使用目的查找资料。
+- [当前状态与限制](docs/status.md)：当前部署、已验证能力和未完成项。
+- [架构与任务逻辑](docs/architecture/overview.md)：控制台、四角色、执行与证据链。
+- [权限与修复边界](docs/reference/security-model.md)：设备身份、写域、审批与审计。
+- [验证方法](docs/validation/testing.md)：本地、CI、协议模拟和现场检查。
+- [参与维护](CONTRIBUTING.md)：命名、资料清理与提交规则。
 
-## 2026-10-20 维护交付
-
-[本轮交付报告](docs/DELIVERY_20261020.md)汇总权限域隔离、注册证据引用、依赖安全升级和虚拟设备验证。[训练与维护规范](docs/TRAINING_AND_MAINTENANCE.md)保留 Git 历史训练材料的可追溯入口。[QEMU 签名更新](docs/VIRTUAL_FIRMWARE.md)仅承诺受信任宿主上的更新与恢复，不等同于设备侧安全启动。
+本项目用于授权环境中的安全研究与教学。扫描与采集仅面向显式授权目标，设备写入须通过独立的身份、作用域与审批检查。

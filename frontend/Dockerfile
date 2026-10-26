@@ -20,11 +20,13 @@ ENV VITE_API_BASE=$VITE_API_BASE
 RUN npm run build
 
 FROM nginx:stable-alpine
+ENV LINUXGUARD_CONTROL_TOKEN=""
 ARG VCS_REF=unknown
 ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.revision=$VCS_REF org.opencontainers.image.created=$BUILD_DATE
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN sed -i -e 's@/var/run/nginx.pid@/tmp/nginx.pid@' -e 's@/run/nginx.pid@/tmp/nginx.pid@' -e '/^user /d' /etc/nginx/nginx.conf \
     && chown -R nginx:nginx /var/cache/nginx /etc/nginx/conf.d

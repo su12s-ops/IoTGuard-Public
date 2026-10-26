@@ -30,6 +30,7 @@ from app.services.unified.schemas import (
     AuditPolicyDecisionRecord,
 )
 from app.services.unified.state import TASK_RISK_REVIEW, UnifiedAnalysisState
+from app.services.unified.task_runtime import VERSION as TASK_GRAPH_VERSION
 
 UNIFIED_ADAPTER_VERSION = f"{PIPELINE_VERSION}+analysis-compat"
 # A formal batch stays bounded, but "all eligible" is no longer silently
@@ -69,10 +70,20 @@ def formal_sink(db: Session, run_row: models.UnifiedAnalysisRun,
     final = state.final or {}
     policy = AuditPolicyDecisionRecord.model_validate(final.get("policy") or {})
     facts_hash = json.loads(event.payload_json)["facts_hash"]
-    previous_events = db.query(models.RiskGovernanceEvent).filter(
+    previous_events = db.query(models.RiskGovernanceEvent.id).filter(
         models.RiskGovernanceEvent.risk_id == risk.id, models.RiskGovernanceEvent.kind == "native_assessment",
         models.RiskGovernanceEvent.id < event.id).order_by(models.RiskGovernanceEvent.id.desc()).first()
-    previous_payload = json.loads(previous_events.payload_json) if previous_events else {}
+    if previous_events and db.get_bind().dialect.name == "sqlite":
+        from sqlalchemy import func
+        # Historical receipts may embed the entire telemetry store. Read only
+        # comparison metadata rather than materializing that JSON in Python.
+        schema, prior_hash = db.query(
+            func.json_extract(models.RiskGovernanceEvent.payload_json, "$.facts_schema"),
+            func.json_extract(models.RiskGovernanceEvent.payload_json, "$.facts_hash")
+        ).filter(models.RiskGovernanceEvent.id == previous_events.id).one()
+        previous_payload = {"facts_schema": schema, "facts_hash": prior_hash}
+    else:
+        previous_payload = json.loads(db.get(models.RiskGovernanceEvent, previous_events.id).payload_json) if previous_events else {}
     if previous_events and previous_payload.get("facts_schema") != json.loads(event.payload_json).get("facts_schema"):
         policy.status = "pending_human_review"
         policy.final_score = policy.final_level = None
@@ -204,7 +215,8 @@ def _write_agent_audit_records(db: Session, run_row: models.UnifiedAnalysisRun,
             evidence_ids_json=json.dumps(sorted(set(refs)), ensure_ascii=False),
             structured_output_json=json.dumps(output, ensure_ascii=False, default=str),
             raw_response="",
-            parse_status="valid" if log.get("status") == "succeeded" else "invalid",
+            parse_status="reused" if log.get("status") == "reused" else
+                         "valid" if log.get("status") == "succeeded" else "invalid",
             retry_count=max(0, int(log.get("attempts") or 1) - 1),
             latency_ms=int(log.get("latency_ms") or 0),
             error=(log.get("error") or "")[:1200],
@@ -247,11 +259,12 @@ def _aggregate_agent_executions(rows: list[models.UnifiedAnalysisRun]) -> dict[s
         logs = [json.loads(row.agents_json or "{}").get(name) for row in rows]
         logs = [log for log in logs if log]
         aggregate[name] = {
-            "status": "failed" if any(log.get("status") != "succeeded" for log in logs)
+            "status": "failed" if any(log.get("status") not in {"succeeded", "reused"} for log in logs)
             else ("completed" if logs else "skipped"),
             "attempts": sum(int(log.get("attempts") or 0) for log in logs),
             "duration_ms": sum(int(log.get("latency_ms") or 0) for log in logs),
             "opinion_count": sum(log.get("status") == "succeeded" for log in logs),
+            "reused_count": sum(log.get("status") == "reused" for log in logs),
             "error": "; ".join(log.get("error", "") for log in logs if log.get("error")),
         }
     return aggregate
@@ -261,11 +274,11 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
                                 selected_risks=None, selection_result=None,
                                 progress_callback=None,
                                 client_factory=None, investigation_goal: str = "",
-                                asset_id: int = 0) -> dict[str, Any]:
+                                asset_id: int = 0, batch_runtime=None) -> dict[str, Any]:
     """System B run_review_analysis 的统一编排器实现（正式模式）。
 
-    逐事件串行执行统一图（每事件一次完整四智能体编排），经 formal_sink
-    写正式字段；响应形状与 System B 兼容。
+    每事件一次完整四智能体编排，经 formal_sink 写正式字段。
+    task_graph 在完整资源准入后使用独立会话并发执行；响应形状与 System B 兼容。
     """
     from app.services.review_common import select_candidates
 
@@ -282,30 +295,44 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
     if not selected:
         return {"status": "no_candidates", "review_run_id": run_id, "model_called": False}
 
+    if batch_runtime is None and config.REVIEW_EXECUTION_MODE == "task_graph":
+        from sqlalchemy.orm import sessionmaker
+        from app.services.unified.task_runtime import for_review
+        batch_runtime = for_review(db, run_id, sessionmaker(bind=db.get_bind(), autoflush=False),
+                                   client_factory or default_client_factory)
+
     rows: list[models.UnifiedAnalysisRun] = []
     states: list[UnifiedAnalysisState] = []
-    for risk in selected:
-        receipt = db.query(models.RiskGovernanceEvent).filter_by(
+    deferred = []
+
+    def execute_one(worker_db, risk):
+        if batch_runtime is not None and batch_runtime.remaining() <= 0:
+            return None
+        receipt = worker_db.query(models.RiskGovernanceEvent).filter_by(
             risk_id=risk.id, kind="post_repair_reassessment_request").all()
         post_repair = any(json.loads(e.payload_json).get("run_id") == f"UA-{run_id}-{risk.id}" for e in receipt)
         if not post_repair and (not risk.active or risk.review_status in {"inactive", "resolved", "human_reviewing"}):
             raise ValueError("risk_not_eligible_for_formal_analysis")
+        if batch_runtime is not None and not post_repair:
+            risk.review_status = "agent_reviewing"
+            worker_db.commit()
         run_row = models.UnifiedAnalysisRun(
             run_id=f"UA-{run_id}-{risk.id}", task_type=TASK_RISK_REVIEW,
             target_type="linux_host",
-            target_ref=risk.package_name and (db.get(models.LinuxAsset, risk.asset_id).hostname
-                                              if db.get(models.LinuxAsset, risk.asset_id) else ""),
+            target_ref=(worker_db.get(models.LinuxAsset, risk.asset_id).hostname
+                        if worker_db.get(models.LinuxAsset, risk.asset_id) else ""),
             mode="formal", status="running", risk_id=risk.id)
-        db.add(run_row)
+        worker_db.add(run_row)
         from app.services import trace_service as tracing
-        trace = tracing.start_trace(db, task_type="unified_four_agent", target_type="linux_host",
+        trace = tracing.start_trace(worker_db, task_type="unified_four_agent", target_type="linux_host",
             target_ref=run_row.target_ref, run_ref_type="unified_analysis", run_ref_id=run_row.run_id,
             metadata={"mode": "formal", "formal_entry": "/api/analysis", "risk_id": risk.id})
         run_row.trace_id = trace.trace_id
-        db.commit()
-        run_unified_sync(db, run_row, sink=formal_sink, force_full_review=True,
+        worker_db.commit()
+        options = {"batch_runtime": batch_runtime} if batch_runtime is not None else {}
+        run_unified_sync(worker_db, run_row, sink=formal_sink, force_full_review=True,
                          investigation_goal=investigation_goal,
-                         client_factory=client_factory or default_client_factory)
+                         client_factory=client_factory or default_client_factory, **options)
         if run_row.status == "failed" and not post_repair:
             # runner 会捕获编排级异常并把运行标记 failed（不抛出、不落 sink）。
             # 正式路径必须与 System B 的 _fail_selected 同语义：fail-closed 落
@@ -316,7 +343,20 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
             risk.final_score = None
             risk.risk_level = None
             risk.decision = None
+            worker_db.commit()
+        return run_row.run_id
+
+    def record(risk_id, completed_run_id):
+        db.expire_all()
+        if completed_run_id is None:
+            risk = db.get(models.RiskAssessment, risk_id)
+            risk.review_status = "candidate"
+            reason = batch_runtime.admission_stop_reason or "analysis_window_exhausted"
+            risk.review_reason = reason + "; 未启动研判，保留候选等待继续"
+            deferred.append(risk_id)
             db.commit()
+            return
+        run_row = db.query(models.UnifiedAnalysisRun).filter_by(run_id=completed_run_id).one()
         rows.append(run_row)
         states.append(UnifiedAnalysisState.model_validate_json(run_row.state_json))
         if progress_callback:
@@ -324,15 +364,37 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
                 current_stage="audit_policy",
                 agent_executions=_aggregate_agent_executions(rows),
                 processed_object_count=len(rows),
-                current_object_id=f"risk-{risk.id}",
-                progress_message=f"unified review done risk-{risk.id}",
+                current_object_id=f"risk-{risk_id}",
+                progress_message=f"unified review done risk-{risk_id}",
                 progress_percent=round(90 * len(rows) / len(selected)),
             )
+
+    if batch_runtime is None:
+        for risk in selected:
+            record(risk.id, execute_one(db, risk))
+    else:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        risk_ids = [risk.id for risk in selected]
+        def work(risk_id):
+            review_id = f"UA-{run_id}-{risk_id}"
+            if not batch_runtime.acquire_review(review_id):
+                return None
+            try:
+                with batch_runtime.session_factory() as worker_db:
+                    return execute_one(worker_db, worker_db.get(models.RiskAssessment, risk_id))
+            finally:
+                batch_runtime.release_review(review_id)
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="risk-task") as pool:
+            pending = {pool.submit(work, risk_id): risk_id for risk_id in risk_ids}
+            for future in as_completed(pending):
+                record(pending[future], future.result())
 
     completed = sum(1 for state in states
                     if (state.final or {}).get("policy", {}).get("status") == "auto_confirmed")
     human = len(states) - completed
     status = "completed" if human == 0 else ("partial" if completed else "human_review")
+    if deferred:
+        status = "partial"
     event_results = [_event_result(row, state) for row, state in zip(rows, states)]
     total_tokens = 0
     for row in rows:
@@ -348,14 +410,17 @@ def run_review_analysis_unified(db: Session, run_id: str | None = None,
         "completed_object_count": completed,
         "human_review_object_count": human,
         "agent_executions": _aggregate_agent_executions(rows),
-        "answer": f"统一编排逐事件处理 {len(selected)} 条：自动确认 {completed} 条，人工审核 {human} 条。",
-        "termination_reason": "pipeline_completed" if human == 0 else "audit_policy_human_review",
+        "answer": f"本批选入 {len(selected)} 条，已处理 {len(rows)} 条：自动确认 {completed} 条，人工审核 {human} 条，延期 {len(deferred)} 条。",
+        "termination_reason": ((batch_runtime.admission_stop_reason or "analysis_window_exhausted") if deferred else
+                               "pipeline_completed" if human == 0 else "audit_policy_human_review"),
         "current_stage": "audit_policy",
         "pipeline_version": UNIFIED_ADAPTER_VERSION,
         "unified_run_ids": [row.run_id for row in rows],
         "total_tokens": total_tokens,
         "review_run_id": run_id,
-        "model_called": True,
+        "model_called": any(json.loads(row.usage_json or "{}").get("llm_requests", 0) for row in rows),
+        "deferred_object_ids": deferred,
+        "execution_profile": "task_graph" if batch_runtime is not None else "legacy",
     }
 
 
@@ -450,7 +515,8 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         }
     report = models.AnalysisReport(
         model=config.DEEPSEEK_MODEL, status="running", review_run_id=run_id,
-        pipeline_version=UNIFIED_ADAPTER_VERSION, current_stage="agent_reviewing",
+        pipeline_version=(UNIFIED_ADAPTER_VERSION + "+" + TASK_GRAPH_VERSION
+            if config.REVIEW_EXECUTION_MODE == "task_graph" else UNIFIED_ADAPTER_VERSION), current_stage="agent_reviewing",
         candidate_count=selection["candidate_count"],
         selected_object_count=len(selected),
         selected_object_ids_json=json.dumps(selection["selected_object_ids"], ensure_ascii=False),
@@ -468,7 +534,7 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
                 "repair_authorization": False, "business_accepted": False})
             continue
         invalidate_prior_authorizations(db, risk, "new_formal_assessment_requires_new_approval")
-        risk.review_status = "agent_reviewing"
+        risk.review_status = "queued" if config.REVIEW_EXECUTION_MODE == "task_graph" else "agent_reviewing"
     db.commit()
     db.refresh(report)
     risk_ids = [risk.id for risk in selected]
@@ -495,8 +561,10 @@ def generate_and_save_report_unified(db: Session, run_id: str | None = None,
         worker_report.completed_object_count = result.get("completed_object_count", 0)
         worker_report.human_review_object_count = result.get("human_review_object_count", 0)
         worker_report.object_verdict_count = len(result.get("valid_verdicts", []))
-        worker_report.progress_percent = 100
-        worker_report.progress_message = "Unified review completed"
+        worker_report.progress_percent = (round(90 * len(result.get("unified_run_ids", [])) /
+            max(1, worker_report.selected_object_count)) if result.get("deferred_object_ids") else 100)
+        worker_report.progress_message = ("完整研判所需的预算或时间不足，未启动项保留为候选" if result.get("deferred_object_ids")
+                                          else "Unified review completed")
         worker_report.progress_sequence = int(worker_report.progress_sequence or 0) + 1
         worker_report.progress_updated_at = datetime.now(timezone.utc)
         worker_report.completed_at = datetime.now(timezone.utc)

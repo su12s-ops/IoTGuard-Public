@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import re
+import json
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -71,6 +72,7 @@ def serialize_component(component: models.IotDeviceComponent) -> dict:
 
 
 def serialize_device(device: models.IotDevice, include_detail: bool = False, db: Session | None = None) -> dict:
+    metadata = json.loads(device.metadata_json or "{}")
     open_services = [service for service in device.services if service.status == "open"]
     affected_count = 0
     if db is not None:
@@ -83,6 +85,7 @@ def serialize_device(device: models.IotDevice, include_detail: bool = False, db:
         "device_id": device.device_id, "device_name": device.device_name,
         "device_type": device.device_type, "vendor": device.vendor, "model": device.model,
         "firmware_version": device.firmware_version, "os": device.os, "ip": device.ip,
+        "simulation": metadata.get("simulation") is True,
         "status": device.status, "risk_score": device.risk_score,
         "risk_score_basis": device.risk_score_basis, "security_status": device.security_status,
         "identity_source": device.identity_source, "identity_confidence": device.identity_confidence,

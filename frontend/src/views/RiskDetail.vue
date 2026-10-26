@@ -142,7 +142,7 @@
                 <div class="gate-list">
                   <div><i class="dot" :class="row.cve_id ? 'ok' : 'warn'" />证据引用 <span>{{ evidenceCount }}/{{ evidenceCount }}</span></div>
                   <div><i class="dot" :class="row.human_review_required ? 'warn' : 'ok'" />对象级人工审查 <span>{{ row.human_review_required ? "待签收" : "已记录" }}</span></div>
-                  <div><i class="dot ok" />资产锁与工具预算 <span>{{ controlSession.token ? "令牌已设置" : "只读" }}</span></div>
+                  <div><i class="dot ok" />资产锁与工具预算 <span>{{ controlSession.token ? "操作已授权" : "只读" }}</span></div>
                 </div>
                 <div class="actions-row">
                   <button class="btn primary" type="button" @click="openDecision('confirm')">确认受影响</button>

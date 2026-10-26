@@ -7,7 +7,7 @@ events, traces) are archived as a compact result snapshot before deletion.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -27,6 +27,48 @@ class ArchiveInput(BaseModel):
 
 class ResetInput(ArchiveInput):
     archive: bool = True
+
+
+def require_console_refresh(request: Request):
+    # A non-simple header prevents cross-site forms from triggering a reset.
+    # This narrow console action never grants device-control permissions.
+    origin = request.headers.get("origin")
+    allowed = {str(request.base_url).rstrip("/"),
+               "http://localhost:5173", "http://127.0.0.1:5173",
+               "http://localhost:5174", "http://127.0.0.1:5174"}
+    if request.headers.get("X-Experiment-Action") != "refresh" or (origin and origin not in allowed):
+        raise HTTPException(403, "请通过控制台的刷新本轮按钮操作")
+
+
+@router.post("/refresh", dependencies=[Depends(require_console_refresh)])
+def refresh_experiment(db: Session = Depends(get_db)):
+    from app.services import console_workflow
+    from app.services.task_runner import has_active_jobs
+    with console_workflow.lock:
+        for row in db.query(models.ConsoleWorkflow).filter_by(status="running").all():
+            console_workflow.synchronize(db, row)
+        if db.query(models.ConsoleWorkflow).filter_by(status="running").count() or has_active_jobs():
+            raise HTTPException(409, "流程或情报同步正在运行，结束后才能刷新本轮")
+        if any(result_archive.active_runs(db).values()) or db.query(models.AnalysisReport).filter_by(status="running").count():
+            raise HTTPException(409, "仍有任务运行，结束后才能刷新本轮")
+        # Delete only application-generated archive files inside their configured
+        # directory. Never traverse device credentials or deployment materials.
+        root = result_archive.archive_dir().resolve()
+        archives = [path for path in root.glob("exp-*.json")
+                    if path.is_file() and path.resolve().parent == root]
+        try:
+            cleared = clear_derived_data(db, full_console=True)
+            from app.services.ebpf_event_collector import EVENT_FILE
+            EVENT_FILE.unlink(missing_ok=True)
+            for path in archives:
+                path.unlink(missing_ok=True)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except OSError as exc:
+            raise HTTPException(507, "本轮数据已清理，但部分旧归档文件未能删除，请检查存储权限") from exc
+        return {"cleared": cleared, "archives_deleted": len(archives),
+                "kept": {"assets": db.query(models.LinuxAsset).count(),
+                         "iot_devices": db.query(models.IotDevice).count()}}
 
 
 @router.get("/state")

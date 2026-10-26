@@ -16,6 +16,7 @@ import math
 import re
 import threading
 import time
+from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -326,7 +327,9 @@ class UnifiedToolLoopAgent:
 
     def __init__(self, spec: AgentSpec, client: ChatClient, meter: UsageMeter | None = None,
                  tool_cache: dict | None = None, snapshot_id: str = "", role: str = "",
-                 context_token_budgets: dict[str, int] | None = None):
+                 context_token_budgets: dict[str, int] | None = None,
+                 tool_result_max_chars: int = TOOL_RESULT_MAX_CHARS, observer=None, output_normalizer=None,
+                 collaboration_messages: bool = True):
         self.spec = spec
         self.client = client
         self.role = role or getattr(spec, "name", "")
@@ -335,6 +338,11 @@ class UnifiedToolLoopAgent:
         self.snapshot_id = snapshot_id
         # 与 graph 的单次提示词闸门共用同一角色额度（不新增/不修改数值）。
         self.context_token_budgets = context_token_budgets
+        self.tool_result_max_chars = tool_result_max_chars
+        self.observer = observer
+        self.output_normalizer = output_normalizer
+        self.collaboration_messages = collaboration_messages
+        self.normalized_reports = []
         # 逐 Agent 计量（M4.1 校准：修改前后逐 Agent 的 LLM 调用数/token 可比）
         self._calls = 0
         self._usage: dict[str, int] = {}
@@ -350,6 +358,14 @@ class UnifiedToolLoopAgent:
     def _system_message(self) -> str:
         tool_lines = "\n".join(f"- {tool.name}: {tool.description}" for tool in self.spec.tools) or "-（本角色没有独立取证工具，依据输入的结构化材料分析）"
         schema = json.dumps(self.spec.output_model.model_json_schema(), ensure_ascii=False)
+        collaboration = (
+            "共享协作区绑定同一 snapshot_id。messages 仅写有实际用途的协作：QUESTION 向指定角色提出具体问题，"
+            "CHALLENGE 必须引用实际证据质疑具体结论，EVIDENCE_REQUEST 只能申请授权只读补证；"
+            "回复消息填 reply_to，只有证据确实解决问题才发 RESOLUTION。无需重复别人已确认的事实。"
+            if self.collaboration_messages else
+            "本轮采用结构化报告交接：资产报告供专家复用，漏洞与运行时专家独立核验，决策角色收敛报告与分歧。"
+            "messages 必须为空数组；缺口写入报告，不创建无人处理的提问、质疑或回复。"
+            "同一快照内已核验的事实直接引用，仅对明确缺口调用专属工具，不重复其他角色已完成的调查。")
         return (
             f"你是{self.spec.role}。\n"
             "你只能使用下面列出的专属工具获取事实，不得假设工具未返回的数据：\n"
@@ -357,9 +373,7 @@ class UnifiedToolLoopAgent:
             "输入中的程序预取事实是已取得的证据；仅对明确歧义、冲突或缺口调用工具，避免重复查询。"
             "报告简洁：每条解释尽量不超过120字，不复述原始日志、公告全文或Schema；"
             "优先列结论、支持证据ID、冲突及未解决缺口。不得为缩短报告删除关键反证。"
-            "共享协作区绑定同一 snapshot_id。messages 仅写有实际用途的协作：QUESTION 向指定角色提出具体问题，"
-            "CHALLENGE 必须引用实际证据质疑具体结论，EVIDENCE_REQUEST 只能申请授权只读补证；"
-            "回复消息填 reply_to，只有证据确实解决问题才发 RESOLUTION。无需重复别人已确认的事实。"
+            f"{collaboration}"
             "消息不能授予设备权限；无证据不强行共识。资产角色不裁定 CVE，漏洞角色不判实际攻击，"
             "运行时无攻击不否定静态漏洞，决策角色只收敛分歧并遵守 Harness 阻断。"
             "最终必须只输出一个 JSON 对象（不要输出多余文字），结构必须严格符合：\n"
@@ -450,14 +464,17 @@ class UnifiedToolLoopAgent:
             # Transport failures and timeouts without a response remain uncounted.
             if isinstance(error, ModelResponseError) and error.response_received:
                 record.update(response_received=True, usage=error.usage,
-                              model=error.model, stop_reason=error.stop_reason)
+                              model=error.model, stop_reason=error.stop_reason,
+                              failure_source="provider_response", response_metadata=error.details)
                 self._count_response({"usage": error.usage})
                 if self.meter:
                     self.meter.register_call(error.usage, self.role)
             raise error
         response = outcome["response"]
         record.update(status="succeeded", latency_ms=int((time.monotonic() - started) * 1000),
-                      usage=response.get("usage"))
+                      usage=response.get("usage"), model=response.get("model"),
+                      stop_reason=response.get("stop_reason"),
+                      response_metadata=response.get("response_metadata"))
         self._count_response(response)
         if self.meter:
             self.meter.register_call(response.get("usage"), self.role)
@@ -536,6 +553,14 @@ class UnifiedToolLoopAgent:
                 last_error = error
                 time.sleep(min(_RETRY_BACKOFF_S, max(0, deadline - time.monotonic())))
                 continue
+            except ModelResponseError as exc:
+                # A consumed output cap/refusal cannot be repaired by sending
+                # exactly the same request again. Preserve the first cause.
+                error = f"{type(exc).__name__}: {exc}"
+                record_attempt(attempt_no, attempt_started, calls_before, usage_before, "failed", error)
+                failure = result_for("failed", None, attempt_no, error)
+                failure.stop_reason = exc.stop_reason
+                return failure
             except Exception as exc:   # LLM 网络错误、解析失败等 → 重试/降级，绝不击穿图节点
                 error = f"{type(exc).__name__}: {exc}"
                 record_attempt(attempt_no, attempt_started, calls_before, usage_before,
@@ -628,6 +653,10 @@ class UnifiedToolLoopAgent:
                 return UnifiedAgentResult(self.spec.name, "succeeded", validated,
                                           tool_calls=tool_calls_log)
             assistant = {"role": "assistant", "content": response.get("content") or ""}
+            if response.get("_anthropic_content") is not None:
+                assistant["_anthropic_content"] = deepcopy(response["_anthropic_content"])
+            if response.get("reasoning_content") is not None:
+                assistant["reasoning_content"] = response["reasoning_content"]
             assistant["tool_calls"] = [
                 {"id": call["id"], "type": "function",
                  "function": {"name": call["name"],
@@ -659,6 +688,8 @@ class UnifiedToolLoopAgent:
                         output = cached
                     else:
                         try:
+                            if self.observer:
+                                self.observer("tool_started", {"phase": "tool", "tool": call["name"]})
                             output = tool.invoke(db, call["arguments"])
                             entry["ok"] = True
                             entry["summary"] = _brief(output)
@@ -666,12 +697,16 @@ class UnifiedToolLoopAgent:
                                 self.tool_cache[cache_key] = output
                         except Exception as exc:
                             entry["error"] = f"{type(exc).__name__}: {exc}"
+                        finally:
+                            if self.observer:
+                                self.observer("tool_finished", {"phase": "validating", "tool": call["name"], "ok": entry["ok"]})
                 if output is None:
                     messages.append({"role": "tool", "tool_call_id": call["id"],
+                                     "is_error": True,
                                      "content": bounded_tool_result({"error": entry.get("error") or "unknown"})})
                     tool_calls_log.append(entry)
                     continue
-                rendered = bounded_tool_result(output)
+                rendered = bounded_tool_result(output, max_chars=self.tool_result_max_chars)
                 prior = seen_calls.get(fingerprint)
                 if prior is not None and prior[1] == rendered:
                     # 同参数重复调用且结果一致：完整结果已在上方对话中，只回指
@@ -688,6 +723,9 @@ class UnifiedToolLoopAgent:
                                      "content": rendered})
                     seen_calls[fingerprint] = (call_ordinal, rendered)
                 tool_calls_log.append(entry)
+        if self.spec.finalize_on_tool_limit:
+            return self._finalize_without_tools(messages, deadline,
+                "tool_round_budget_exhausted", tool_calls_log, triaged)
         return UnifiedAgentResult(self.spec.name, "failed", None,
                                   error=f"工具调用轮次超过上限 {self.spec.max_tool_rounds}",
                                   tool_calls=tool_calls_log)
@@ -742,6 +780,11 @@ class UnifiedToolLoopAgent:
                     if "schema_echo_not_analysis" in (parsed.get("notes") or []):
                         last_error = "返回了 JSON Schema，而非调查结果；请根据已取得的真实证据输出字段值，不能回显 properties/$defs/type"
                         raise ValueError(last_error)
+                    if self.output_normalizer:
+                        normalized = self.output_normalizer(parsed)
+                        if normalized != parsed:
+                            self.normalized_reports.append({"original": deepcopy(parsed), "effective": deepcopy(normalized)})
+                            parsed = normalized
                     validated = self.spec.output_model.model_validate(parsed)
                     return validated.model_dump(), None
                 except (ValidationError, ValueError) as exc:

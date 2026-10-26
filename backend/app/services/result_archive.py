@@ -45,6 +45,8 @@ KEPT_MODELS = (
 )
 
 DERIVED_MODELS = (
+    models.AnalysisBudget,
+    models.AnalysisTask,
     models.TraceEvent,
     models.TraceRun,
     models.ScanRun,

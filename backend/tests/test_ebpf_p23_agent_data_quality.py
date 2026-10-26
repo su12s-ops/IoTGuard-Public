@@ -35,7 +35,7 @@ def _add_sensor(session_factory, asset_id, sensor_id, *, dropped=None, minutes_a
             asset_id=asset_id, sensor_id=sensor_id, source="falco", status=status,
             dropped_events=dropped, detail="",
             capabilities_json="{}",
-            last_heartbeat_at=datetime.utcnow() - timedelta(minutes=minutes_ago)))
+            last_heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=minutes_ago)))
         db.commit()
     finally:
         db.close()

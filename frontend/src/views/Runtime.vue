@@ -9,11 +9,11 @@
         <span>{{ num(summary.total) }} 条运行时事件</span><i class="sep" /><span>最近事件 {{ latestLabel }}</span><i class="sep" /><span>{{ healthySensors }}/{{ totalSensors }} 个传感器健康</span>
       </template>
       <template #actions>
-        <span class="range-chip"><Icon name="calendar" :size="14" />最近 24 小时<Icon name="chev-down" :size="13" /></span>
-        <span class="live-toggle" @click="live = !live">
+        <span class="range-chip"><Icon name="calendar" :size="14" />最近 500 条事件</span>
+        <button type="button" class="live-toggle" :aria-pressed="live" @click="live = !live">
           <span>实时模式</span>
           <i class="switch" :class="{ on: live }" />
-        </span>
+        </button>
         <button class="btn" type="button" :disabled="uploading" @click="pickEvidence"><Icon name="download" :size="15" />{{ uploading ? "上传中…" : "上传证据" }}</button>
       </template>
     </PageHeader>
@@ -79,6 +79,33 @@
         <div class="host-foot"><span>按事件量排序</span><span class="num">{{ hostCount }} 台</span></div>
       </section>
     </div>
+
+    <section class="card sensor-reliability">
+      <div class="card-head">
+        <div><div class="card-title">传感器可靠性</div><div class="card-desc">采集器自报与服务端入库分开显示；未知丢失量不会记为零</div></div>
+        <span class="chip muted">{{ reliabilitySensors.length }} 个传感器</span>
+      </div>
+      <div v-if="!reliabilitySensors.length" class="empty-note">暂无传感器可靠性记录。</div>
+      <div v-else class="table-wrap">
+        <table class="reliability-table">
+          <thead><tr><th>传感器</th><th>来源 / 状态</th><th>已入库</th><th>丢失</th><th>最近窗口</th></tr></thead>
+          <tbody><tr v-for="sensor in reliabilitySensors" :key="`${sensor.asset_id}-${sensor.sensor_id}`">
+            <td class="mono">{{ sensor.sensor_id }}</td>
+            <td>{{ sensor.source }} · {{ sensor.status }}</td>
+            <td>{{ sensor.server_observed?.stored_events ?? "未知" }}</td>
+            <td>{{ sensor.dropped_events === "unavailable" ? "不可用" : sensor.dropped_events }}</td>
+            <td v-if="sensor.collection_window && sensor.collection_window !== 'not_applicable'">
+              <template v-if="typeof sensor.collection_window === 'object'">
+                {{ sensor.collection_window.status }} · {{ sensor.collection_window.lines_total }} 行 ·
+                跳过 {{ sensor.collection_window.skipped_lines }} · 环形丢失 {{ sensor.collection_window.ring_loss }}
+              </template>
+              <template v-else>{{ sensor.collection_window }}</template>
+            </td>
+            <td v-else>由采集器指标核对</td>
+          </tr></tbody>
+        </table>
+      </div>
+    </section>
 
     <section class="card">
       <div class="card-head">
@@ -157,6 +184,7 @@ import { dateTime, num, shortTime } from "../utils/format";
 
 const health = ref(null);
 const summary = ref({});
+const reliability = ref({});
 const events = ref([]);
 const loading = ref(true);
 const error = ref("");
@@ -171,6 +199,7 @@ let timer = null;
 const layers = computed(() => health.value?.layers || {});
 const totalSensors = computed(() => Number(layers.value.sensors?.total || 0));
 const healthySensors = computed(() => Number(layers.value.sensors?.healthy || 0));
+const reliabilitySensors = computed(() => reliability.value?.sensors || []);
 const evidenceFresh = computed(() => Boolean(layers.value.runtime_evidence?.fresh));
 const latestLabel = computed(() => {
   const age = layers.value.runtime_evidence?.latest_event_age_seconds;
@@ -329,14 +358,16 @@ async function load() {
     health.value = null;
   }
 
-  const [summaryResult, eventResult] = await Promise.allSettled([
+  const [summaryResult, eventResult, reliabilityResult] = await Promise.allSettled([
     api.get("/runtime/ebpf/summary", { timeout: 20000 }),
-    api.get("/runtime/ebpf/events", { params: { limit: 500 }, timeout: 20000 })
+    api.get("/runtime/ebpf/events", { params: { limit: 500 }, timeout: 20000 }),
+    api.get("/runtime/ebpf/reliability", { timeout: 20000 })
   ]);
   if (summaryResult.status === "fulfilled") summary.value = summaryResult.value.data || {};
   if (eventResult.status === "fulfilled") events.value = eventResult.value.data?.events || [];
-  if (summaryResult.status === "rejected" && eventResult.status === "rejected") {
-    error.value = "运行时接口暂时不可用；传感器状态仍来自健康接口。";
+  reliability.value = reliabilityResult.status === "fulfilled" ? reliabilityResult.value.data || {} : {};
+  if ([summaryResult, eventResult, reliabilityResult].some(result => result.status === "rejected")) {
+    error.value = "部分运行时接口暂时不可用；可靠性读取失败时清空旧记录，请稍后重试。";
   }
   loading.value = false;
 }
@@ -375,6 +406,10 @@ onUnmounted(() => {
 .switch.on::after { transform: translateX(14px); }
 
 .runtime-charts { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr) minmax(0, 0.85fr); gap: 16px; }
+.sensor-reliability { margin-top: 16px; }
+.reliability-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.reliability-table th, .reliability-table td { padding: 10px 14px; border-bottom: 1px solid var(--line-soft); text-align: left; overflow-wrap: anywhere; }
+.reliability-table th { color: var(--muted); font-size: 10px; font-weight: 600; }
 .chart-body { padding: 6px 14px 4px; }
 .chart-foot { display: flex; align-items: center; gap: 18px; margin-top: auto; padding: 8px 18px 12px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 10.5px; }
 .chart-foot b { color: var(--ink-2); font-family: var(--font-num); font-size: 11px; }
