@@ -22,6 +22,7 @@
 | [多智能体设计](architecture/multi-agent-design.md) | 目标设计及尚未完整实现的部分 |
 | [权限模型](reference/security-model.md) | 身份、令牌、修复域、证据与审批 |
 | [维护规则](reference/maintenance.md) | 证据引用、历史材料与结论约束 |
+| [本地工作区与实验资料](reference/local-workspace.md) | 忽略目录、证据保留与清理规则 |
 
 ## 验证与开发
 
